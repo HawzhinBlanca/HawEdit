@@ -434,10 +434,11 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     # cannot order anything.
     assert payload["index"]["document_count"] == len(full_run.sentences)
     assert payload["index"]["document_count"] > 1
-    # §3 Stage 1's routing decision is in the artifact, always — an empty `segments` list means
-    # nothing needs the validator, which must be distinguishable from the rule never running
-    # (D-135; the policy had no caller in `src/` at all before it).
-    escalation = payload["escalation"]
+    # This legacy fixture carries selected scores, not original routing evidence.
+    assert payload["asr_routing_status"] == "legacy-selected-replay"
+    assert payload["escalation"] is None
+    assert payload["escalation_diagnostics"]["input_evidence"] == "selected-output-replay"
+    escalation = payload["escalation_diagnostics"]["summary"]
     assert escalation["escalated"] == len(escalation["segments"])
     assert escalation["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
     # Which trigger fired has to be readable: measured on the real 38-minute run, 176 of the 312
@@ -2578,9 +2579,14 @@ def test_partial_asr_correction_and_routing_records_remain_visible(kind: str) ->
         assert payload["escalation"] is None
     else:
         assert payload["rejected_validator_corrections"] is None
-        assert payload["escalation"]["scored_segments"] == 1
-        assert payload["escalation"]["escalated"] == 1
-        assert payload["escalation"]["segments"] == [
+        assert payload["asr_routing_status"] == "partial-unbound"
+        assert payload["escalation"] is None
+        assert payload["escalation_diagnostics"]["input_evidence"] == "unbound-reported"
+        escalation = payload["escalation_diagnostics"]["summary"]
+        assert escalation["scored_segments"] == 1
+        assert escalation["escalated"] == 1
+        assert escalation["disagreement_threshold_cer"] is None
+        assert escalation["segments"] == [
             {"segment_id": "100-200", "escalate": True, "reason": "models disagree"}
         ]
 
@@ -2599,7 +2605,10 @@ def test_raw_diagnostics_are_the_reporting_source() -> None:
     assert payload["transcript_gaps"] == []
     assert payload["speech_without_transcription_ms"] == 0
     assert payload["rejected_validator_corrections"] == []
-    assert isinstance(payload["escalation"], dict)
+    assert payload["asr_routing_status"] == "legacy-selected-replay"
+    assert payload["escalation"] is None
+    assert payload["escalation_diagnostics"]["input_evidence"] == "selected-output-replay"
+    assert isinstance(payload["escalation_diagnostics"]["summary"], dict)
 
 
 @needs_ffmpeg
@@ -6151,6 +6160,9 @@ def test_the_escalation_line_quotes_a_reason_that_actually_escalated(
     line = next(text for text in capsys.readouterr().out.splitlines() if text.startswith("stage 1"))
     assert "1/2" in line
     assert "the models disagree" in line
+    assert "unbound reported decisions" in line
+    assert "original routing unknown" in line
+    assert "human validation" not in line
     assert "confident and agreeing" not in line, (
         "the quoted reason must belong to a segment that was actually escalated"
     )

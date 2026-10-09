@@ -6,6 +6,20 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Truthful ASR Routing Reports (M9.95, WIP)
+
+D-316, baselinef6e6773. Actual Serena defs/references and EARS/plan/callers in
+specs/asr-routing-report. Test-first corrected fixture12behavior failures/
+2canonical-roundtrip passes; expanded19report cases pass. Original trace
+alone supplies original escalation; legacy selected-output and partial unbound
+summaries stay visible as diagnostics. Console uses the same source and no longer
+claims model routing was human validation. No model/policy/canonical/timing change.
+Absent scores cannot imply zero replay; unbound records cannot infer policy
+triggers. Preliminary11-module caller cohort525passed at package210542d before
+these final guards. Current369file lint/strict types/format pass.
+Evidence: evidence/asr-routing-report-20261009.md. Exact committed gate/CI pending,
+no ledger promotion or improved speech/reel/10/10 claim.
+
 ## ASR Segment Origin (M9.94, WIP)
 
 D-315, baseline6ef4d4a. Actual pre-edit Serena maps and unchanged source hashes
@@ -15,8 +29,9 @@ Full ruff/mypy/format pass368files. Original/validator/selected immutable trace,
 original-batch replay and exact canonical binding; no changed model, routing,
 resume payload, canonical history or caption timings. Actual retained ZAR
 5769words/158segments preserve exact923239bytes and SHA256; origins stay unknown.
-Evidence: evidence/asr-segment-origin-20261009.md. Exact current gate/CI pending;
-no ledger promotion, model accuracy, protected worker/HTTP, new reel, authenticated
+Evidence: evidence/asr-segment-origin-20261009.md. Exact committedf6e6773 full
+gate5741pass/1stale-VEX failure/0error/skip, unchanged; current CI absent.
+No ledger promotion, model accuracy, protected worker/HTTP, new reel, authenticated
 delivery, independent acceptance or10/10 claim.
 
 ## Native Member Transition (M9.93, WIP)

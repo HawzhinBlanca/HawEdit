@@ -15615,3 +15615,39 @@ independent corpus/creator/editor/performance/sustained acceptance remain.
 Specs/callers/named tests: specs/asr-segment-origin; evidence/asr-segment-origin-20261009.md.
 Full exact gate and applicable same-SHA CI still govern acceptance.
 
+## D-316 - Original Routing Is Not Selected-Output Replay Or Human Validation
+
+2026-10-09, approved evidence-based-studio Phase5; BLUEPRINT sections3/4.1/5,
+D-110/D-135/D-315. No dependency, model, selection, licence or authority change.
+
+Legacy RawTranscript has selected confidence/text but no original trace. Current
+report replays those selected scores and labels the result original escalation.
+Actual retained ZAR report72 differs from bound original checkpoint replay76;
+synthetic corrected3-draft batch reports0 after removing only its trace.
+These are distinct policy inputs, not proof routing was skipped or observed zero.
+
+Keep outer asr_diagnostics_status as availability. Add asr_routing_status:
+recorded-original, legacy-selected-replay, partial-unbound, unavailable.
+Only complete D-315 original traces populate escalation. Legacy/supplied unbound
+cases expose null original escalation and separately labelled
+escalation_diagnostics with input_evidence and summary. Preserve useful count,
+trigger and reason computations there; unbound records do not bind a policy
+threshold or trigger categories. Legacy words without segment scores provide no
+replay, so absence is unavailable or supplied unbound diagnostics, not zero.
+Missing originals are unknown, not inferred from global validated_by.
+No historical transcript, hash or checkpoint payload is rewritten.
+
+The console consumes the same JSON representation, including recorded zero,
+legacy/unbound replay and unavailable routing. Preserve pairing with the first
+flagged reason; Stage1 routes the ASR validator, not an authenticated human.
+This deliberately corrects the JSON report contract instead of retaining a
+misleading observed count for compatibility. Actual direct/durable/CLI callers
+and existing mathematical assertions are mapped/preserved/strengthened.
+
+Recorded means trace self-consistency, not authenticated model execution,
+accurate speech or human review. This reporting repair does not fix the real
+region137 contraction, admit protected HTTP/GPU/provider execution, refresh
+VEX#24 or complete review/revision/export/independent acceptance.
+Specs/named tests/callers: specs/asr-routing-report;
+evidence/asr-routing-report-20261009.md. WIP until exact gate/current CI evidence.
+

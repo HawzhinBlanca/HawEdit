@@ -43,6 +43,16 @@ escalation.py4a6fd7aa12c58fd0f2f35107b2ded12faa5b4f55fbf018c6dfb7f1e57f0dceb2;
 test_asr_origin.pycb97cea6e530318108d0bed8e2704a3755e5792e3e292b6418aeadc71495f579.
 Whole ruff/strict mypy/format pass368files; initial formatting/import/B009/B010
 issues corrected. No skipped tests, fixture/golden/harness or policy changes.
+
+Normal local-only f6e677385e03389eb510c82266607f2f98433aed committed package0fa2b5b0.
+Exact clean committed full gate5741pass/1stale-VEX failure/0error/skip,5742total;
+JUnit2303.137s /pytest2303.81s /observer2391.3379556s, watched source/HEAD/package/
+clean status unchanged. Only old81f6 source policy versus current0fa2b5b0 fails.
+Terminal2f66a71eb0a7a2deff217671fbdf9fde4f5258d4af60cdae4aefa4fe23b90f1a;
+JUnit7e786fdc6fc1d5181bf438312ff5de049661c371595dbd8bf0d0672666081239.
+Raw C:/Users/Wareen/AppData/Local/HawEditEvidence/asr-origin-clean-gate-20261009.
+All original processes absent/session9777 closed before next source unit.
+No ledger DONE, same-SHA CI, qualified review or10/10; prior pending text historical.
 After adding the ADR/spec/evidence/progress records, whole claims module67pass,
 11.43s pytest; JUnit82b3ba979933890b7cc41f3b95237a2eb647f6260284d7cd9c9785c586e87626.
 Original matching processes absent before session42969 closure. These67cases

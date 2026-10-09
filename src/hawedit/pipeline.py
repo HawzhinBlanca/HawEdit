@@ -541,15 +541,66 @@ class PipelineRun:
             if raw is not None
             else self.rejected_validator_corrections
         )
-        decisions = (
-            select_for_validation(scores_from_transcript(raw))
-            if raw is not None
-            else self.escalation
-        )
+        scores = scores_from_transcript(raw) if raw is not None else ()
+        replay_available = bool(scores)
+        decisions = select_for_validation(scores) if replay_available else self.escalation
         diagnostics_status = (
             "recorded"
             if raw is not None
             else ("partial" if gaps or corrections or decisions else "unavailable")
+        )
+        original_routing = raw is not None and raw.segment_origins is not None
+        routing_status = (
+            "recorded-original"
+            if original_routing
+            else (
+                "legacy-selected-replay"
+                if replay_available
+                else ("partial-unbound" if decisions else "unavailable")
+            )
+        )
+        routing_summary = (
+            {
+                "scored_segments": len(decisions),
+                "escalated": sum(1 for decision in decisions if decision.escalate),
+                "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER
+                if replay_available
+                else None,
+                "by_trigger": {
+                    "quartile_only": sum(
+                        1
+                        for decision in decisions
+                        if decision.escalate and "disagree" not in decision.reason
+                    ),
+                    "disagreement_only": sum(
+                        1
+                        for decision in decisions
+                        if decision.escalate
+                        and "disagree" in decision.reason
+                        and "quartile" not in decision.reason
+                    ),
+                    "both": sum(
+                        1
+                        for decision in decisions
+                        if decision.escalate
+                        and "disagree" in decision.reason
+                        and "quartile" in decision.reason
+                    ),
+                }
+                if replay_available
+                else None,
+                "segments": [
+                    {
+                        "segment_id": decision.segment_id,
+                        "escalate": decision.escalate,
+                        "reason": decision.reason,
+                    }
+                    for decision in decisions
+                    if decision.escalate
+                ],
+            }
+            if replay_available or decisions
+            else None
         )
 
         return {
@@ -561,6 +612,7 @@ class PipelineRun:
             "ingest": encode(self.ingest),
             "diarization": encode(self.diarization) or self._diarization_ran(),
             "asr_diagnostics_status": diagnostics_status,
+            "asr_routing_status": routing_status,
             "transcript_gaps": [
                 {
                     "start_ms": gap.start_ms,
@@ -587,42 +639,14 @@ class PipelineRun:
             ]
             if raw is not None or corrections
             else None,
-            "escalation": {
-                "scored_segments": len(decisions),
-                "escalated": sum(1 for decision in decisions if decision.escalate),
-                "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER,
-                "by_trigger": {
-                    "quartile_only": sum(
-                        1
-                        for decision in decisions
-                        if decision.escalate and "disagree" not in decision.reason
-                    ),
-                    "disagreement_only": sum(
-                        1
-                        for decision in decisions
-                        if decision.escalate
-                        and "disagree" in decision.reason
-                        and "quartile" not in decision.reason
-                    ),
-                    "both": sum(
-                        1
-                        for decision in decisions
-                        if decision.escalate
-                        and "disagree" in decision.reason
-                        and "quartile" in decision.reason
-                    ),
-                },
-                "segments": [
-                    {
-                        "segment_id": decision.segment_id,
-                        "escalate": decision.escalate,
-                        "reason": decision.reason,
-                    }
-                    for decision in decisions
-                    if decision.escalate
-                ],
+            "escalation": routing_summary if original_routing else None,
+            "escalation_diagnostics": {
+                "input_evidence": (
+                    "selected-output-replay" if replay_available else "unbound-reported"
+                ),
+                "summary": routing_summary,
             }
-            if raw is not None or decisions
+            if not original_routing and routing_summary is not None
             else None,
             "transcript": (
                 self.transcript.to_dict()
@@ -5718,25 +5742,27 @@ def _print_report(run: PipelineRun) -> None:
             f"stage 3 {ran['candidates']} candidate(s) [{by_path}] · "
             f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}{in_target}"
         )
-    # Stage 1 scores its own output and nothing said so. Measured on the real 38-minute
-    # source: `select_for_validation` escalated 294 of 545 segments — 54% of the transcript —
-    # because the LLM and CTC arms disagree past the CER threshold, and the run printed a clean
-    # fourteen-line report. The finding existed only in `--json`, which is not what the
-    # documented invocation produces. §1: fail visible, not silent.
-    if run.escalation:
-        escalated = sum(1 for decision in run.escalation if decision.escalate)
-        if escalated:
-            share = 100 * escalated / len(run.escalation)
-            # The first *escalated* decision, not the first decision. Measured on the real
-            # 20-minute episode: `escalation[0].escalate` is False and its reason reads
-            # "confident (mean logprob -5.699) and the models agree", so the report paired an
-            # alarming count with a reassuring explanation of a segment that was never flagged.
-            # A reader takes that as "91% flagged, but the models agree, so it is fine".
-            first_flagged = next(decision for decision in run.escalation if decision.escalate)
-            print(
-                f"stage 1 {escalated}/{len(run.escalation)} segment(s) ({share:.0f}%) escalated "
-                f"for human validation — {first_flagged.reason}"
+    routing = run.to_dict()
+    original = routing["escalation"]
+    diagnostic = routing["escalation_diagnostics"]
+    summary = original if original is not None else diagnostic["summary"] if diagnostic else None
+    if summary is None:
+        print("stage 1 original ASR routing unavailable")
+    else:
+        description = (
+            "routed to ASR validator (original evidence)"
+            if original is not None
+            else (
+                "flagged in selected-output replay; original routing unknown"
+                if diagnostic["input_evidence"] == "selected-output-replay"
+                else "flagged in unbound reported decisions; original routing unknown"
             )
+        )
+        reason = f" - {summary['segments'][0]['reason']}" if summary["segments"] else ""
+        print(
+            f"stage 1 {summary['escalated']}/{summary['scored_segments']} segment(s) "
+            f"{description}{reason}"
+        )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")
     if run.clip is not None:
