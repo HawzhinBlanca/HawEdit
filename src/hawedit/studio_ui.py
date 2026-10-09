@@ -305,6 +305,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         margin: 0;
       }
       #historyDiagnostics,
+      #jobDiagnostics,
       #stageList {
         margin: 0;
         padding: 0;
@@ -312,6 +313,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       }
       #stageList li {
         padding-block: 4px;
+      }
+      #historyDiagnostics details > bdi,
+      #jobDiagnostics details > bdi {
+        display: block;
+        margin-block-start: 12px;
       }
       .skip-link {
         position: absolute;
@@ -500,6 +506,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <p id="jobMessage" aria-live="polite" class="warning"></p>
           </div>
           <p id="jobError" role="alert" class="error" hidden></p>
+          <ul id="jobDiagnostics" aria-live="polite" class="error" hidden></ul>
         </section>
         <section class="stack rule" aria-labelledby="candidatesHeading">
           <h2 id="candidatesHeading">بڕگەکان</h2>
@@ -957,19 +964,52 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         $('stageList').replaceChildren();
         $('stageProgress').hidden = true;
         message('jobError', '');
+        diagnostics('jobDiagnostics', []);
         message('stageMessage', 'هیچ قۆناغێکی پشتڕاستکراو نییە.');
         message('candidateMessage', 'هیچ کارێک هەڵنەبژێردراوە.');
+      }
+      function diagnosticText(row) {
+        const labels = {
+          history_record_refused:
+            'تۆماری مێژوو ونە، نادروستە یان بەستەرە؛ فایلە ڕەسەنەکان پارێزراون.',
+          history_storage_unavailable:
+            'پاشەکەوتی مێژووی کارەکان ئامادە نییە؛ لیستی تەواوی کارەکان پشتڕاست نەکراوەتەوە.',
+          history_scan_limit:
+            'پشکنینی مێژوو بەشێکی نیشان داوە؛ هیچ کارێکی کۆن نەسڕاوەتەوە.',
+          candidate_manifest_missing:
+            'تۆماری بڕگە تایبەتەکان نییە؛ بەڵگە ڕەسەنەکان پارێزراون.',
+          candidate_manifest_refused:
+            'تۆماری بڕگە تایبەتەکان نادروستە؛ پێشبینین و بڵاوکردنەوە پشتڕاست نەکراونەتەوە.',
+          legacy_recovery_required:
+            'پێش دووبارە ناردنی ئەم کارە کۆنە، پێویستە دۆخی ڕەسەنی پشتڕاست بکرێتەوە.',
+        };
+        if (Object.hasOwn(labels, row.code)) return labels[row.code];
+        return 'بەڵگەی کار پشتڕاست نەکراوەتەوە.';
       }
       function diagnostics(id, rows) {
         const list = $(id);
         list.replaceChildren();
         list.hidden = !Array.isArray(rows) || !rows.length;
         if (Array.isArray(rows))
-          for (const row of rows) {
+          for (const entry of rows) {
+            const row = entry && typeof entry === 'object' && !Array.isArray(entry)
+              ? entry : {};
             const item = document.createElement('li');
-            item.textContent =
-              (row.code || '') + ': ' + (row.message || 'تۆماری نادروست');
-            item.dir = 'auto';
+            item.textContent = diagnosticText(row);
+            item.dir = 'rtl';
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = 'وردەکاریی تەکنیکی';
+            const identity = document.createElement('bdi');
+            identity.dir = 'auto';
+            const code = typeof row.code === 'string' ? row.code : unknown;
+            identity.textContent = [code, row.job_id]
+              .filter(value => typeof value === 'string' && value).join(' · ');
+            const original = document.createElement('p');
+            original.dir = 'auto';
+            original.textContent = typeof row.message === 'string' ? row.message : '';
+            details.append(summary, identity, original);
+            item.append(details);
             list.append(item);
           }
       }
@@ -1034,7 +1074,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
               label +
               (job.recovery_required ? ' · دووبارە خۆکارانە نانێردرێت.' : ''),
           );
-          message('jobError', job.error || '');
+          message('jobError', job.error
+            ? job.code === 'legacy_recovery_required' ? diagnosticText(job) : job.error
+            : '');
+          const jobDiagnostics = Array.isArray(job.diagnostics) ? [...job.diagnostics] : [];
+          if (job.error && job.code === 'legacy_recovery_required')
+            jobDiagnostics.push({ code: job.code, job_id: jobId, message: job.error });
+          diagnostics('jobDiagnostics', jobDiagnostics);
           stages(job);
           const clips = Array.isArray(job.clips) ? job.clips : [];
           message(
@@ -1043,8 +1089,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
               ? clips.length + ' بڕگە؛ هیچ پەسەندکردنێک لە ڕیزبەندییەوە ناگیرێت.'
               : 'هیچ بڕگەیەکی تۆمارکراو نییە.',
           );
-          if (Array.isArray(job.diagnostics) && job.diagnostics.length)
-            message('jobError', job.diagnostics.map((row) => row.message).join('\n'));
           for (const [index, clip] of clips.entries()) {
             const button = document.createElement('button');
             button.type = 'button';
