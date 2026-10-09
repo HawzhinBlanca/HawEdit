@@ -16,6 +16,9 @@ claims admit one render writer and refuse uncertain replay. Actual14baseline
 failures plus4claim failures reproduced; whole affected222cases pass without
 renderer mocks/skips/golden changes. Strict fast checks380files and format pass.
 Final frozen committed gate/current CI remain required; no ledger DONE.
+First8b07f12 exact frozen gate5933pass/2fail: missing evidence provenance header
+(agent omission, now corrected without checker change) and stale qualified-policy
+binding. Corrected-document committed rerun remains required; no security rebind.
 Evidence: evidence/immutable-revision-artifacts-20261009.md. Not HTTP editing,
 authenticated export, model admission, new ZAR quality or system acceptance.
 
