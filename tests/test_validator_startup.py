@@ -5,12 +5,11 @@ from __future__ import annotations
 import errno
 import wave
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from hawedit.asr import QwenSoraniValidator
+from hawedit.asr import _qwen_audio_input
 from hawedit.wsl_setup import WslRuntimeError, _runtime_transaction_lock
 
 
@@ -81,21 +80,6 @@ def _write_wave(
         audio.writeframes(samples)
 
 
-def _validator(tmp_path: Path) -> tuple[QwenSoraniValidator, list[object]]:
-    model_dir = tmp_path / "validator"
-    model_dir.mkdir()
-    inputs: list[object] = []
-
-    class LoadedDependency:
-        def transcribe(self, *, audio: object) -> list[SimpleNamespace]:
-            inputs.append(audio)
-            return [SimpleNamespace(text="original validator result")]
-
-    validator = QwenSoraniValidator(model_dir)
-    validator._model = LoadedDependency()
-    return validator, inputs
-
-
 @pytest.mark.parametrize("frames", [16_000, 40 * 16_000])
 def test_validator_canonical_pcm_uses_exact_predecoded_samples(tmp_path: Path, frames: int) -> None:
     original = np.resize(np.array([-32768, -16384, -1, 0, 1, 16384, 32767], dtype="<i2"), frames)
@@ -103,10 +87,7 @@ def test_validator_canonical_pcm_uses_exact_predecoded_samples(tmp_path: Path, f
     raw = original.tobytes()
     _write_wave(path, raw)
     unchanged = path.read_bytes()
-    validator, inputs = _validator(tmp_path)
-    assert validator.transcribe_segment(path, frames / 16_000) == "original validator result"
-    assert len(inputs) == 1
-    adapted = inputs[0]
+    adapted = _qwen_audio_input(path)
     assert isinstance(adapted, tuple)
     waveform, rate = adapted
     assert rate == 16_000
@@ -133,9 +114,7 @@ def test_validator_noncanonical_audio_keeps_original_route(
     _write_wave(
         path, b"\0" * (frames * channels * width), channels=channels, width=width, rate=rate
     )
-    validator, inputs = _validator(tmp_path)
-    assert validator.transcribe_segment(path, 1.0) == "original validator result"
-    assert inputs == [str(path)]
+    assert _qwen_audio_input(path) == str(path)
 
 
 def test_validator_truncated_pcm_keeps_original_route(tmp_path: Path) -> None:
@@ -143,14 +122,10 @@ def test_validator_truncated_pcm_keeps_original_route(tmp_path: Path) -> None:
     _write_wave(path, b"\0\0" * 16_000)
     with path.open("r+b") as stream:
         stream.truncate(path.stat().st_size - 2)
-    validator, inputs = _validator(tmp_path)
-    assert validator.transcribe_segment(path, 1.0) == "original validator result"
-    assert inputs == [str(path)]
+    assert _qwen_audio_input(path) == str(path)
 
 
 def test_validator_unreadable_header_keeps_original_route(tmp_path: Path) -> None:
     path = tmp_path / "other.mp3"
     path.write_bytes(b"unrecognized-header")
-    validator, inputs = _validator(tmp_path)
-    assert validator.transcribe_segment(path, 1.0) == "original validator result"
-    assert inputs == [str(path)]
+    assert _qwen_audio_input(path) == str(path)

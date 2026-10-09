@@ -576,6 +576,7 @@ force-pushes and deletions are disabled (`BLOCKED.md` #7 records the live settin
 | `corpus_acceptance.py` | §8.1 | Canonical corpus/audio/reference hashes, rights and exclusion binding, detached human approval verification, and per-measurement byte guards for real AC-7 evidence. |
 | `asr.py` | §8.1, §3 Stage 1 | Official LLM+CTC/Viterbi producer, decoded CTC disagreement, rzgar correction routing, RTF, VRAM and failure rate. Hardware is required. |
 | `asr_completion.py` | §3 Stage 1, §8.1 | Validated single-beam natural-EOS admission before alignment, serialized observation and fail-stop cleanup. Completion is not native fidelity. D-281. |
+| `qwen_completion.py` | §3 Stage 1, §8.1, D-324, WIP | Pinned genuine validator runtime/source/type admission and unchanged original-token natural-EOS observation before512-token cap; forced/custom stops, mutated configuration, unobserved or text-only generation refuse. Canonical/operation cache policy invalidates legacy evidence; not acoustic/native-editor fidelity or qualified security approval. |
 | `asr_worker.py` | §3 Stage 1, §6 | Strict create-once Windows→WSL2 worker protocol for the official Linux runtime. |
 | `asr_resume.py` | §3 Stage 1, §6 | Bound private/fsynced per-operation ASR recovery; separate draft, validator and alignment records, no completion or publication inference (D-284). |
 | `wsl_setup.py` | §3 Stage 1, §6 | Wheel-safe, source-fingerprinted WSL2 runtime provisioning and CUDA probe. |

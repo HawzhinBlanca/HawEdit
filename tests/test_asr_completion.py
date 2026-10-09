@@ -247,7 +247,11 @@ def test_incomplete_decode_stops_worker_before_later_segments(tmp_path: Path) ->
 
 def test_native_and_source_bound_wsl_producers_share_admission_policy() -> None:
     assert OmniAsrProducer().admission_policy == WslOmniAsrProducer().admission_policy
-    assert WslOmniAsrProducer().admission_policy == COMPLETION_POLICY_ID
+    from hawedit.asr import ASR_COMPLETION_POLICY_ID
+    from hawedit.qwen_completion import QWEN_COMPLETION_POLICY_ID
+
+    assert WslOmniAsrProducer().admission_policy == ASR_COMPLETION_POLICY_ID
+    assert ASR_COMPLETION_POLICY_ID == COMPLETION_POLICY_ID + "+" + QWEN_COMPLETION_POLICY_ID
     assert OmniAsrProducer(CompletionBackend()).admission_policy is None
 
 

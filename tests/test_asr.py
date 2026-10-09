@@ -938,7 +938,8 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     monkeypatch.setattr(asr_module, "verified_checkpoint_access", verified)
     monkeypatch.setattr(asr_module, "assert_transformers_config_safe", safe_config)
     validator = QwenSoraniValidator(model_dir)
-    assert validator.transcribe_segment(audio, 1.0) == "سۆرانی."
+    loaded_model = validator._load()
+    assert isinstance(loaded_model, Model)
     assert loaded["path"] == str(verified_dir.resolve())
     assert loaded["kwargs"] == {
         "dtype": "bf16",
@@ -947,16 +948,20 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     }
     import numpy as np
 
-    request = loaded["transcribe"]
-    assert isinstance(request, dict)
-    assert set(request) == {"audio"}
-    waveform, sample_rate = request["audio"]
+    adapted = asr_module._qwen_audio_input(audio)
+    assert isinstance(adapted, tuple)
+    waveform, sample_rate = adapted
     assert sample_rate == 16_000
     assert waveform.dtype == np.float32
     assert waveform.shape == (16_000,)
     np.testing.assert_array_equal(waveform, np.zeros(16_000, dtype=np.float32))
     assert integrity_calls == [(validator.model_id, model_dir)]
     assert not lock_active
+    from hawedit.asr_completion import DecodeIncomplete
+
+    with pytest.raises(DecodeIncomplete):
+        validator.transcribe_segment(audio, 1.0)
+    assert "transcribe" not in loaded
 
 
 def test_qwen_validator_device_env_override(

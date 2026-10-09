@@ -15887,3 +15887,23 @@ Research/specs/impact/approved plan/ledger: specs/owned-linux-snapshot. Actual
 raw kernel/copy/loss evidence and versions:
 C:/Users/Wareen/HawEdit-producer-adoption-research-aeca0ae-20261009.md.
 
+## D-324: Validator Natural-Completion Admission And Cache Invalidation
+
+2026-10-09, approved-parent evidence-based-studio phases1--2. Nonempty Qwen SDK
+text is not generation termination evidence because decoding strips special
+tokens. Observe original unchanged generate/result.sequences under serialized
+temporary binding; pin actual qwen-asr0.0.6/Transformers4.57.6 implementation,
+require greedy single generation, unchanged configuration and original prefix,
+natural EOS before the unchanged512-token cap. Refuse ambiguity, forced/custom
+stops and unsupported/mutated implementations; restore on success or failure.
+
+Bind canonical native/WSL transcript admission and genuine worker journals to
+the validator guard; preserve and refuse old text-only caches, never rebind or
+overwrite canonical originals. No decoder/model/token-cap/runtime dependency
+change, fake completion authority or guess/clamp of speech/timing. Natural EOS
+does not prove acoustic/semantic completeness or trustworthy CTC alignment.
+Genuine admitted consumer, bad-region native-editor evidence, current qualified
+security review, protected producer adoption and all seven phases/AC1--AC12
+remain open. Unit WIP absent exact green committed gate and same-SHA CI.
+Research/spec/impact/approved plan/ledger: specs/qwen-completion.
+

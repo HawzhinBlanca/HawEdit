@@ -58,6 +58,26 @@ def private(root: Path) -> Path:
     return PrivateDirectory(root / "journal").path
 
 
+@pytest.mark.parametrize("previous", [None, "qwen-text-only-old-policy"])
+def test_qwen_policy_refuses_legacy_operation_journal(tmp_path: Path, previous: str | None) -> None:
+    from hawedit.asr_completion import COMPLETION_POLICY_ID
+    from hawedit.qwen_completion import QWEN_COMPLETION_POLICY_ID
+
+    path, root = audio(tmp_path), private(tmp_path)
+    old: dict[str, object] = {"completion_policy": COMPLETION_POLICY_ID}
+    if previous is not None:
+        old["validator_completion_policy"] = previous
+    validator = Validator()
+    with OperationJournal(root, old) as journal:
+        assert ResumableValidator(validator, journal).transcribe_segment(path, 1.0) == "correction"
+    before = {file.name: file.read_bytes() for file in root.glob("*.json")}
+    current = {**old, "validator_completion_policy": QWEN_COMPLETION_POLICY_ID}
+    with pytest.raises(RuntimeError, match="binding"), OperationJournal(root, current):
+        pytest.fail("old validator text must not reach a resumed operation")
+    assert {file.name: file.read_bytes() for file in root.glob("*.json")} == before
+    assert validator.calls == 1
+
+
 def test_checkpoint_survives_restart(tmp_path: Path) -> None:
     path, root = audio(tmp_path), private(tmp_path)
     first = Backend()

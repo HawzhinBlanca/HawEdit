@@ -89,14 +89,17 @@ def test_factory_native_and_wsl_share_context_and_completion_policy() -> None:
     assert wsl.context_grouping is True
     assert native.admission_policy == wsl.admission_policy
     assert asr.CONTEXT_GROUPING_POLICY_ID == "vad-context-v1-gap1000-span18000"
-    assert native.admission_policy == COMPLETION_POLICY_ID + "+" + asr.CONTEXT_GROUPING_POLICY_ID
+    assert (
+        native.admission_policy
+        == asr.ASR_COMPLETION_POLICY_ID + "+" + asr.CONTEXT_GROUPING_POLICY_ID
+    )
 
 
 def test_direct_producer_context_grouping_remains_explicit() -> None:
     native, wsl = asr.OmniAsrProducer(), asr.WslOmniAsrProducer()
     assert native.context_grouping is False
     assert wsl.context_grouping is False
-    assert native.admission_policy == wsl.admission_policy == COMPLETION_POLICY_ID
+    assert native.admission_policy == wsl.admission_policy == asr.ASR_COMPLETION_POLICY_ID
     assert asr.OmniAsrProducer(asr_fixtures.FakeOmniBackend()).admission_policy is None
     grouped_stub = asr.OmniAsrProducer(asr_fixtures.FakeOmniBackend(), context_grouping=True)
     assert grouped_stub.admission_policy == asr.CONTEXT_GROUPING_POLICY_ID

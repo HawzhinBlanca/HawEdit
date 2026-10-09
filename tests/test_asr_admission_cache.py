@@ -20,6 +20,34 @@ def snapshot(root: Path) -> dict[str, bytes]:
     return {path.name: path.read_bytes() for path in root.glob("*.transcript.raw.*")}
 
 
+def test_qwen_policy_refuses_legacy_canonical_cache(tmp_path: Path) -> None:
+    from hawedit.asr import ASR_COMPLETION_POLICY_ID, CONTEXT_GROUPING_POLICY_ID
+    from hawedit.asr_completion import COMPLETION_POLICY_ID
+    from hawedit.transcripts import normalize_transcript
+
+    store = TranscriptStore(tmp_path)
+    raw = transcript_fixtures.a_raw()
+    store.write_raw(
+        raw,
+        audio_sha256="audio",
+        producer="producer",
+        admission_policy=COMPLETION_POLICY_ID + "+" + CONTEXT_GROUPING_POLICY_ID,
+    )
+    store.write_norm(normalize_transcript(raw, store.raw_digest(raw.media_id)))
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    with pytest.raises(RawTranscriptImmutable, match="admission.*new work directory"):
+        store.reusable_raw(
+            raw.media_id,
+            "audio",
+            "producer",
+            transcript_fixtures.MEDIA_SHA256,
+            admission_policy=ASR_COMPLETION_POLICY_ID + "+" + CONTEXT_GROUPING_POLICY_ID,
+        )
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+    assert store.read_raw(raw.media_id) == raw
+    assert store.read_norm(raw.media_id).source_sha256 == store.raw_digest(raw.media_id)
+
+
 @pytest.mark.parametrize(
     "provenance", ["legacy", "absent", "malformed", "invalid-utf8", "wrong-policy"]
 )

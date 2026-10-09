@@ -56,6 +56,11 @@ from hawedit.omni_assets import (
     freeze_fairseq2_asset_overrides,
     open_verified_omni_assets,
 )
+from hawedit.qwen_completion import (
+    QWEN_COMPLETION_POLICY_ID,
+    assert_qwen_runtime,
+    transcribe_qwen_completed,
+)
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import (
     AsrProvenance,
@@ -106,6 +111,7 @@ LONG_AUDIO_THRESHOLD_S: Final = 40.0
 VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 _CONTEXT_MAX_GAP_MS: Final = 1_000
 _CONTEXT_MAX_SPAN_MS: Final = 18_000
+ASR_COMPLETION_POLICY_ID: Final = COMPLETION_POLICY_ID + "+" + QWEN_COMPLETION_POLICY_ID
 CONTEXT_GROUPING_POLICY_ID: Final = (
     f"vad-context-v1-gap{_CONTEXT_MAX_GAP_MS}-span{_CONTEXT_MAX_SPAN_MS}"
 )
@@ -508,8 +514,9 @@ class QwenSoraniValidator:
             raise ValueError(
                 f"validator segment is {duration_s:.3f}s; expected 0..{LONG_AUDIO_THRESHOLD_S:.0f}s"
             )
+        assert_qwen_runtime()
         model = self._load()
-        results = model.transcribe(audio=_qwen_audio_input(audio_path))
+        results = transcribe_qwen_completed(model, _qwen_audio_input(audio_path))
         if len(results) != 1 or not str(results[0].text).strip():
             raise RuntimeError("Sorani validator returned no transcription for one speech segment")
         return str(results[0].text)
@@ -1008,7 +1015,7 @@ class OmniAsrProducer:
     @property
     def admission_policy(self) -> str | None:
         """Cache binding for the real canonical backend, not a fidelity attestation."""
-        completion = COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
+        completion = ASR_COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
         if self.context_grouping:
             return (
                 f"{completion}+{CONTEXT_GROUPING_POLICY_ID}"
@@ -1528,9 +1535,9 @@ class WslOmniAsrProducer:
     def admission_policy(self) -> str:
         """The source-bound worker uses the same canonical completion contract."""
         return (
-            f"{COMPLETION_POLICY_ID}+{CONTEXT_GROUPING_POLICY_ID}"
+            f"{ASR_COMPLETION_POLICY_ID}+{CONTEXT_GROUPING_POLICY_ID}"
             if self.context_grouping
-            else COMPLETION_POLICY_ID
+            else ASR_COMPLETION_POLICY_ID
         )
 
     def _prefix(self) -> list[str]:

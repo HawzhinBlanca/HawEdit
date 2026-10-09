@@ -28,6 +28,7 @@ from hawedit.omni_assets import (
     assert_omni_card_integrity,
     freeze_fairseq2_asset_overrides,
 )
+from hawedit.qwen_completion import QWEN_COMPLETION_POLICY_ID
 from hawedit.studio_private import PrivateDirectory, write_text_atomic
 from hawedit.transcripts import Word
 
@@ -291,6 +292,7 @@ def worker_journal(
         "source_package_sha256": package_digest(),
         "adapter": model_identity,
         "completion_policy": COMPLETION_POLICY_ID,
+        "validator_completion_policy": QWEN_COMPLETION_POLICY_ID,
         "canonical_card_sha256": _file_digest(canonical_card),
         "python": platform.python_version(),
         "runtime_prefix": sys.prefix,
