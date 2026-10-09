@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -26,7 +28,9 @@ from hawedit.proposals import (
     propose_caption_revision,
     render_caption_revision,
 )
+from hawedit.render import RenderError
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
+from revision_collision_test_support import competing_artifact
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -114,6 +118,108 @@ def _approve(work: Path, revision_id: str, caption_style: str) -> None:
         reason_code=ReasonCode.PREFERENCE,
         confirm=lambda _: True,
     )
+
+
+def test_caption_revision_id_is_immutable(real_run: tuple[Path, PipelineRun]) -> None:
+    work, _ = real_run
+    _approve(work, "immutable-caption-id", "line")
+    path = work / "revisions" / "immutable-caption-id.json"
+    original = path.read_bytes()
+    with pytest.raises(RevisionRejected, match="already exists"):
+        _approve(work, "immutable-caption-id", "word_highlight")
+    assert path.read_bytes() == original
+
+
+def test_caption_revision_retains_render_claim(real_run: tuple[Path, PipelineRun]) -> None:
+    work, _ = real_run
+    identifier = "retained-caption-claim"
+    _approve(work, identifier, "line")
+    record = work / "revisions" / f"{identifier}.json"
+    before = record.read_bytes()
+    claim = record.parent / f".{identifier}.render-claim"
+    claim.write_bytes(b"unknown original execution; reconciliation required")
+    with pytest.raises(RevisionRejected, match="reconciliation"):
+        render_caption_revision(work, identifier)
+    assert record.read_bytes() == before
+    assert claim.read_bytes() == b"unknown original execution; reconciliation required"
+    assert not (record.parent / f"{identifier}.mp4").exists()
+
+
+def test_caption_revision_has_one_render_owner(real_run: tuple[Path, PipelineRun]) -> None:
+    work, _ = real_run
+    identifier = "one-caption-owner"
+    _approve(work, identifier, "line")
+    barrier = threading.Barrier(2, timeout=10)
+
+    def render() -> str:
+        barrier.wait()
+        try:
+            return str(render_caption_revision(work, identifier)["status"])
+        except RevisionRejected:
+            return "refused"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(render) for _ in range(2)]
+        results = [future.result(timeout=90) for future in futures]
+    assert sorted(results) == ["refused", "rendered"]
+    record = json.loads((work / "revisions" / f"{identifier}.json").read_text(encoding="utf8"))
+    assert record["status"] == "rendered"
+    assert record["requires_review"] is True
+    assert Path(record["render_path"]).is_file()
+
+
+@pytest.mark.parametrize("suffix", ["ass", "mp4", "srt", "edl"])
+def test_caption_revision_preserves_occupied_artifacts(
+    real_run: tuple[Path, PipelineRun], suffix: str
+) -> None:
+    work, _ = real_run
+    identifier = f"occupied-caption-{suffix}"
+    _approve(work, identifier, "line")
+    path = work / "revisions" / f"{identifier}.{suffix}"
+    path.write_bytes(b"original interrupted or competing artifact\n")
+    before = {entry.name: entry.read_bytes() for entry in path.parent.glob(f"{identifier}.*")}
+    with pytest.raises(RevisionRejected, match="reconciliation"):
+        render_caption_revision(work, identifier)
+    assert {
+        entry.name: entry.read_bytes() for entry in path.parent.glob(f"{identifier}.*")
+    } == before
+
+
+def test_caption_revision_preserves_competing_mp4(real_run: tuple[Path, PipelineRun]) -> None:
+    work, run = real_run
+    identifier = "competing-caption-mp4"
+    _approve(work, identifier, "line")
+    original = Path(run.to_dict()["render"]["path"])
+    with (
+        competing_artifact(work, identifier, "mp4", original) as published,
+        pytest.raises(RenderError),
+    ):
+        render_caption_revision(work, identifier)
+    assert published.is_set(), "Actual competitor did not publish before renderer refusal"
+    path = work / "revisions" / f"{identifier}.mp4"
+    assert path.is_file(), "Losing revision cleanup deleted the competing real MP4"
+    assert (
+        hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(original.read_bytes()).digest()
+    )
+    record = json.loads((path.parent / f"{identifier}.json").read_text(encoding="utf8"))
+    assert record["status"] == "render_failed"
+
+
+def test_caption_revision_preserves_competing_srt(real_run: tuple[Path, PipelineRun]) -> None:
+    work, run = real_run
+    identifier = "competing-caption-srt"
+    _approve(work, identifier, "line")
+    original = Path(run.to_dict()["render"]["path"])
+    with competing_artifact(work, identifier, "srt", original) as published:
+        record = render_caption_revision(work, identifier)
+    assert published.is_set()
+    assert (work / "revisions" / f"{identifier}.srt").read_bytes() == (
+        b"competing sidecar: preserve exact original bytes\n"
+    )
+    assert record["status"] == "rendered_without_delivery_sidecars"
+    assert record["requires_review"] is True
+    assert record["clip"]["qc"]["human_reviewed"] is False
+    assert Path(record["render_path"]).is_file()
 
 
 @needs_ffmpeg

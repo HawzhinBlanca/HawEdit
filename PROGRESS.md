@@ -6,6 +6,19 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Immutable Revision Artifacts (WIP)
+
+D-321, specs/immutable-revision-artifacts: duplicate caption/boundary revision
+identifiers refuse instead of overwriting prior JSON. Owned unique text staging
+publishes with no-replace; rendering refuses occupied artifacts, burns staged
+ASS, and never deletes a competing final MP4. Persistent original-record-bound
+claims admit one render writer and refuse uncertain replay. Actual14baseline
+failures plus4claim failures reproduced; whole affected222cases pass without
+renderer mocks/skips/golden changes. Strict fast checks380files and format pass.
+Final frozen committed gate/current CI remain required; no ledger DONE.
+Evidence: evidence/immutable-revision-artifacts-20261009.md. Not HTTP editing,
+authenticated export, model admission, new ZAR quality or system acceptance.
+
 ## Original Owner Bootstrap (WIP)
 
 D-320, specs/linux-owner-bootstrap: selected utility ELF is sealed/hash-bound,
@@ -21,6 +34,11 @@ Renewed strict fast checks379files and two-file format check pass; exact full
 committed gate and current CI remain required. No complete producer/model/
 GPU/effect/billing/Windows-owner EOF/HTTP/review/export or new reel acceptance.
 Evidence: evidence/linux-owner-bootstrap-20261009.md. No ledger DONE/current CI.
+
+Later exact aeca0ae clean committed gate finished5917pass/1historical-qualified-
+policy binding failure/zero errors/skips. Source unchanged; no self-rebind.
+Full terminal evidence is external HawEdit-linux-owner-bootstrap-verdict-20261009.md.
+Earlier pending statements describe their observation time, not a green gate.
 
 Prior b11d5d9 exact clean gate FINAL5883pass/1stale-qualified-VEXfail/0error/skip;
 source/ref/package unchanged and original commands gone/session14062closed.

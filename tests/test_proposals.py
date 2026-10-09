@@ -295,7 +295,7 @@ def test_commit_passes_the_real_diff_to_the_confirm_prompt(tmp_path: Path) -> No
 
 
 def test_two_commits_under_the_same_id_overwrite_the_prior_record(tmp_path: Path) -> None:
-    """Documented behavior, not an accident: `revision_id` is the caller's idempotency key."""
+    """Historical name retained; D-321 strengthens overwrite to immutable-ID refusal."""
     proposal = _approved_proposal(tmp_path)
     commit_boundary_revision(
         tmp_path,
@@ -305,18 +305,22 @@ def test_two_commits_under_the_same_id_overwrite_the_prior_record(tmp_path: Path
         reason_code=ReasonCode.PREFERENCE,
         confirm=lambda _: True,
     )
+    path = tmp_path / "revisions" / "r1.json"
+    original = path.read_bytes()
     second = propose_boundary_revision(tmp_path, final_in_ms=0, final_out_ms=4400)
-    commit_boundary_revision(
-        tmp_path,
-        second,
-        revision_id="r1",
-        approved_by="hawa2",
-        reason_code=ReasonCode.UNDO,
-        confirm=lambda _: True,
-    )
-    record = json.loads((tmp_path / "revisions" / "r1.json").read_text(encoding="utf-8"))
-    assert record["approved_by"] == "hawa2"
-    assert record["proposed_final_out_ms"] == 4400
+    with pytest.raises(RevisionRejected, match="already exists"):
+        commit_boundary_revision(
+            tmp_path,
+            second,
+            revision_id="r1",
+            approved_by="hawa2",
+            reason_code=ReasonCode.UNDO,
+            confirm=lambda _: True,
+        )
+    assert path.read_bytes() == original
+    record = json.loads(original)
+    assert record["approved_by"] == "hawa"
+    assert record["proposed_final_out_ms"] == proposal.proposed_final_out_ms
 
 
 def test_commit_writes_kind_boundary(tmp_path: Path) -> None:

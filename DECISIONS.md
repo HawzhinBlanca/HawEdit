@@ -15796,3 +15796,37 @@ Those remain mandatory before model release and HTTP generation. Not a hostile
 same-user sandbox. BLUEPRINT2-5/8.1-8.3/D-263/D-274 and full original acceptance
 remain intact. Specs/linux-owner-bootstrap and its evidence, WIP until gate/CI.
 
+## D-321: Immutable Private Revision Publication
+
+The approved studio plan requires new immutable revisions, not reusable IDs
+that overwrite reviewed content. Supersede proposals.py's historical documented
+duplicate-ID overwrite behavior: both caption and boundary commits refuse an
+existing revision pathname. Retain the named regression, strengthening it to
+refusal/preservation instead of deleting coverage or accepting overwrite.
+
+Use exclusive unique same-directory staging and native hard-link no-replace
+publication for revision JSON/ASS/SRT/EDL, matching render.py's existing MP4
+publisher. Generic atomic metadata writers and public function signatures stay
+unchanged. Lifecycle status updates are distinct from immutable revision content.
+An approved decision delta is a recorded editing decision, not proof its record
+or media was published; publication/storage refusal remains an explicit error.
+
+Before staging, atomically publish a persistent per-revision render claim bound
+to the original record digest. Only its winning caller may update lifecycle
+state. Retain claims on success, failure or uncertain interruption; existing
+claims refuse replay and require explicit reconciliation/new identity. Do not
+guess owner PIDs, expire claims by age, or treat this as completed DBOS recovery.
+
+Burn the owned staged ASS, never a competing final sidecar. Refuse occupied
+artifact paths before any encode/write. On a losing MP4/sidecar publication race,
+clean only owned staging and retain existing final artifacts. Do not undo the
+renderer's no-replace protection by unconditionally unlinking final MP4.
+Partial private outputs retain explicit failed/missing-sidecar status and require
+reconciliation or a new identity; they are not completed/published deliverables.
+Preserve canonical sentences, boundary/caption invariants, real measurements,
+fresh-review requirement and authenticated candidate publication policy.
+
+No new dependency, model/cloud call, trust root, HTTP editing or publication
+authority. BLUEPRINT4.3.6/8.3/D-263/D-277 and original independent acceptance
+still apply. specs/immutable-revision-artifacts is WIP until exact gate/current CI.
+
