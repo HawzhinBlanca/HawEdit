@@ -55,7 +55,6 @@ from hawedit.clip import (
 )
 from hawedit.diarization import Segment
 from hawedit.discovery import Candidate, MergedCandidate
-from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import (
@@ -434,19 +433,13 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     # cannot order anything.
     assert payload["index"]["document_count"] == len(full_run.sentences)
     assert payload["index"]["document_count"] > 1
-    # This legacy fixture carries selected scores, not original routing evidence.
-    assert payload["asr_routing_status"] == "legacy-selected-replay"
+    assert full_run.raw_diagnostics is not None
+    assert full_run.raw_diagnostics.segment_confidence == ()
+    assert full_run.raw_diagnostics.segment_origins is None
+    assert payload["asr_diagnostics_status"] == "recorded"
+    assert payload["asr_routing_status"] == "unavailable"
     assert payload["escalation"] is None
-    assert payload["escalation_diagnostics"]["input_evidence"] == "selected-output-replay"
-    escalation = payload["escalation_diagnostics"]["summary"]
-    assert escalation["escalated"] == len(escalation["segments"])
-    assert escalation["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
-    # Which trigger fired has to be readable: measured on the real 38-minute run, 176 of the 312
-    # escalations came from disagreement alone, and that half rests on an unconditioned CTC decode
-    # (BLOCKED #19). A bare total would read as §3's intended routing.
-    by_trigger = escalation["by_trigger"]
-    assert set(by_trigger) == {"quartile_only", "disagreement_only", "both"}
-    assert sum(by_trigger.values()) == escalation["escalated"]
+    assert payload["escalation_diagnostics"] is None
     assert payload["boundary"]["sentence_complete"] is True
     assert payload["clip"]["boundary"]["sentence_complete"] is True
     assert payload["render"]["reframe"] == "static_centre"
@@ -2593,6 +2586,8 @@ def test_partial_asr_correction_and_routing_records_remain_visible(kind: str) ->
 
 def test_raw_diagnostics_are_the_reporting_source() -> None:
     raw = a_transcript()
+    assert raw.segment_confidence == ()
+    assert raw.segment_origins is None
     run = PipelineRun(
         media_id="m",
         source="x",
@@ -2605,10 +2600,9 @@ def test_raw_diagnostics_are_the_reporting_source() -> None:
     assert payload["transcript_gaps"] == []
     assert payload["speech_without_transcription_ms"] == 0
     assert payload["rejected_validator_corrections"] == []
-    assert payload["asr_routing_status"] == "legacy-selected-replay"
+    assert payload["asr_routing_status"] == "unavailable"
     assert payload["escalation"] is None
-    assert payload["escalation_diagnostics"]["input_evidence"] == "selected-output-replay"
-    assert isinstance(payload["escalation_diagnostics"]["summary"], dict)
+    assert payload["escalation_diagnostics"] is None
 
 
 @needs_ffmpeg

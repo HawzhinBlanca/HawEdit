@@ -54,6 +54,29 @@ def test_legacy_routing_is_unknown_even_when_selected_replay_is_zero(tmp_path: P
     assert diagnostics["summary"]["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
 
 
+@pytest.mark.parametrize("failure", ["", "transcription", "alignment"])
+def test_scored_legacy_replay_retains_count_threshold_and_trigger_partition(
+    tmp_path: Path, failure: str
+) -> None:
+    raw, _, _ = traced(tmp_path, failure=failure)
+    old = legacy(raw)
+    assert len(old.segment_confidence) == 3
+    assert old.segment_origins is None
+    payload = json.loads(json.dumps(report(old).to_dict(), allow_nan=False))
+    assert payload["asr_routing_status"] == "legacy-selected-replay"
+    assert payload["escalation"] is None
+    diagnostic = payload["escalation_diagnostics"]
+    assert diagnostic["input_evidence"] == "selected-output-replay"
+    escalation = diagnostic["summary"]
+    assert escalation["scored_segments"] == 3
+    assert escalation["escalated"] == (1 if failure else 0)
+    assert escalation["escalated"] == len(escalation["segments"])
+    assert escalation["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
+    by_trigger = escalation["by_trigger"]
+    assert set(by_trigger) == {"quartile_only", "disagreement_only", "both"}
+    assert sum(by_trigger.values()) == escalation["escalated"]
+
+
 def test_unbound_routing_is_visible_but_not_observed() -> None:
     run = replace(
         report(),

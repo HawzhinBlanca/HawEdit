@@ -38,3 +38,24 @@ PipelineRun.to_dict45 references and existing unbound test0; source/status staye
 unchanged during mapping. Empty legacy segment_confidence is valid but supplies
 no replay input; unbound decisions do not establish threshold/trigger binding.
 Five added cases first failed (14 prior passed), then all19 passed after guards.
+
+## Empty-Evidence Caller Correction
+
+Committed ddf8553 exact clean gate:5758pass/3fail/0error/skip,5761total.
+Terminal f9007dc8511bb061ca6b54be39ecf6bbc6f780e37958ec5a812fedea1b17064a,
+JUnit4be1f8108485ea18bdf62cb09f3450f57203eb43b846a8aa872fd85449b98ab1;
+C:/Users/Wareen/AppData/Local/HawEditEvidence/asr-routing-report-clean-gate-20261009.
+Source/ref/package/status unchanged; original processes gone/session closed.
+Both report failures expected legacy-selected-replay on a_transcript, which has
+no segment scores/origins. R9 correctly returns unavailable/null. The third
+failure is the unchanged VEX policy81f6 versus current package556d; do not rebind
+that independent security approval. This is not a green gate or same-SHA CI.
+
+Actual current five-pair Serena map before corrective edits:
+C:/Users/Wareen/HawEditRoutingEmptyCallers-ddf8553-20261009/serena-map.json,
+SHA50675d781b0d5a1a74c5a6139694b9630429e72bc6f641625479a8da9c2151f1,
+unchanged. a_transcript136refs, full_run0direct refs (pytest injection dynamic),
+both test functions0refs, PipelineRun.to_dict47refs. Fixtures and production
+stay unchanged. Correct two erroneous test expectations; preserve all report
+count/threshold/trigger assertions on separately named explicitly scored cases.
+External research/EARS/plan: C:/Users/Wareen/HawEdit-routing-empty-callers-research-ddf8553-20261009.md.

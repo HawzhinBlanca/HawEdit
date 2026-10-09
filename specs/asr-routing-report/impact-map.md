@@ -32,3 +32,10 @@ test_raw_words_without_segment_scores_do_not_claim_zero_replay exercise unknown
 trigger categories/threshold and absent score inputs. No additional production
 caller or adapter behavior change. Preliminary11-module cohort525passed at
 package210542d; do not relabel that receipt as post-guard source evidence.
+
+Current ddf8553 corrective map50675d781b0d5a1a74c5a6139694b9630429e72bc6f641625479a8da9c2151f1:
+two existing report tests0refs each, a_transcript136refs, full_run0direct refs
+(pytest injection dynamic), serializer47refs. Only the two test bodies and an
+unused import change. No shared fixture, golden, source or production caller
+changes. Preserve count/threshold/trigger partition checks in new scored-input
+cases; strengthen actual absent-input assertions in both existing callers.

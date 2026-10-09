@@ -15,3 +15,10 @@ continue requests2026-10-09. No new model/licence/cloud/security/release authori
    bash scripts/verify.sh. No DONE without gate0 plus applicable same-SHA CI.
 6. Immutable external receipts and vault capture. Preserve failure history and
    independent VEX refusal. No improved speech/reel/full-system/10/10 claim.
+
+7. Continued approved corrective unit: preserve the ddf8553 full-gate failure;
+   correct two caller expectations for genuinely absent segment scores, without
+   altering fixtures or weakening count/threshold/trigger assertions. Move those
+   assertions to explicitly scored inputs. Actual current callers mapped before
+   edits. Whole modules/static checks, reviewed local-only commit, exact clean
+   committed gate again. VEX and CI remain independent; no DONE on local judgment.

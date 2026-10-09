@@ -60,3 +60,26 @@ diagnostic72, separate checkpoint replay76. Python3.12.10 on recorded host.
 Terminald4ca598ae2f0cda805b1afada1701d35942acae3bc0abb3eaf3d06247821f30e,
 C:/Users/Wareen/AppData/Local/HawEditEvidence/zar-legacy-routing-report-final-20261009.
 No new inference, repaired speech, completed reel or authenticated publication.
+
+## Committed Gate And Empty-Evidence Caller Correction
+
+ddf8553a78ba84dbfaefe965059aee34f1c6b003 clean exact bash scripts/verify.sh:
+5758pass/3fail/0error/skip,5761total. JUnit2303.006s/pytest2303.21s;
+observer2372.431242699997s, unchanged source/ref/package/status. Terminal
+f9007dc8511bb061ca6b54be39ecf6bbc6f780e37958ec5a812fedea1b17064a;
+JUnit4be1f8108485ea18bdf62cb09f3450f57203eb43b846a8aa872fd85449b98ab1.
+All original commands gone before session16693closure and corrective edits.
+Two test_pipeline expectations incorrectly labelled fixtures without segment
+scores as selected-output replay. Third failure: unchanged old VEX source
+binding81f6 versus actual556d. No green/CI/DONE/security attestation.
+
+Current actual five-pair map50675d781b0d5a1a74c5a6139694b9630429e72bc6f641625479a8da9c2151f1
+before test edits. Shared media/transcript fixtures and all production unchanged.
+Correct two empty-input expectations, preserve count/threshold/trigger partition
+assertions in three explicitly scored cases (normal/validator transcription
+refusal/alignment refusal). New whole report module22pass,4.35s pytest,
+C:/Users/Wareen/HawEdit-routing-empty-callers-22-20261009.xml,
+SHAc7c34fbbd51d49e09e9bb4f721213287cbd2199982a8f8459f93a3e65ac8fa43.
+Same recorded host/library versions. Exact fast command lint/strict typecheck
+passes369files; whole formatting passes369files. Fast is NOT the full gate.
+Corrected clean committed full gate/current CI still required. No row promoted.
