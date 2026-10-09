@@ -4,6 +4,13 @@
 changed package1024616359a2b593cdfb6fc6fca62ad01123c82be3902a1c4f43014fa18aed98.
 Implementation, not full-system acceptance. T1 remains WIP pending exact gate/CI.
 
+Exact committed4ae10fb gate finished6067pass/2fail/0error/0skip/6069cases,
+exit1/unchangedtrue,2239.900JUnitseconds. This unit's evidence note lacked the
+required YAML provenance header; corrected with actual existing implementation
+commit/host/command and n/a media scope, no test edits. The other failure is
+unchanged independent VEX source binding. Corrected notes require another exact
+clean committed gate. No ledger promotion, CI, qualified-review rebind or push.
+
 Test first: initial10new cases failed before production edits. The whole affected
 cohort then exposed one new guard-contract failure; normalize code positively
 without discarding valid job identity. No assertion weakened or test skipped.

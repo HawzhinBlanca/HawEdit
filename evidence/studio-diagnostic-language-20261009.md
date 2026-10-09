@@ -1,5 +1,12 @@
 # Studio Diagnostic Language Evidence
 
+```yaml
+commit: 4ae10fb2624fea0355ac300c3c8f078b2a103c20
+media_sha256: n/a: diagnostic UI and history readbacks; no fresh model or rendered reel
+host: HawaPC01 Windows11 build26300 CPython3.12.10
+command: .venv/Scripts/python.exe -B -m pytest tests/test_studio_ui_diagnostics.py tests/test_studio_ui.py tests/test_studio_ui_history.py tests/test_studio_ui_source_feedback.py tests/test_web.py tests/test_studio_artifacts.py tests/test_studio_history.py tests/test_robustness_audit.py tests/test_claims.py; bash scripts/verify.sh
+```
+
 2026-10-09. Parent approved T5 scope only. Baseline
 b6dac9197d86c7aa795257e370e99e038722c3d3; package before01e8cd5a915f012da04f987705a54eaed73d510ad03d79ac978c292986f3dbe3;
 final1024616359a2b593cdfb6fc6fca62ad01123c82be3902a1c4f43014fa18aed98.
@@ -47,6 +54,15 @@ was copied incorrectly from an inherited summary. Fresh full template inspection
 and Get-FileHash established actual0036ee29fe07d70a212d0f89d29ad02f38c1e063d6379ab924d64412071ec5e2;
 unchanged original template retained. Corrected external wrapper, not security
 policy/reviewer evidence. Initial diagnostic audit and failed launch retained.
+
+Exact committed4ae10fb full gate finished exit1/unchangedtrue:
+6067pass/2fail/0error/0skip/6069cases,2239.900JUnitseconds. One failure is this
+new note's missing required YAML provenance header (now repaired without any
+test change). Other failure is unchanged independent VEX source binding;
+reviewed81f6f606... differs from actual1024616359... . Original full failing
+receipt retained under HawEditEvidence/studio-diagnostic-language-clean-gate-20261009.
+No gate-green/CI/ledger promotion. Corrected documentation needs a new exact
+clean committed gate; source package itself is unchanged by this header repair.
 
 Source files: src/hawedit/studio_ui.py,tests/test_studio_ui_diagnostics.py;
 research/spec/plan/impact/tasks/verification under specs/studio-diagnostic-language.
