@@ -55,3 +55,34 @@ C:/Users/Wareen/HawEdit-integrity-probe-callers-final-20261009.xml.
 Original commands gone/session42740closed. Fast lint/strict typing370files and
 format check370files/diff check pass. No exact gate/security/CI/DONE claim yet.
 Production package82be142e69f3e77e28e6f3ff97ca8d4ef893420f50db901ff16aa171a2e3b271.
+
+## Committed Gate And Documentation Correction
+
+Implemented10170f921116d97b73c08e9bfaeb62732641317c exact clean gate finished
+5797pass/2fail/0error/skip,5799cases. JUnit2179.647seconds, observer
+2247.262717400008seconds; unchanged source/observer/ref/clean status.
+Terminal5618d50e9b80d23459c0b4c0c665428a3826768529a5731f7a3a6dc103b51d70;
+JUnit8bcc8a9aa239fe1163887ebaa5dc434b4000f96da323defa298d85051d3e3ec7.
+Original commands gone/session55481closed before editing. The unchanged
+test_new_evidence_names_its_commit_media_and_host correctly refused this unit's
+missing YAML provenance header. Correction adds real implemented commit, honest
+n/a media scope, host and exact command. No checker, assertion, fixture, harness,
+security policy or production changes. Second failure remains qualified stale
+VEX binding; no green/DONE/CI claim. Rerun whole claims module and exact clean
+gate from a normal local-only corrective commit; preserve earlier failed report.
+
+Actual current security observer reached policy evaluation after full integrity
+probe (supported setup exit0);141packages/21raw advisories/15alias groups.
+Expired policy, source/lock drift and missing dispositions correctly refused
+acceptance. Terminala641277001c93667ba42153619ae3d4afe40b113be85c54e2fef381680b80145,
+raw audit4ffbf48ed127b6766351fe95fe35142c384fee6e5bd7bd7b7c3f19d60787245a.
+Original commands gone/session86038closed. No inference, provider, publication,
+Linux descendant cleanup or security waiver claimed; original ownershipT3 remains.
+
+Whole unchanged tests/test_claims.py after header correction:67pass/0fail/error/
+skip, JUnit16.841seconds/pytest17.40seconds on recorded Windows host/versions.
+C:/Users/Wareen/HawEdit-integrity-provenance-claims-20261009.xml,
+SHA4526e5d0e0d0dc337de27c57950746b5745bea9fe734fea92cc65ab2f90709d8.
+Original matching commands gone/session22990closed. git diff --check passes;
+only this research note and integrity evidence note changed. Fresh clean full
+gate remains required; caller242pass observations are not counted again.
