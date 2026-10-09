@@ -15830,3 +15830,32 @@ No new dependency, model/cloud call, trust root, HTTP editing or publication
 authority. BLUEPRINT4.3.6/8.3/D-263/D-277 and original independent acceptance
 still apply. specs/immutable-revision-artifacts is WIP until exact gate/current CI.
 
+## D-322: Private Revision Readiness And Review Provenance
+
+Approved parent evidence-based-studio step6; no new dependency/model/trust or
+publication authority. Actual977425f Serena maps and test-first evidence in
+specs/revision-review-truth. D-321 refuses occupied artifacts and retained claims
+at execution, so the read-only render proposal must expose the same refusal.
+Reuse artifact refusal for ASS/MP4/SRT/EDL and persistent claim paths, without
+mutating them. This is point-in-time readiness, not a reservation or permission
+to bypass the actual atomic render claim after a race.
+
+Correct the earlier proposal-approval-as-QC interpretation: approving an editing
+decision is not authenticated review of its final changed bytes. Build private
+caption/boundary revision clips with explicit unreviewed/non-auto-pass QC from
+the start; do not manufacture reviewer/timestamp/zero-hash review fields even
+temporarily. for_review=True retains existing real editorial, boundary, caption
+and rendering gates while leaving publication review outstanding. Compute prior
+QC invalidation from original clip's review marker, which is not itself evidence
+that a detached signature was verified. Always require fresh final-byte review.
+
+Real-render regressions cover both revision kinds, all occupied sidecars/MP4/
+claims, absent/unreviewed/reviewed original QC and original report preservation.
+Read-only Python profiling observes actual render arguments without replacing
+the renderer; full real FFmpeg render and sidecar assertions remain. No mock
+encoder, skipped case, changed golden/fixture, signature self-approval or relaxed
+gate. Canonical text/anchors/clocks, centre-crop limitation and real owner claim
+remain unchanged. BLUEPRINT2/4.3.6/8.3 and D-263/D-277 remain obligations.
+Unit WIP until exact committed gate plus required same-SHA CI, not full studio
+integration, model-byte admission, improved ZAR result or10/10 acceptance.
+

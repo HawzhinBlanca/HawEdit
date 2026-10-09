@@ -3,11 +3,36 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import FrameType
+
+from hawedit.clip import Clip
+from hawedit.render import render_clip
+
+
+@contextmanager
+def observed_render_inputs() -> Iterator[list[Clip]]:
+    inputs: list[Clip] = []
+    previous = sys.getprofile()
+
+    def observe(frame: FrameType, event: str, argument: object) -> None:
+        if event == "call" and frame.f_code is render_clip.__code__:
+            value = frame.f_locals["clip"]
+            assert isinstance(value, Clip)
+            inputs.append(value)
+        if previous is not None:
+            previous(frame, event, argument)
+
+    sys.setprofile(observe)
+    try:
+        yield inputs
+    finally:
+        sys.setprofile(previous)
 
 
 @contextmanager

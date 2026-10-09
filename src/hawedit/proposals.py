@@ -62,15 +62,15 @@ re-timed to the revised span's `clip_in_ms`, are the correct captions for the re
 from before this field existed have `selected_sentences == ()`; `render_boundary_revision`
 refuses those explicitly rather than rendering silent, empty captions.
 
-**The clip's editorial/output/QC blocks are reused from the original — reused, not re-derived.**
+**The clip's editorial/output blocks are reused; changed footage requires fresh review.**
 `Clip.assert_renderable` (called inside `render_clip`) requires an editorial block (Stage 4's
 judgment) and an output block (title/description/hashtags/crop target); a boundary revision
 changes neither of those, only the cut points, so `Clip.from_dict(report["clip"])` plus
 `dataclasses.replace` for the new `in_ms`/`out_ms`/`boundary` is correct rather than a
-convenience. QC is the one field this module supplies fresh — `Qc(auto_pass=False,
-human_reviewed=True)` — because the interactive approval `commit_boundary_revision` already
-required *is* the human review for this specific change; reusing the original clip's QC record
-would attribute this decision to whoever reviewed a different span.
+convenience. D-322 corrects the earlier equation of proposal approval with rendered-byte
+review: revisions render privately with `Qc(auto_pass=False, human_reviewed=False)` from the
+start. The original QC marker determines whether prior review was invalidated; it does not
+verify a detached signature. Reviewing the final changed bytes is a separate requirement.
 
 **Still a real, named simplification: revisions always render with a static centre crop.**
 Reproducing face-tracked reframing over a boundary that may now cover different footage would
@@ -112,7 +112,6 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -575,22 +574,14 @@ def render_boundary_revision(
     # gets its own check rather than trusting a status string.
     assert_boundary_invariant(new_boundary)
 
-    approver = str(revision.get("approved_by") or "human_approver")
-    now_iso = datetime.now(UTC).isoformat()
+    prior_reviewed = original_clip.qc is not None and original_clip.qc.human_reviewed
     revised_clip = replace(
         original_clip,
         clip_id=f"{original_clip.clip_id}-{revision_id}",
         in_ms=new_boundary.final_in_ms,
         out_ms=new_boundary.final_out_ms,
         boundary=new_boundary,
-        qc=Qc(
-            auto_pass=False,
-            flags=(),
-            human_reviewed=True,
-            reviewed_by=approver,
-            reviewed_at=now_iso,
-            reviewed_sha256="0" * 64,
-        ),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
     )
 
     revisions_dir = work_dir / "revisions"
@@ -640,11 +631,6 @@ def render_boundary_revision(
     except OSError:
         pass
 
-    prior_reviewed = revised_clip.qc is not None and revised_clip.qc.human_reviewed
-    revised_clip = replace(
-        revised_clip,
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
-    )
     revision["requires_review"] = True
     revision["prior_qc_invalidated"] = prior_reviewed
 
@@ -943,20 +929,12 @@ def render_caption_revision(
     selected = tuple(_sentence_from_dict(s) for s in selected_data)
 
     style = CaptionStyle(revision["proposed_caption_style"])
-    approver = str(revision.get("approved_by") or "human_approver")
-    now_iso = datetime.now(UTC).isoformat()
+    prior_reviewed = original_clip.qc is not None and original_clip.qc.human_reviewed
     revised_clip = replace(
         original_clip,
         clip_id=f"{original_clip.clip_id}-{revision_id}",
         output=replace(original_clip.output, caption_style=style.value),
-        qc=Qc(
-            auto_pass=False,
-            flags=(),
-            human_reviewed=True,
-            reviewed_by=approver,
-            reviewed_at=now_iso,
-            reviewed_sha256="0" * 64,
-        ),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
     )
 
     revisions_dir = work_dir / "revisions"
@@ -1003,11 +981,6 @@ def render_caption_revision(
     except OSError:
         pass
 
-    prior_reviewed = revised_clip.qc is not None and revised_clip.qc.human_reviewed
-    revised_clip = replace(
-        revised_clip,
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
-    )
     revision["requires_review"] = True
     revision["prior_qc_invalidated"] = prior_reviewed
 
@@ -1314,6 +1287,18 @@ def propose_render(work_dir: Path, revision_id: str) -> RenderProposal:
             f"revision has status {revision.get('status')!r}, not 'approved_pending_render' — "
             f"only an approved, not-yet-rendered revision can be rendered.",
         )
+    try:
+        _refuse_existing_revision_artifacts(
+            (
+                *tuple(
+                    revision_path.with_suffix(f".{suffix}")
+                    for suffix in ("ass", "mp4", "srt", "edl")
+                ),
+                revision_path.parent / f".{revision_id}.render-claim",
+            )
+        )
+    except RevisionRejected as exc:
+        return RenderProposal(str(work_dir), revision_id, kind, False, str(exc))
     report_path = work_dir / "report.json"
     if not report_path.is_file():
         return RenderProposal(

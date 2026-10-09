@@ -6,6 +6,21 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Revision Review Truth (WIP)
+
+D-322/specs/revision-review-truth: render proposals now refuse occupied
+artifacts/retained claims with read-only reconciliation context. Both revision
+renderers carry explicit unreviewed QC from the start, not invented reviewer/
+timestamp/zero-hash approval. Prior invalidation derives from original review
+marker, not a temporary synthetic review. Real103case red14fail/first correction
+pass; strengthened actual renderer-input checks reproduce16failures on baseline.
+Frozen whole affected570cases pass, zero failures/errors/skips; strict fast
+lint/type380files and changed-file format pass. Exact committed gate/current CI
+remain required; no DONE. Preliminary nonfrozen publication run correctly refused
+source drift caused by a concurrent formatter; final unchanged-source run passes.
+Evidence: evidence/revision-review-truth-20261009.md. Not HTTP workflow,
+authenticated final-byte review/export, protected model admission or ZAR quality.
+
 ## Immutable Revision Artifacts (WIP)
 
 D-321, specs/immutable-revision-artifacts: duplicate caption/boundary revision

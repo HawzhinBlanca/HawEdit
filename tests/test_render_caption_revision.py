@@ -13,6 +13,7 @@ import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -26,11 +27,12 @@ from hawedit.proposals import (
     RevisionRejected,
     commit_caption_revision,
     propose_caption_revision,
+    propose_render,
     render_caption_revision,
 )
 from hawedit.render import RenderError
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
-from revision_collision_test_support import competing_artifact
+from revision_collision_test_support import competing_artifact, observed_render_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -118,6 +120,65 @@ def _approve(work: Path, revision_id: str, caption_style: str) -> None:
         reason_code=ReasonCode.PREFERENCE,
         confirm=lambda _: True,
     )
+
+
+@pytest.mark.parametrize("occupied", ["ass", "mp4", "srt", "edl", "claim"])
+def test_caption_revision_proposal_refuses_reconciliation_without_writing(
+    real_run: tuple[Path, PipelineRun], tmp_path: Path, occupied: str
+) -> None:
+    original, _ = real_run
+    work = tmp_path / "run"
+    work.mkdir()
+    (work / "report.json").write_bytes((original / "report.json").read_bytes())
+    identifier = "reconciliation-required"
+    _approve(work, identifier, "line")
+    filename = f".{identifier}.render-claim" if occupied == "claim" else f"{identifier}.{occupied}"
+    (work / "revisions" / filename).write_bytes(
+        b"original interrupted evidence must stay unchanged"
+    )
+    before = {str(p.relative_to(work)): p.read_bytes() for p in work.rglob("*") if p.is_file()}
+    proposal = propose_render(work, identifier)
+    after = {str(p.relative_to(work)): p.read_bytes() for p in work.rglob("*") if p.is_file()}
+    assert after == before
+    assert proposal.valid is False, "Existing render evidence cannot be labelled ready"
+    assert "reconciliation" in str(proposal.violation).lower()
+
+
+@pytest.mark.parametrize("original_review", ["none", "unreviewed", "reviewed"])
+def test_caption_revision_invalidation_records_original_review_state(
+    real_run: tuple[Path, PipelineRun], tmp_path: Path, original_review: str
+) -> None:
+    original, _ = real_run
+    work = tmp_path / "run"
+    work.mkdir()
+    path = work / "report.json"
+    report = json.loads((original / "report.json").read_text(encoding="utf8"))
+    if original_review != "reviewed":
+        report["clip"]["qc"] = (
+            None
+            if original_review == "none"
+            else asdict(Qc(auto_pass=False, flags=(), human_reviewed=False))
+        )
+    path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf8")
+    original_bytes = path.read_bytes()
+    identifier = "original-review-state"
+    _approve(work, identifier, "line")
+    with observed_render_inputs() as inputs:
+        record = render_caption_revision(work, identifier)
+    assert len(inputs) == 1
+    assert inputs[0].qc is not None
+    assert inputs[0].qc.human_reviewed is False
+    assert inputs[0].qc.auto_pass is False
+    assert inputs[0].qc.reviewed_by is None
+    assert inputs[0].qc.reviewed_at is None
+    assert inputs[0].qc.reviewed_sha256 is None
+    assert record["status"] == "rendered"
+    assert record["requires_review"] is True
+    assert record["clip"]["qc"]["human_reviewed"] is False
+    assert record["clip"]["qc"]["auto_pass"] is False
+    assert Path(record["render_path"]).is_file()
+    assert path.read_bytes() == original_bytes
+    assert record["prior_qc_invalidated"] is (original_review == "reviewed")
 
 
 def test_caption_revision_id_is_immutable(real_run: tuple[Path, PipelineRun]) -> None:
