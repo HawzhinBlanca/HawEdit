@@ -148,7 +148,7 @@ def run_request(
                 ResumableValidator(selected_validator, journal) if journal else selected_validator
             )
 
-        results, validated_by, rejected_corrections = _validate_hard_segments(
+        results, validated_by, rejected_corrections, origins = _validate_hard_segments(
             initial, active_model, validator_factory, stop_on_failure=True
         )
         if getattr(model, "adapter_name", None) != expected_identity:
@@ -160,6 +160,7 @@ def run_request(
             adapter=expected_identity,
             validated_by=validated_by,
             rejected_validator_corrections=rejected_corrections,
+            segment_origins=origins,
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("x", encoding="utf-8", newline="\n") as stream:

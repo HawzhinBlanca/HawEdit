@@ -15580,3 +15580,38 @@ This policy does not certify Linux/GPU/provider/billing drainage or admit HTTP
 generation. Qualified VEX#24 stays separate; do not self-rebind its source.
 Research/EARS/callers/ledger: specs/native-members-transition; full gate/CI pending.
 
+## D-315 - Preserve Actual Segment Routing And Selection Without Rewriting ASR
+
+2026-10-09, approved evidence-based-studio Phase5. BLUEPRINT sections3 Stage1,
+4.1/4.2/5/8.1; D-144/D-181. No dependency, model, licence, spending or review grant.
+
+The router evaluates original draft LLM/CTC/confidence but replaces accepted
+aligned segments. Selected confidence and global validated_by cannot identify
+which segment was corrected or reproduce the original policy decisions.
+Retain separate frozen SegmentOrigin records with original/selected confidence,
+actual routing reason/outcome, registered validator/returned text, refusals and
+absolute selected Word tuples. Both real native and WSL call sites forward the
+explicit router return. This deliberate Word duplication permits exact binding
+to canonical words without guessing segment membership from caption timing.
+
+RawTranscript checks complete chronological traces, exact selected text/words/
+confidence/aggregate validator/refusals and original full-batch policy replay.
+Reporting uses recorded original inputs, not post-correction confidence. Preserve
+the bottom-quartile/material-CER policy and existing100ms alignment allowance.
+Strict production stops still retain original diagnostic results without a
+completed trace. Invalid/empty responses cannot appear as accepted corrections.
+
+The optional key is omitted when absent, preserving existing serialization and
+digest. Present empty/malformed/inconsistent records refuse rather than downgrade
+to unknown. Do not infer legacy origins from validated_by. SegmentTranscript and
+its exact four-field resume records are unchanged; canonical artifacts remain
+write-once. Existing retained ZAR bytes/hash were actually checked unchanged.
+
+This is self-consistency provenance, not authenticated model execution, acoustic
+accuracy, a model-revision observation, human editorial review or publication
+authority. A trace does not repair the retained20.8s ZAR word span or admit a
+worker. Current VEX#24, protected execution/HTTP/review/revision/export and
+independent corpus/creator/editor/performance/sustained acceptance remain.
+Specs/callers/named tests: specs/asr-segment-origin; evidence/asr-segment-origin-20261009.md.
+Full exact gate and applicable same-SHA CI still govern acceptance.
+

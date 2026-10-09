@@ -6,6 +6,19 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## ASR Segment Origin (M9.94, WIP)
+
+D-315, baseline6ef4d4a. Actual pre-edit Serena maps and unchanged source hashes
+recorded in specs/asr-segment-origin. Test-first27fail/1legacy-pass; expanded36
+trace contract cases and21whole affected modules1153pass/0failure/error/skip.
+Full ruff/mypy/format pass368files. Original/validator/selected immutable trace,
+original-batch replay and exact canonical binding; no changed model, routing,
+resume payload, canonical history or caption timings. Actual retained ZAR
+5769words/158segments preserve exact923239bytes and SHA256; origins stay unknown.
+Evidence: evidence/asr-segment-origin-20261009.md. Exact current gate/CI pending;
+no ledger promotion, model accuracy, protected worker/HTTP, new reel, authenticated
+delivery, independent acceptance or10/10 claim.
+
 ## Native Member Transition (M9.93, WIP)
 
 D-314, baseline b290ae8. Actual complete gate5702pass/2fail: incomplete native
@@ -18,6 +31,10 @@ short-list reproduction claimed. Actual wrong-type Win32 API error still refuses
 Evidence: evidence/native-member-transition-2026-10-09.md. Exact corrected clean
 gate and same-SHA required CI pending; no ledger promotion, inference, new reel,
 producer registration, publication or10/10 acceptance.
+
+Corrected clean6ef4d4a gate final5705pass/1stale-qualified-VEX failure/0error/skip,
+unchanged. Original native failure did not recur in this run; no future race
+impossibility, green gate/CI or DONE claim. The pending gate text above is historical.
 
 ## Owned Scanner Cleanup (M9.82, WIP)
 

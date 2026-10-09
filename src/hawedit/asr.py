@@ -44,7 +44,7 @@ from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 from hawedit.asr_completion import COMPLETION_POLICY_ID, transcribe_completed
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
-from hawedit.escalation import SegmentScore, select_for_validation
+from hawedit.escalation import EscalationDecision, SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
 from hawedit.models import ModelStore, assert_transformers_config_safe, verified_checkpoint_access
 from hawedit.omni_assets import (
@@ -62,6 +62,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RejectedValidatorCorrection,
     SegmentConfidence,
+    SegmentOrigin,
     UnalignedSpeech,
     Word,
 )
@@ -1043,7 +1044,7 @@ class OmniAsrProducer:
         )
         if type(self.backend) is OmniAsrBackend:
             self.backend.release_draft_model()
-        results, validated_by, rejected_corrections = _validate_hard_segments(
+        results, validated_by, rejected_corrections, origins = _validate_hard_segments(
             initial, self.backend, self._validator, stop_on_failure=True
         )
         if self.model_identity != expected_identity:
@@ -1057,6 +1058,7 @@ class OmniAsrProducer:
             adapter=expected_identity,
             validated_by=validated_by,
             rejected_validator_corrections=rejected_corrections,
+            segment_origins=origins,
         )
 
 
@@ -1270,6 +1272,7 @@ def _assemble_canonical_transcript(
     *,
     validated_by: str | None = None,
     rejected_validator_corrections: Sequence[RejectedValidatorCorrection] = (),
+    segment_origins: tuple[SegmentOrigin, ...] | None = None,
 ) -> RawTranscript:
     if not results:
         raise RuntimeError(
@@ -1327,6 +1330,7 @@ def _assemble_canonical_transcript(
         unaligned=tuple(unaligned),
         segment_confidence=tuple(confidences),
         rejected_validator_corrections=tuple(rejected_validator_corrections),
+        segment_origins=segment_origins,
     )
 
 
@@ -1336,6 +1340,42 @@ def _failure_reason(exc: Exception, *, limit: int = 1_024) -> str:
     printable = "".join(character if character.isprintable() else " " for character in raw)
     one_line = " ".join(printable.split()) or type(exc).__name__
     return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
+
+
+def _segment_origin(
+    segment: _PreparedSpeechSegment,
+    draft: SegmentTranscript,
+    selected: SegmentTranscript,
+    decision: EscalationDecision,
+    outcome: str,
+    *,
+    validator: str | None = None,
+    validator_text: str | None = None,
+    rejection_reason: str | None = None,
+) -> SegmentOrigin:
+    def confidence(item: SegmentTranscript) -> SegmentConfidence:
+        return SegmentConfidence(
+            segment.start_ms, segment.end_ms, item.mean_logprob, item.text_raw, item.ctc_text
+        )
+
+    return SegmentOrigin(
+        draft=confidence(draft),
+        selected=confidence(selected),
+        selected_words=tuple(
+            replace(
+                word,
+                start_ms=word.start_ms + segment.start_ms,
+                end_ms=word.end_ms + segment.start_ms,
+            )
+            for word in selected.words
+        ),
+        escalated=decision.escalate,
+        route_reason=decision.reason,
+        outcome=outcome,
+        validator=validator,
+        validator_text=validator_text,
+        rejection_reason=rejection_reason,
+    )
 
 
 def _validate_hard_segments(
@@ -1348,6 +1388,7 @@ def _validate_hard_segments(
     tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
     str | None,
     tuple[RejectedValidatorCorrection, ...],
+    tuple[SegmentOrigin, ...],
 ]:
     """Apply §3's confidence/disagreement router and realign only corrected segments."""
     scores = tuple(
@@ -1362,20 +1403,34 @@ def _validate_hard_segments(
     )
     decisions = select_for_validation(scores)
     if not any(decision.escalate for decision in decisions):
-        return tuple(results), None, ()
+        return (
+            tuple(results),
+            None,
+            (),
+            tuple(
+                _segment_origin(segment, item, item, decision, "not-routed")
+                for (segment, item), decision in zip(results, decisions, strict=True)
+            ),
+        )
 
     validator = validator_factory()
     resolve_role(validator.model_id, frozenset({"asr_validator"}), "the ASR validator")
     routed: list[tuple[_PreparedSpeechSegment, SegmentTranscript]] = []
     rejected: list[RejectedValidatorCorrection] = []
+    origins: list[SegmentOrigin] = []
     accepted_correction = False
     for (segment, item), decision in zip(results, decisions, strict=True):
         if not decision.escalate:
             routed.append((segment, item))
+            origins.append(_segment_origin(segment, item, item, decision, "not-routed"))
             continue
         failed_stage = "validator transcription"
+        corrected: str | None = None
         try:
             corrected = validator.transcribe_segment(segment.path, segment.duration_s)
+            if not isinstance(corrected, str):
+                corrected = None
+                raise ValueError("ASR validator response must be text")
             failed_stage = "validator alignment"
             aligned = backend.align_segment(segment.path, segment.duration_s, corrected)
         except Exception as exc:
@@ -1393,13 +1448,39 @@ def _validate_hard_segments(
             # Preserve that alignment and make the failed escalation explicit in the artifact.
             routed.append((segment, item))
             rejected.append(failure)
+            origins.append(
+                _segment_origin(
+                    segment,
+                    item,
+                    item,
+                    decision,
+                    "validator-alignment-refused"
+                    if failed_stage == "validator alignment"
+                    else "validator-transcription-refused",
+                    validator=validator.model_id,
+                    validator_text=corrected,
+                    rejection_reason=failure.reason,
+                )
+            )
             continue
         accepted_correction = True
         routed.append((segment, aligned))
+        origins.append(
+            _segment_origin(
+                segment,
+                item,
+                aligned,
+                decision,
+                "validator-selected",
+                validator=validator.model_id,
+                validator_text=corrected,
+            )
+        )
     return (
         tuple(routed),
         validator.model_id if accepted_correction else None,
         tuple(rejected),
+        tuple(origins),
     )
 
 
