@@ -15651,3 +15651,32 @@ VEX#24 or complete review/revision/export/independent acceptance.
 Specs/named tests/callers: specs/asr-routing-report;
 evidence/asr-routing-report-20261009.md. WIP until exact gate/current CI evidence.
 
+## D-317 - Publish Complete Worker Transfer Bytes Without Replacing Evidence
+
+2026-10-09, approved evidence-based-studio phases1-2; BLUEPRINT sections3/4.1/7,
+D-136/D-315/D-316. No dependency, model, routing or publication-authority change.
+
+The worker's exclusive final-file open prevented replacement but exposed the
+name before serialization/write completed. Actual encoding refusal and original
+child termination left empty final bytes. Occupied names refused after inference.
+Transfer artifacts are not canonical reuse or review/publication authority.
+
+Refuse occupied names with lstat before model construction, including dangling
+links. Serialize and UTF8 encode complete JSON plus its existing LF before opening
+an exclusive unique sibling stage; flush/fsync, close and atomically os.link to
+the final path without replacement. Preserve the existing transcript-store pattern.
+Concurrent writers still require the final no-replace operation; early checks
+alone cannot authorize publication. Never use overwrite helpers or rename fallback.
+Cleanup removes only the owned stage, not old unknown evidence. An original
+process killed before cleanup may leave a stage requiring explicit reconciliation.
+Unsupported link/filesystem/storage operations refuse, not downgrade guarantees.
+
+Eight named real-file regressions cover encoding, retained files/directories,
+original child death, unchanged JSON/LF/Sorani bytes, simultaneous writers and
+unrelated stage retention. Explicit model doubles are not neural inference.
+Native WSL/tmp and DrvFS link calibration is separate OS evidence, not power-loss
+or directory-fsync durability, hostile-owner isolation, GPU/effect completion,
+accurate speech, authenticated review or completed media publication.
+Specs/callers: specs/worker-result-publication;
+evidence/worker-result-publication-20261009.md. WIP until exact gate/current CI.
+

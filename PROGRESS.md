@@ -6,6 +6,21 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Complete Worker Result Publication (WIP)
+
+D-317; actual Serena/EARS/approved-parent plan in specs/worker-result-publication.
+Primary test-first4fail/4pass reproduces empty final results after encoding error
+and original-child death, plus inference before occupied-name refusal. Complete
+UTF8 staging/fsync/atomic no-replace link now passes8named regressions. Whole
+affected caller modules335pass; static/format372files pass. No canonical/model/
+routing change or neural-quality claim. Evidence:
+evidence/worker-result-publication-20261009.md. Exact committed gate and same-SHA
+required CI remain required; task WIP, no ledger promotion/10/10 claim.
+
+Prior6bbe exact clean gate5798pass/1stale-VEX-fail/0error/skip. Evidence header
+correction passes; expired/currently unbound independent policy remains refused.
+No qualified security attestation is manufactured or re-bound.
+
 ## Truthful ASR Routing Reports (M9.95, WIP)
 
 D-316, baselinef6e6773. Actual Serena defs/references and EARS/plan/callers in

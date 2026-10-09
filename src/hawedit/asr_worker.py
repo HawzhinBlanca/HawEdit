@@ -10,8 +10,11 @@ encoding across the Windows/WSL boundary.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import re
+import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -59,6 +62,16 @@ def run_request(
     checkpoint_root: Path | None = None,
 ) -> RawTranscript:
     """Execute one strict bridge request; primarily separated for deterministic tests."""
+    try:
+        output_path.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        raise FileExistsError(
+            errno.EEXIST,
+            "ASR worker result already exists; preserve and reconcile it or use a new output path",
+            str(output_path),
+        )
     payload: Any = json.loads(request_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema_version") != 2:
         raise ValueError("unsupported OmniASR worker request schema")
@@ -162,10 +175,26 @@ def run_request(
             rejected_validator_corrections=rejected_corrections,
             segment_origins=origins,
         )
+        result_bytes = (transcript.to_json() + "\n").encode("utf-8")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with output_path.open("x", encoding="utf-8", newline="\n") as stream:
-            stream.write(transcript.to_json())
-            stream.write("\n")
+        staging: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f".{output_path.name}.",
+                suffix=".tmp",
+                dir=output_path.parent,
+                delete=False,
+            ) as stream:
+                staging = Path(stream.name)
+                stream.write(result_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # The final name must expose complete bytes without replacing retained evidence.
+            os.link(staging, output_path)
+        finally:
+            if staging is not None:
+                staging.unlink(missing_ok=True)
         return transcript
 
 
