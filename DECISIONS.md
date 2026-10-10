@@ -15953,3 +15953,43 @@ phases/AC1--AC12 remain open. No DONE until exact green gate plus same-SHA CI.
 Research/spec/impact/approved plan/WIP ledger: specs/rooted-linux-image.
 Primary libffi explanation: https://github.com/libffi/libffi/blob/master/src/tramp.c
 
+## D-326: Explicit Read-Only Private Kernel Entropy
+
+2026-10-10. Wareen explicitly approved specs/rooted-kernel-entropy/plan.md.
+D-325's actual copied retained Python3.12.0 cannot initialize hash entropy:
+its compiled kernel-entropy APIs are absent although fenced libc.getrandom
+works. Keep the pinned interpreter and model policy; do not install/rebuild,
+fix the hash seed, fabricate random regular bytes or weaken the namespace fence.
+
+Only an exact boolean rooted-image opt-in may expose genuine kernel character
+major1/minor9 at private /dev/urandom. Capture no-follow readonly noninheritable
+original descriptor/anchor custody, bind only that device in the private mount
+namespace, reserve the endpoint against declarations, remount readonly/nosuid/
+noexec, retain nodev/read-only elsewhere and verify actual path/mount/description
+identity on use. Entropy is mutable kernel state, not hash-bound copied media.
+No arbitrary host/device allowlist or host-directory access. Cleanup refuses
+to close substituted foreign descriptions, including same-inode reopenings.
+
+Readonly mount metadata alone does not prohibit character-device write opens:
+actual WSL6.18.40.1 negative calibration demonstrates this without writing any
+bytes. The opted-in readonly image therefore also refuses writable/creating/
+truncating open/openat, creat, and pointer-flag openat2 via the existing x86_64
+seccomp fence. Readonly opens and all default non-opt-in behavior stay intact.
+Existing writable entropy handles refuse; no host-device chmod is allowed.
+Future SDK scratch/device requirements must be explicit and cannot silently
+relax these controls. Primary semantics: Linux6.18 fs/namei.c sb_permission/
+may_open, https://github.com/torvalds/linux/blob/v6.18/fs/namei.c.
+
+Opt-in also refuses io_uring setup/enter/register and preexisting ring handles:
+async internal opens bypass ordinary syscall-entry flag inspection. Actual
+kernel controls first reproduced both missing refusals; no ring submissions or
+device writes were made. Mount cloning precedes original endpoint acquisition
+so its descriptor belongs to the private namespace. Genuine read-only device
+identity uses the existing fail-stop platform-capability helper on Windows.
+Primary async path: https://github.com/torvalds/linux/blob/v6.18/io_uring/openclose.c.
+
+This owner architecture approval is not independent security review (#24),
+full SDK/model/input closure, resource/controller/member admission, GPU/device
+permission, billable provider readiness, authenticated reel publication or a
+10/10 verdict. Exact full gate and same-SHA CI obligations remain; task rows WIP.
+

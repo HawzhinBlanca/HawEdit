@@ -187,6 +187,8 @@ class LinuxSnapshot:
     _filters: int
     _names: frozenset[str]
     _mode: SnapshotMode
+    _kernel_entropy: bool
+    _entropy: tuple[int, int] | None
     _retained: dict[int, tuple[int, tuple[int, int, int], SnapshotFile]]
 
     def __init__(
@@ -198,6 +200,7 @@ class LinuxSnapshot:
         max_files: int = 4096,
         timeout_seconds: float = 30.0,
         mode: SnapshotMode = SnapshotMode.DATA_ONLY,
+        kernel_entropy: bool = False,
     ) -> None:
         global _ATTEMPTED
         end = time.monotonic() + _seconds(timeout_seconds)
@@ -217,9 +220,11 @@ class LinuxSnapshot:
             raise LinuxSnapshotError(
                 "Snapshot initial no-new-privileges/zero capabilities required"
             )
-        names = self._declarations(root, files, max_bytes, max_files, mode)
+        names = self._declarations(root, files, max_bytes, max_files, mode, kernel_entropy)
         self._root = root
         self._mode = mode
+        self._kernel_entropy = kernel_entropy
+        self._entropy = None
         self._names = frozenset(names)
         self._creator = (os.getpid(), threading.get_ident())
         self._thread = threading.current_thread()
@@ -244,6 +249,8 @@ class LinuxSnapshot:
                 self._outside_descriptions(before, files, end)
             _ATTEMPTED = True
             self._initialize(end)
+            if kernel_entropy:
+                self._acquire_entropy()
             self._mount(
                 b"tmpfs",
                 os.fsencode(root),
@@ -261,6 +268,8 @@ class LinuxSnapshot:
                 self._copy(item, end)
             if mode is SnapshotMode.ROOTED_IMAGE:
                 self._prepare_proc()
+                if kernel_entropy:
+                    self._prepare_entropy()
             # A live writer makes remount fail. Never keep any copied write FD.
             target = (
                 f"/proc/self/fd/{self._anchor}" if mode is SnapshotMode.ROOTED_IMAGE else str(root)
@@ -298,6 +307,7 @@ class LinuxSnapshot:
         max_bytes: int,
         max_files: int,
         mode: SnapshotMode = SnapshotMode.DATA_ONLY,
+        kernel_entropy: bool = False,
     ) -> set[str]:
         if (
             not isinstance(root, Path)
@@ -306,6 +316,8 @@ class LinuxSnapshot:
             or ".." in root.parts
             or type(files) is not tuple
             or type(mode) is not SnapshotMode
+            or type(kernel_entropy) is not bool
+            or (kernel_entropy and mode is not SnapshotMode.ROOTED_IMAGE)
             or type(max_bytes) is not int
             or not 0
             < max_bytes
@@ -323,6 +335,10 @@ class LinuxSnapshot:
             name = _name(item.relative_path)
             if mode is SnapshotMode.ROOTED_IMAGE and name.split("/")[0] == "proc":
                 raise LinuxSnapshotError("Snapshot proc is reserved for readonly kernel state")
+            if kernel_entropy and (
+                name in ("dev", "dev/urandom") or name.startswith("dev/urandom/")
+            ):
+                raise LinuxSnapshotError("Snapshot entropy path is reserved for kernel state")
             if item.executable and mode is not SnapshotMode.ROOTED_IMAGE:
                 raise LinuxSnapshotError("Snapshot executables require explicit rooted mode")
             parts = name.split("/")
@@ -379,8 +395,23 @@ class LinuxSnapshot:
         for fd, original in inventory:
             self._left(end)
             mode = original[2]
+            if (
+                self._kernel_entropy
+                and os.readlink(f"/proc/self/fd/{fd}") == "anon_inode:[io_uring]"
+            ):
+                raise LinuxSnapshotError("Rooted readonly entropy refuses retained async rings")
             if stat.S_ISDIR(mode):
                 raise LinuxSnapshotError("Rooted image requires closed outside directories")
+            if (
+                self._kernel_entropy
+                and stat.S_ISCHR(mode)
+                and _api(os.fstat(fd), "st_rdev") == _api(os, "makedev")(1, 9)
+                and (
+                    _fcntl().fcntl(fd, _fcntl().F_GETFL) & int(_api(os, "O_ACCMODE")) != os.O_RDONLY
+                    or os.get_inheritable(fd)
+                )
+            ):
+                raise LinuxSnapshotError("Rooted entropy requires no writable/inheritable handles")
             if not stat.S_ISREG(mode):
                 continue
             flags = _fcntl().fcntl(fd, _fcntl().F_GETFL)
@@ -456,6 +487,72 @@ class LinuxSnapshot:
         target = os.fsencode(f"/proc/self/fd/{self._anchor}/proc")
         self._mount(b"/proc", target, None, 4096 | 16384)
         self._mount(None, target, None, 32 | 4096 | 1 | 2 | 4 | 8)
+
+    def _acquire_entropy(self) -> None:
+        parent = _directory(Path("/dev"))
+        try:
+            fd = os.open("urandom", _flags("O_RDONLY", "O_NOFOLLOW", "O_CLOEXEC"), dir_fd=parent)
+        finally:
+            os.close(parent)
+        self._remember(fd)
+        anchor = os.dup(fd)
+        self._remember(anchor)
+        self._entropy = (fd, anchor)
+        self._entropy_custody()
+
+    def _entropy_custody(self) -> None:
+        if self._entropy is None:
+            raise LinuxSnapshotError("Snapshot original entropy description unavailable")
+        for fd in self._entropy:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISCHR(info.st_mode)
+                or _api(info, "st_rdev") != _api(os, "makedev")(1, 9)
+                or _identity(fd) != self._known.get(fd)
+                or os.get_inheritable(fd)
+                or _fcntl().fcntl(fd, _fcntl().F_GETFL) & int(_api(os, "O_ACCMODE")) != os.O_RDONLY
+            ):
+                raise LinuxSnapshotError("Snapshot original readonly entropy identity substituted")
+        if _fcntl().fcntl(self._entropy[0], 1027, self._entropy[1]) != 1:
+            raise LinuxSnapshotError("Snapshot original entropy description substituted")
+
+    def _prepare_entropy(self) -> None:
+        self._entropy_custody()
+        assert self._entropy is not None
+        with suppress(FileExistsError):
+            os.mkdir("dev", 0o700, dir_fd=self._anchor)
+        directory = os.open(
+            "dev", _flags("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"), dir_fd=self._anchor
+        )
+        try:
+            placeholder = os.open(
+                "urandom",
+                _flags("O_WRONLY", "O_CREAT", "O_EXCL", "O_NOFOLLOW", "O_CLOEXEC"),
+                0o400,
+                dir_fd=directory,
+            )
+            os.close(placeholder)
+            target = os.fsencode(f"/proc/self/fd/{self._anchor}/dev/urandom")
+            self._mount(os.fsencode(f"/proc/self/fd/{self._entropy[0]}"), target, None, 4096)
+            self._mount(None, target, None, 32 | 4096 | 1 | 2 | 8)
+            self._entropy_custody()
+        finally:
+            os.close(directory)
+
+    def _inspect_entropy(self) -> None:
+        self._entropy_custody()
+        assert self._entropy is not None
+        current = os.stat("/dev/urandom", follow_symlinks=False)
+        if (current.st_dev, current.st_ino, current.st_mode) != _identity(self._entropy[0]):
+            raise LinuxSnapshotError("Snapshot private entropy endpoint substituted")
+        flags = int(_api(os, "statvfs")("/dev/urandom").f_flag)
+        required = _flags("ST_RDONLY", "ST_NOSUID", "ST_NOEXEC")
+        if (
+            flags & required != required
+            or flags & int(_api(os, "ST_NODEV"))
+            or not int(_api(os, "fstatvfs")(self._anchor).f_flag) & int(_api(os, "ST_NODEV"))
+        ):
+            raise LinuxSnapshotError("Snapshot private entropy mount policy changed")
 
     def _enter_root(self) -> None:
         _api(os, "fchdir")(self._anchor)
@@ -601,6 +698,27 @@ class LinuxSnapshot:
             (0x35, 0, 1, 0x40000000),
             (0x06, 0, 0, 0x50000 | errno.ENOSYS),
         ]
+        if self._kernel_entropy:
+            # Readonly mounts do not prohibit character-device writes/reopens.
+            write_flags = _flags("O_ACCMODE", "O_CREAT", "O_TRUNC", "O_APPEND")
+            for number, offset in ((2, 24), (257, 32)):
+                instructions.extend(
+                    [
+                        (0x15, 0, 3, number),
+                        (0x20, 0, 0, offset),
+                        (0x45, 0, 1, write_flags),
+                        (0x06, 0, 0, 0x50000 | errno.EPERM),
+                        (0x20, 0, 0, 0),
+                    ]
+                )
+            for number, code in (
+                (85, errno.EPERM),
+                (437, errno.ENOSYS),
+                (425, errno.ENOSYS),
+                (426, errno.ENOSYS),
+                (427, errno.ENOSYS),
+            ):
+                instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | code)])
         for number in (272, 308, 165, 166, 155, 161, 428, 429, 430, 431, 432, 433, 442, 435):
             instructions.extend(
                 [
@@ -641,6 +759,8 @@ class LinuxSnapshot:
                 if _identity(fd) != expected or os.get_inheritable(fd):
                     raise LinuxSnapshotError("Snapshot original descriptor substituted")
             pairs = [(self._root_fd, self._anchor), *self._namespaces.values()]
+            if self._entropy is not None:
+                pairs.append(self._entropy)
             for fd, (anchor, original, _) in self._retained.items():
                 if _identity(fd) != original or os.get_inheritable(fd):
                     raise LinuxSnapshotError("Snapshot retained private descriptor substituted")
@@ -662,6 +782,8 @@ class LinuxSnapshot:
                     or not int(_api(os, "statvfs")("/proc").f_flag) & int(_api(os, "ST_RDONLY"))
                 ):
                     raise LinuxSnapshotError("Snapshot original process root/cwd/proc changed")
+                if self._kernel_entropy:
+                    self._inspect_entropy()
             status = _status()
             if (
                 not _zero_caps(status)
@@ -689,6 +811,8 @@ class LinuxSnapshot:
     def _cleanup(self) -> None:
         uncertain: set[int] = set()
         pairs = [(self._root_fd, self._anchor), *self._namespaces.values()]
+        if self._entropy is not None:
+            pairs.append(self._entropy)
         pairs.extend((fd, item[0]) for fd, item in self._retained.items())
         for first, anchor in pairs:
             if first >= 0 and anchor >= 0:

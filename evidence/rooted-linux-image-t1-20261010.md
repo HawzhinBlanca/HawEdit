@@ -89,3 +89,30 @@ cloud Stage4 requires keyframes, so it is outside this scope; no silent text-onl
 visual verdict. Actual spending is zero in this session. Approval does not
 manufacture signed authority, governance references, security/editor review or
 runner registration. Every original release and sustained threshold remains.
+
+## Exact Clean Committed Gate Verdict
+
+Subsequent canonical clean local gate on
+`2fa571038af8c79677f1a12214be9836be1e2b46`, package
+`532a8b6db1cfaac876e0a02b681ef61bac0bd4a605e58a96e501d4e8380eadad`:
+6095 cases, 6094 passed, one failure, zero setup errors/skips. JUnit2371.225s;
+foreground observer2435.395045400015s. Same host/runtime versions above.
+Lint/typecheck/format passed; all tracked source and observer bytes, package,
+HEAD and clean checkout state stayed unchanged. All four dirty-build failures
+are resolved by actual committed clean execution, not guard changes.
+
+Only nonpassing case:
+`tests.test_vex.test_checked_in_policy_binds_current_lock_and_assets_and_closes_report`,
+reviewed81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+versus current532a8b6db1cfaac876e0a02b681ef61bac0bd4a605e58a96e501d4e8380eadad.
+No independent security rebind/renewal was manufactured (#24).
+
+Original terminal/command/source hashes and raw JUnit:
+`C:/Users/Wareen/AppData/Local/HawEditEvidence/rooted-image-t1-clean-gate-20261010/terminal.json`
+and `gate.xml`, JUnit SHA256
+`72d7a66f574db996983bbc31a3607b4bb7359cdacaca7880ed756819e4869b17`.
+Observer finished2026-10-10T09:30:57.915472UTC with exit1/unchanged true;
+session33906 closed only after original process absence. This is not a green
+gate, same-SHA CI, protected model admission or creator/editor acceptance.
+T1 stays WIP; no ledger row promoted. Subsequent approved entropy work is a
+separate unit with fresh source/gate obligations.

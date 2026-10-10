@@ -23,3 +23,23 @@
 - No new dependency, model, registry entry, threshold, network download, or licence claim is added.
 - `BLUEPRINT.md` remains frozen; the implementation follows §3 rather than amending it.
 - `PROGRESS.md` and evidence will describe a composed seam, not a measured production feature.
+
+## Current Follow-Up Caller Map (2026-10-10)
+
+Actual Serena seven-pair map and original source hashes are in research.md.
+
+| Symbol | Actual callers | Repair/coverage |
+|---|---|---|
+| `pipeline._resolve_camera` | `_render_episode_single_clip`, `run_pipeline` | Both routes require usable camera evidence; decoded fixture regression is parameterized over both. |
+| `reframe.layout_policy` | `_resolve_camera`, `test_layout_policy_holds_on_ambiguity_and_switches_on_verified_turn` | No ambiguous initial/post-shot seed; preserve verified holds and sustained-turn moves. |
+| `validate_speaker_focus_points` | `_resolve_camera`, `diarization_acceptance._ReferenceItem.from_dict`, `_item_metrics`, existing reframe tests | Leave structural unknown/listener validation unchanged; add an explicit unchanged-contract control. |
+| `_CameraResolution` | `_resolve_camera` return construction | No signature change; no speaker-labelled render with an empty/unusable layout. |
+| `SpeakerFocusPoint` | trackers, pipeline, diarization acceptance, existing tests | No schema/default/identity threshold change. |
+
+Add regressions in existing `tests/test_candidate_framing_parity.py` for both
+production routes and split-centre contamination; unit controls in
+`tests/test_reframe.py`. Preserve all existing assertions, fixtures and golden
+media. The decoded-media contract tests inject known labelled observations to
+exercise the real resolver/layout/render; they do not measure the tracker or
+prove native identity accuracy. Full affected cohorts include pipeline, episode,
+candidate framing, reframe, render and diarization acceptance.

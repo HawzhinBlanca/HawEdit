@@ -61,3 +61,80 @@ mapping used exact `rg` symbol/caller searches and direct source inspection.
 This composes the missing trust boundary and makes the future production adapter plug-in work
 testable. It does not close M3.3/M8.1: production gated bytes, an actual associator, and real
 multi-speaker measurements remain required.
+
+## 2026-10-10 Camera Evidence Admission Follow-Up
+
+The preceding implementation inventory is historical, not a description of
+current source. At `2fa571038af8c79677f1a12214be9836be1e2b46`, the shared
+`pipeline._resolve_camera` serves single-clip and episode rendering. It validates
+point shape/clock/turn identity, then treats any nonempty result as usable
+speaker evidence. Its split centres aggregate all original observations.
+`reframe.layout_policy` checks speaker state, speaking status and its existing
+0.6 confidence policy, but seeds an unestablished camera from an ambiguous
+point. After a shot cut it can seed again from a listener. Structural validation
+is intentionally distinct from editorial evidence admission.
+
+An actual synthetic probe with a zero-confidence, non-speaking listener returns
+a nonempty validated point and layout keyframe. This is a contract counterexample,
+not measured speaker identity accuracy or proof of an already published failure.
+Fresh decoded ZAR source frames also show why an arbitrary centre crop is not
+acceptable: the wide shot and late close shot need different subjects/positions.
+Source/images/commands and limitations are in
+`C:/Users/Wareen/HawEdit-video-rating-20261010/zar-source-framing-research.md`.
+
+Genuine installed Serena definition/reference mapping completed seven pairs at
+the current SHA with unchanged source/status. Original first mapping failed on
+an incorrect research target `_ClipCameraPlan`; it was corrected to the actual
+`_CameraResolution` and re-run, not represented as a successful first attempt.
+Full map: `C:/Users/Wareen/HawEditCameraAdmissionMap-retry-20261010/serena-map.json`,
+SHA256 `cf7ae09136fb19486a5d142e72ccdace064f878e80fa1d275c043bc441b6aabc`.
+Pipeline raw hash `eb800d5a2977f2e73c7b9b32fb78f92e4d38930de31a2e55e9239a09240f1a45`;
+reframe raw hash `d985673d71465cbda963a324731065ddc3333faccc84482b3ece4a380135809f`.
+
+Bounded repair within approved Phase 5 and this existing plan: preserve
+structural validation and unknown/listener observations for evaluation;
+require established usable evidence for a camera, retain confirmed within-shot
+holds, refuse an ungrounded initial/post-cut position, and exclude non-speaking/
+low-confidence observations from split centres. Preserve preview-only empty
+result behavior and production fail-stop behavior. Do not call the existing
+heuristic threshold calibrated accuracy, change model policy, relax signatures,
+or silently substitute another crop. No new dependency or architectural boundary.
+
+Direct current tracker inspection shows its first frame intentionally has no
+motion evidence and is marked unknown. The repair must not refuse every clip
+merely because that first observation is unknown: a later usable same-shot
+observation can establish the first keyframe, but the earlier unknown location
+cannot seed it. Conversely a whole shot without usable evidence cannot borrow
+an unrelated pre-cut location. This clarifies AC-11/AC-15 before implementation;
+it neither proves first-frame identity nor changes a threshold after evaluation.
+
+Existing positive fixture controls supply sparse known observations, including
+no observation after a detected shot cut. Preserve those structural camera
+contracts; this bounded repair refuses explicitly ungrounded observations, not
+all unobserved frames. Complete per-shot/frame coverage and independently
+labelled identity remain separate delivered-media acceptance requirements.
+No sparse positive contract test may stand in for that evidence.
+
+Before any source change, an external two-route pytest counterexample exercised
+the actual resolver/layout/render on the existing decoded fixture with only
+one zero-confidence non-speaking listener observation. Both assertions failed:
+both production routes generated private review MP4s labelled speaker_tracked
+instead of refusing. Fixture bytes stayed unchanged. This now establishes a
+real rendered contract defect, not a final ZAR publication/identity benchmark.
+JUnit `C:/Users/Wareen/HawEdit-video-rating-20261010/camera-admission-red.xml`,
+SHA256 `91ee29300f36cb115c5c291bb73dd6b772d8fb7385ae2a612b64fbf64b9524a8`,
+two failures, 13.58 seconds pytest wall time on HawaPC01/Python3.12.10.
+Injected transcript/diarizer/judge/observations are known contract inputs, not
+measured provider quality; actual resolver/layout/render were not mocked.
+Raw private outputs are preserved in
+`C:/Users/Wareen/HawEditCameraAdmissionRedArtifacts-20261010`.
+Single output measured 49frames/1080x1920/1960ms by installed ffmpeg8.1.1;
+MP4 SHA256 `6fb4af3019d3ccde5bc61de248b3823676b09fea2379ada179cd94760d906912`.
+This is not pinned-render acceptance, authenticated approval or publication.
+
+The old plan's security self-rebinding instruction is superseded by the approved
+current acceptance program: independent current-package VEX review is required
+(BLOCKED #24). No self-renewal/rebinding or old hosted checks can authorize the
+new SHA. Model repository access (#4), labelled native identity evidence (#1),
+and current runner checks (#25) remain separate prerequisites. BLUEPRINT §3
+Stage 6 and §§8.1-8.3 govern output/evaluation claims.
