@@ -1,5 +1,12 @@
 # Approved Legacy Camera Contract Correction
 
+```yaml
+commit: 7f3ee2f9ff93555eea7a45d26c23503bef8fb586
+media_sha256: ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15
+host: HawaPC01 Windows26300 Python3.12.10 pytest9.1.1 ruff0.9.6 mypy1.15.0 OpenCV4.12.0 ffmpeg8.1.1
+command: .venv/Scripts/python.exe -m pytest tests/test_pipeline.py tests/test_reframe.py tests/test_candidate_framing_parity.py tests/test_review_candidate_cache.py --junitxml=C:/Users/Wareen/HawEdit-video-rating-20261010/legacy-camera-contract-final-affected.xml
+```
+
 2026-10-10. BLUEPRINT §3 Stage6 and §§8.1-8.3; D-241/D-263/D-274.
 Approved specs/legacy-camera-contract/plan.md. Parent local-only source commit
 7f3ee2f9ff93555eea7a45d26c23503bef8fb586; production package unchanged
@@ -55,3 +62,32 @@ Next exact clean committed gate remains required, as do independent current-sour
 VEX (#24), same-SHA CI (#25), actual protected model resources/lifetime and ZAR,
 native editorial/identity/benchmark/sustained acceptance. No row promoted,
 publication/provider spending or true10 claim.
+
+## Original Frozen Gate At 4b2b7ca
+
+Exact clean committed bash scripts/verify.sh at
+4b2b7ca4cbadc45aa24088c94cfd2af3992c2243, source packagef9 unchanged:
+6142cases/6140pass/2fail/0errors/skips, JUnit2795.535s,
+observer2879.490263100015s. Lint/strict typing/format pass389files.
+Frozen checkout/watched bytes unchanged; original processes ended.
+The corrected camera test passes; remaining failures are the old VEX binding
+and this new note's missing required YAML header. The header is corrected in
+a later documentation-only change, not by weakening claims tests. Original
+gate remains RED and this4b source history retains the original deficient note.
+
+Raw C:/Users/Wareen/AppData/Local/HawEditEvidence/legacy-camera-contract-clean-gate-20261010:
+gate.xml SHA2564edd8bc59dc0e72296aa03359b7e07389984312a0f857090bce651a7aa134274;
+terminal.json SHA256d2ae39f59ccdd068ca11069186d11873c8fc0d10c47b5f8b0d8f7a699d8f7f8f.
+Header identifies the committed parent of development cohorts, not acceptance
+of different test bytes at that parent. Full later committed gate/CI and #24
+qualified review still required; no task promotion, provider calls or publication.
+
+## Evidence Header Repair Check
+
+Documentation-only header repair followed the original red gate. All 67 cases in
+tests/test_claims.py pass, JUnit21.644s, on the recorded Windows/Python/toolchain
+above. Command: .venv/Scripts/python.exe -m pytest tests/test_claims.py
+--junitxml=C:/Users/Wareen/HawEdit-video-rating-20261010/legacy-camera-header-claims.xml.
+Report SHA256d8950126e1c036235e91e3e719df5f9afb7a454e533c908072ae9aa1c96dc2f2.
+This is a focused metadata check, not a replacement for the full committed gate.
+The original red gate and its two failures remain preserved.
