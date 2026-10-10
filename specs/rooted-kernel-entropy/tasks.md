@@ -13,3 +13,7 @@ above are historical, superseded by Wareen's explicit approval and D-326.
 T2 source implemented locally;156kernel cases and retained Python3.12 consumer
 pass. Exact full gate/same-SHA CI and independent #24 remain outstanding.
 Statuses stay WIP; no row promotion or complete claim.
+
+Exact d4473d0 clean gate6115pass/2fail: missing evidence YAML header (corrected)
+and independent #24. Source/harness unchanged; no successful gate/CI promotion.
+Full SDK calibration failed inventory deadline before snapshot/SDK execution.

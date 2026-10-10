@@ -1,5 +1,12 @@
 # Private Kernel Entropy Local Evidence
 
+```yaml
+commit: d4473d025ad1f00d87eaf8f3d07e70c5e70d3bd1
+media_sha256: n/a
+host: HawaPC01 Windows26300 Python3.12.10 WSLUbuntu Linux6.18.40.1 glibc2.43 x86_64
+command: C:/Program Files/Git/bin/bash.exe scripts/verify.sh
+```
+
 2026-10-10, approved D-326 extension of D-325/rooted image T2.
 Baseline2fa571038af8c79677f1a12214be9836be1e2b46 plus uncommitted entropy source,
 current package8f72c12069d99450de1624a30cf81162e24449966ac8ac1b2685b0e35d631ba3.
@@ -72,3 +79,32 @@ T2 full SDK/model/input closure/resource/production lifetime and T3 producer
 admission remain open; entropy startup alone does not authorize the ZAR run.
 Cloud permission remains an aggregate US$5 maximum, transcript text only,
 not frames/audio/video or published deliverables.
+
+## Exact Committed Gate Verdict
+
+At committedd4473d0/package8f72c120..., exact clean scripts/verify.sh finished
+6117cases:6115pass/2fail/0errors/0skips,2338.763JUnit seconds,
+observer2351.276006900007s; all source/HEAD/package/checkout/observer unchanged.
+The new evidence document lacked the prescribed YAML header (corrected above);
+the other failure is existing independent VEX binding #24, reviewed81f6f606...
+versus current8f72c120.... Never self-renew/rebind that review or call this green.
+No ledger promotion/same-SHA CI. Original raw evidence:
+C:/Users/Wareen/AppData/Local/HawEditEvidence/rooted-kernel-entropy-clean-gate-20261010,
+terminalSHA25611570a3aa42ea10654d2f80738fe57298e14a32f3b34fa2f46f2e9f13479e06f,
+JUnitSHA256f42482e9593e34080540dc5351abc20aa96e76bd4221d73f817255adfe61adc4.
+
+Subsequent T2 actual SDK calibration preserved at
+C:/Users/Wareen/HawEditRootedSDKConfigConsumer-20261010: native1/unchanged true,
+controller900.8503457999905s. Its declare/inventory phase exceeded the900s
+budget before snapshot creation; SDK/model/GPU execution was NOT reached.
+This is neither a passed copied-SDK closure nor an observed writable-scratch
+failure. Do not increase admission claims from the earlier Python-only pass.
+Actual selected static ELF research and its counterexamples are retained at
+C:/Users/Wareen/HawEditRootedSDKELFCompact-20261010/research-verdict.md.
+
+Header correction checked with the whole tests/test_claims.py file:67pass,
+0fail/errors/skips,12.193JUnit seconds. Raw
+C:/Users/Wareen/HawEdit-video-rating-20261010/rooted-entropy-evidence-header-regressions.xml,
+SHA256c5f35c281508b3ff8a218e85f172e584d5f3f2ba7d5c4635eb1a6e1d029f993f.
+This focused check does not turn the preceding full gate green or supply CI.
+SDK failed terminalSHA2569f3859752c20ba24393126f422387417a548533576221e8519a02b8eeb7d6a12.

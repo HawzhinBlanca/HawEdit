@@ -146,3 +146,12 @@ controller drain hold. Its SDK/model closure is still NOT admitted. Final
 replay at package8f72c12069d99450de1624a30cf81162e24449966ac8ac1b2685b0e35d631ba3,
 dirty baseline2fa5710, unchanged true, native0/controller2.6532081000041217s,
 is a startup calibration, not performance acceptance or protected ZAR inference.
+
+Exact clean d4473d0 gate finished6115pass/2fail/0errors/skips. One failure was
+this unit's new evidence document missing its required YAML header; corrected
+without changing the test. The other is independent current-package VEX #24.
+Raw unchanged verdict/hash in evidence/rooted-kernel-entropy-20261010.md.
+T2's actual8GiB-SDK consumer calibration exceeded its900s inventory budget
+before creating a snapshot; no SDK import or scratch failure was observed.
+Keep the actual failed report and optimize redundant inventory path operations
+before a new bounded probe, never claim full closure or bypass byte checks.
