@@ -15915,3 +15915,41 @@ three fields and bump cache policy v2; no decoder/weight/cap change. Preserve
 original red and superseded exact6c3b5d6 gate interruption, then require new
 whole exact corrected-commit verification. No v1 history rebind or false pass.
 
+## D-325: Explicit Rooted Copied Consumer Image
+
+2026-10-10. Wareen explicitly approved the rooted-linux-image plan. Extends
+D-323 after the genuine installed Transformers configuration consumer escaped
+the descriptor pathname through normalization and consumed replaced parent
+bytes. This approval authorizes private copied runtime/model inputs, not new
+installations, provider spending, licence acceptance, publication or security
+self-approval. BLUEPRINT sections2--5/8.1--8.3 and model canon remain unchanged.
+
+Retain data-only defaults. Explicit typed rooted mode permits individually
+declared executable permissions and a bounded128GiB aggregate image ceiling;
+default1GiB, per-file32GiB, default4096-file and100000-file hard ceiling remain.
+Copy and hash actual regular single-link bytes into independent owned storage,
+bind readonly proc in the private mount namespace, remount readonly, enter the
+original-description-bound process root/cwd and drop capabilities before the
+existing architecture-checked namespace-reentry fence. No mutable host bind
+allowlist, Path.resolve override or metadata-ready flag substitutes for custody.
+
+Actual CPython3.14.4 import opens a retained libffi executable description.
+Upstream libffi tramp.c documents retaining its binary FD for new executable
+callback-table mappings. Blind closure breaks runtime ownership; allowing that
+host-backed descriptor leaves a consumed-byte escape. Require a read-only,
+noninheritable exact executable declaration, hash original bytes, capture its
+original open-description anchor, and rebind that same numeric handle to the
+verified private copy while preserving position. Subsequent inspection requires
+the private original description, not inode equality alone. Close only snapshot
+anchors; leave library-owned private handles until actual process scope drain.
+Outside directories and unknown/writable/inheritable/changed handles refuse.
+Freeze the original FD inventory before acquisition: an iterator's closed FD
+number can otherwise be reused by a new anchor and incorrectly admitted twice.
+
+This is not model/runtime closure, controlled resource reservation, original
+controller/member lifetime, malicious same-privilege/kernel isolation, DBOS/HTTP
+producer registration or video quality acceptance. T2/T3 and the original seven
+phases/AC1--AC12 remain open. No DONE until exact green gate plus same-SHA CI.
+Research/spec/impact/approved plan/WIP ledger: specs/rooted-linux-image.
+Primary libffi explanation: https://github.com/libffi/libffi/blob/master/src/tramp.c
+

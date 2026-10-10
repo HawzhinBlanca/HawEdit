@@ -15,10 +15,11 @@ import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar
 
-__all__ = ["LinuxSnapshot", "LinuxSnapshotError", "SnapshotFile"]
+__all__ = ["LinuxSnapshot", "LinuxSnapshotError", "SnapshotFile", "SnapshotMode"]
 
 _ATTEMPTED = False
 _CAPS = ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
@@ -27,6 +28,37 @@ _CHUNK = 1024**2
 
 class LinuxSnapshotError(RuntimeError):
     """Byte custody uncertain; drain the original process scope, never retry it."""
+
+
+class SnapshotMode(str, Enum):
+    DATA_ONLY = "data_only"
+    ROOTED_IMAGE = "rooted_image"
+
+
+# Prepare ctypes layouts before a rooted transition removes ambient imports.
+class _CapHeader(ctypes.Structure):
+    _fields_: ClassVar[Any] = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+
+class _CapData(ctypes.Structure):
+    _fields_: ClassVar[Any] = [
+        ("effective", ctypes.c_uint32),
+        ("permitted", ctypes.c_uint32),
+        ("inheritable", ctypes.c_uint32),
+    ]
+
+
+class _Filter(ctypes.Structure):
+    _fields_: ClassVar[Any] = [
+        ("code", ctypes.c_ushort),
+        ("jt", ctypes.c_ubyte),
+        ("jf", ctypes.c_ubyte),
+        ("k", ctypes.c_uint32),
+    ]
+
+
+class _Program(ctypes.Structure):
+    _fields_: ClassVar[Any] = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_Filter))]
 
 
 def _seconds(value: float) -> float:
@@ -62,6 +94,7 @@ class SnapshotFile:
     relative_path: str
     sha256: str
     size_bytes: int
+    executable: bool = False
 
     def __post_init__(self) -> None:
         _name(self.relative_path)
@@ -73,6 +106,7 @@ class SnapshotFile:
             or re.fullmatch(r"[0-9a-f]{64}", self.sha256) is None
             or type(self.size_bytes) is not int
             or not 0 <= self.size_bytes <= 32 * 1024**3
+            or type(self.executable) is not bool
         ):
             raise LinuxSnapshotError("Snapshot source path/hash/size declaration invalid")
 
@@ -152,6 +186,8 @@ class LinuxSnapshot:
     _failed: bool
     _filters: int
     _names: frozenset[str]
+    _mode: SnapshotMode
+    _retained: dict[int, tuple[int, tuple[int, int, int], SnapshotFile]]
 
     def __init__(
         self,
@@ -161,6 +197,7 @@ class LinuxSnapshot:
         max_bytes: int = 1024**3,
         max_files: int = 4096,
         timeout_seconds: float = 30.0,
+        mode: SnapshotMode = SnapshotMode.DATA_ONLY,
     ) -> None:
         global _ATTEMPTED
         end = time.monotonic() + _seconds(timeout_seconds)
@@ -180,14 +217,16 @@ class LinuxSnapshot:
             raise LinuxSnapshotError(
                 "Snapshot initial no-new-privileges/zero capabilities required"
             )
-        names = self._declarations(root, files, max_bytes, max_files)
+        names = self._declarations(root, files, max_bytes, max_files, mode)
         self._root = root
+        self._mode = mode
         self._names = frozenset(names)
         self._creator = (os.getpid(), threading.get_ident())
         self._thread = threading.current_thread()
         self._root_fd = self._anchor = -1
         self._known = {}
         self._namespaces = {}
+        self._retained = {}
         self._closed = self._failed = False
         self._filters = 0
         self._native = self._libc()
@@ -201,6 +240,8 @@ class LinuxSnapshot:
                 or os.listdir(before)
             ):
                 raise LinuxSnapshotError("Snapshot root must be an empty private owned directory")
+            if mode is SnapshotMode.ROOTED_IMAGE:
+                self._outside_descriptions(before, files, end)
             _ATTEMPTED = True
             self._initialize(end)
             self._mount(
@@ -218,8 +259,18 @@ class LinuxSnapshot:
             self._remember(self._anchor)
             for item in files:
                 self._copy(item, end)
+            if mode is SnapshotMode.ROOTED_IMAGE:
+                self._prepare_proc()
             # A live writer makes remount fail. Never keep any copied write FD.
-            self._mount(None, os.fsencode(root), None, 32 | 1 | 2 | 4)
+            target = (
+                f"/proc/self/fd/{self._anchor}" if mode is SnapshotMode.ROOTED_IMAGE else str(root)
+            )
+            self._mount(None, os.fsencode(target), None, 32 | 1 | 2 | 4)
+            if mode is SnapshotMode.ROOTED_IMAGE:
+                self._rebind_retained(end)
+                os.close(before)
+                before = -1
+                self._enter_root()
             self._drop_caps()
             self._fence()
             for label in ("user", "mnt", "pid"):
@@ -242,7 +293,11 @@ class LinuxSnapshot:
 
     @staticmethod
     def _declarations(
-        root: Path, files: tuple[SnapshotFile, ...], max_bytes: int, max_files: int
+        root: Path,
+        files: tuple[SnapshotFile, ...],
+        max_bytes: int,
+        max_files: int,
+        mode: SnapshotMode = SnapshotMode.DATA_ONLY,
     ) -> set[str]:
         if (
             not isinstance(root, Path)
@@ -250,8 +305,11 @@ class LinuxSnapshot:
             or root == Path("/")
             or ".." in root.parts
             or type(files) is not tuple
+            or type(mode) is not SnapshotMode
             or type(max_bytes) is not int
-            or not 0 < max_bytes <= 32 * 1024**3
+            or not 0
+            < max_bytes
+            <= (128 * 1024**3 if mode is SnapshotMode.ROOTED_IMAGE else 32 * 1024**3)
             or type(max_files) is not int
             or not 0 < max_files <= 100000
             or not 1 <= len(files) <= max_files
@@ -263,6 +321,10 @@ class LinuxSnapshot:
         total = 0
         for item in files:
             name = _name(item.relative_path)
+            if mode is SnapshotMode.ROOTED_IMAGE and name.split("/")[0] == "proc":
+                raise LinuxSnapshotError("Snapshot proc is reserved for readonly kernel state")
+            if item.executable and mode is not SnapshotMode.ROOTED_IMAGE:
+                raise LinuxSnapshotError("Snapshot executables require explicit rooted mode")
             parts = name.split("/")
             ancestors = {"/".join(parts[:count]) for count in range(1, len(parts))}
             if name in names or name in directories or names & ancestors:
@@ -289,7 +351,122 @@ class LinuxSnapshot:
         native.mount.restype = ctypes.c_int
         native.prctl.argtypes = [ctypes.c_int, *([ctypes.c_ulong] * 4)]
         native.prctl.restype = ctypes.c_int
+        native.capset.argtypes = [ctypes.POINTER(_CapHeader), ctypes.POINTER(_CapData)]
+        native.capset.restype = ctypes.c_int
+        _fcntl()
         return native
+
+    def _outside_descriptions(
+        self, allowed: int, files: tuple[SnapshotFile, ...], end: float
+    ) -> None:
+        entries = os.listdir("/proc/self/fd")
+        if len(entries) > 4096:
+            raise LinuxSnapshotError("Rooted image outside descriptor inventory exceeds bound")
+        inventory: list[tuple[int, tuple[int, int, int]]] = []
+        # Freeze live identities before acquiring anchors can reuse the iterator's FD.
+        for name in entries:
+            self._left(end)
+            fd = int(name)
+            if fd == allowed:
+                continue
+            try:
+                original = _identity(fd)
+            except OSError as exc:
+                if exc.errno == errno.EBADF:
+                    continue
+                raise
+            inventory.append((fd, original))
+        for fd, original in inventory:
+            self._left(end)
+            mode = original[2]
+            if stat.S_ISDIR(mode):
+                raise LinuxSnapshotError("Rooted image requires closed outside directories")
+            if not stat.S_ISREG(mode):
+                continue
+            flags = _fcntl().fcntl(fd, _fcntl().F_GETFL)
+            if flags & int(_api(os, "O_ACCMODE")) != os.O_RDONLY or os.get_inheritable(fd):
+                raise LinuxSnapshotError("Rooted retained file must be readonly/noninheritable")
+            selected = None
+            for item in files:
+                self._left(end)
+                if not item.executable:
+                    continue
+                parent = _directory(item.source.parent)
+                try:
+                    info = os.stat(item.source.name, dir_fd=parent, follow_symlinks=False)
+                finally:
+                    os.close(parent)
+                if (info.st_dev, info.st_ino, info.st_mode) == original:
+                    selected = item
+                    break
+            if selected is None:
+                raise LinuxSnapshotError("Rooted retained file requires declared executable bytes")
+            anchor = os.dup(fd)
+            self._remember(anchor)
+            self._retained[fd] = (anchor, original, selected)
+            self._retained_bytes(fd, selected, end)
+
+    def _retained_bytes(self, fd: int, item: SnapshotFile, end: float) -> None:
+        info = os.fstat(fd)
+        if info.st_nlink != 1 or info.st_size != item.size_bytes:
+            raise LinuxSnapshotError("Rooted retained executable size/link binding refused")
+        digest = hashlib.sha256()
+        offset = 0
+        while offset < item.size_bytes:
+            self._left(end)
+            data = _api(os, "pread")(fd, min(_CHUNK, item.size_bytes - offset), offset)
+            if not data:
+                raise LinuxSnapshotError("Rooted retained executable truncated")
+            digest.update(data)
+            offset += len(data)
+        if digest.hexdigest() != item.sha256:
+            raise LinuxSnapshotError("Rooted retained executable hash refused")
+
+    def _rebind_retained(self, end: float) -> None:
+        for fd, (anchor, original, item) in tuple(self._retained.items()):
+            self._left(end)
+            if (
+                _identity(fd) != original
+                or _identity(anchor) != original
+                or _fcntl().fcntl(fd, 1027, anchor) != 1
+                or os.get_inheritable(fd)
+                or _fcntl().fcntl(fd, _fcntl().F_GETFL) & int(_api(os, "O_ACCMODE")) != os.O_RDONLY
+            ):
+                raise LinuxSnapshotError("Rooted retained original description substituted")
+            copied = os.open(
+                f"/proc/self/fd/{self._anchor}/{item.relative_path}",
+                _flags("O_RDONLY", "O_NOFOLLOW", "O_CLOEXEC"),
+            )
+            try:
+                self._retained_bytes(copied, item, end)
+                if _identity(copied)[:2] == original[:2]:
+                    raise LinuxSnapshotError("Rooted retained copy is still source-backed")
+                os.lseek(copied, os.lseek(fd, 0, os.SEEK_CUR), os.SEEK_SET)
+                bound = os.dup(copied)
+                self._remember(bound)
+                os.dup2(copied, fd, inheritable=False)
+                self._retained[fd] = (bound, _identity(copied), item)
+                os.close(anchor)
+                del self._known[anchor]
+            finally:
+                os.close(copied)
+
+    def _prepare_proc(self) -> None:
+        os.mkdir("proc", 0o700, dir_fd=self._anchor)
+        target = os.fsencode(f"/proc/self/fd/{self._anchor}/proc")
+        self._mount(b"/proc", target, None, 4096 | 16384)
+        self._mount(None, target, None, 32 | 4096 | 1 | 2 | 4 | 8)
+
+    def _enter_root(self) -> None:
+        _api(os, "fchdir")(self._anchor)
+        _api(os, "chroot")(".")
+        os.chdir("/")
+        current = os.stat("/")
+        if (
+            _identity(self._anchor) != (current.st_dev, current.st_ino, current.st_mode)
+            or os.getcwd() != "/"
+        ):
+            raise LinuxSnapshotError("Snapshot original process root transition refused")
 
     @staticmethod
     def _left(end: float) -> None:
@@ -363,7 +540,7 @@ class LinuxSnapshot:
             destination = os.open(
                 parts[-1],
                 _flags("O_WRONLY", "O_CREAT", "O_EXCL", "O_CLOEXEC", "O_NOFOLLOW"),
-                0o400,
+                0o500 if item.executable else 0o400,
                 dir_fd=directory,
             )
             digest = hashlib.sha256()
@@ -408,36 +585,13 @@ class LinuxSnapshot:
             if self._native.prctl(24, number, 0, 0, 0) != 0:
                 raise OSError(ctypes.get_errno(), "Snapshot bounding capability drop")
 
-        class Header(ctypes.Structure):
-            _fields_: ClassVar[Any] = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
-
-        class Data(ctypes.Structure):
-            _fields_: ClassVar[Any] = [
-                ("effective", ctypes.c_uint32),
-                ("permitted", ctypes.c_uint32),
-                ("inheritable", ctypes.c_uint32),
-            ]
-
         capset = self._native.capset
-        capset.argtypes = [ctypes.POINTER(Header), ctypes.POINTER(Data)]
-        capset.restype = ctypes.c_int
-        if capset(ctypes.byref(Header(0x20080522, 0)), (Data * 2)()) != 0:
+        if capset(ctypes.byref(_CapHeader(0x20080522, 0)), (_CapData * 2)()) != 0:
             raise OSError(ctypes.get_errno(), "Snapshot effective/permitted capability drop")
         if not _zero_caps(_status()):
             raise LinuxSnapshotError("Snapshot capabilities remain after drop")
 
     def _fence(self) -> None:
-        class Filter(ctypes.Structure):
-            _fields_: ClassVar[Any] = [
-                ("code", ctypes.c_ushort),
-                ("jt", ctypes.c_ubyte),
-                ("jf", ctypes.c_ubyte),
-                ("k", ctypes.c_uint32),
-            ]
-
-        class Program(ctypes.Structure):
-            _fields_: ClassVar[Any] = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(Filter))]
-
         # x86_64 only; deny x32, namespace/mount entry, and namespace clone flags.
         instructions = [
             (0x20, 0, 0, 4),
@@ -463,8 +617,8 @@ class LinuxSnapshot:
                 (0x06, 0, 0, 0x7FFF0000),
             ]
         )
-        array = (Filter * len(instructions))(*(Filter(*item) for item in instructions))
-        program = Program(len(instructions), array)
+        array = (_Filter * len(instructions))(*(_Filter(*item) for item in instructions))
+        program = _Program(len(instructions), array)
         prior = int(_status()["Seccomp_filters"].strip())
         if self._native.prctl(22, 2, ctypes.addressof(program), 0, 0) != 0:
             raise OSError(ctypes.get_errno(), "Snapshot namespace reentry fence refused")
@@ -487,6 +641,10 @@ class LinuxSnapshot:
                 if _identity(fd) != expected or os.get_inheritable(fd):
                     raise LinuxSnapshotError("Snapshot original descriptor substituted")
             pairs = [(self._root_fd, self._anchor), *self._namespaces.values()]
+            for fd, (anchor, original, _) in self._retained.items():
+                if _identity(fd) != original or os.get_inheritable(fd):
+                    raise LinuxSnapshotError("Snapshot retained private descriptor substituted")
+                pairs.append((fd, anchor))
             for fd, anchor in pairs:
                 if _fcntl().fcntl(fd, 1027, anchor) != 1:
                     raise LinuxSnapshotError("Snapshot original description substituted")
@@ -496,6 +654,14 @@ class LinuxSnapshot:
                     raise LinuxSnapshotError("Snapshot original namespace changed")
             if not int(_api(os, "fstatvfs")(self._anchor).f_flag) & int(_api(os, "ST_RDONLY")):
                 raise LinuxSnapshotError("Snapshot original root is not read-only")
+            if self._mode is SnapshotMode.ROOTED_IMAGE:
+                current = os.stat("/")
+                if (
+                    (current.st_dev, current.st_ino, current.st_mode) != _identity(self._anchor)
+                    or os.getcwd() != "/"
+                    or not int(_api(os, "statvfs")("/proc").f_flag) & int(_api(os, "ST_RDONLY"))
+                ):
+                    raise LinuxSnapshotError("Snapshot original process root/cwd/proc changed")
             status = _status()
             if (
                 not _zero_caps(status)
@@ -522,7 +688,9 @@ class LinuxSnapshot:
 
     def _cleanup(self) -> None:
         uncertain: set[int] = set()
-        for first, anchor in [(self._root_fd, self._anchor), *self._namespaces.values()]:
+        pairs = [(self._root_fd, self._anchor), *self._namespaces.values()]
+        pairs.extend((fd, item[0]) for fd, item in self._retained.items())
+        for first, anchor in pairs:
             if first >= 0 and anchor >= 0:
                 try:
                     if _fcntl().fcntl(first, 1027, anchor) != 1:
