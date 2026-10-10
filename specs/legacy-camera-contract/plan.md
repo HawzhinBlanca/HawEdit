@@ -1,11 +1,12 @@
 # Legacy Camera Contract Plan
 
-Approved-by: pending
+Approved-by: Wareen, 2026-10-10, explicit "Approve the stricter test-contract correction" reply.
 
 Research, actual caller map and EARS: adjacent research.md/impact-map.md/spec.md.
 This test-contract extension needs an owner decision because the preceding
-camera unit explicitly preserved the old assertions. Do not implement before
-approval. No runtime architecture, dependency, model or spending change.
+camera unit explicitly preserved the old assertions. The owner has now approved
+the stronger correction. Finish the preceding frozen gate before sequential
+implementation. No runtime architecture, dependency, model or spending change.
 
 1. Preserve original574-case report and failed private artifacts; confirm current
    test/helper/hash/fixture bytes against the actual five-pair map before edits.

@@ -50,3 +50,23 @@ QC digest, signature, fixture or model was edited to make that failure disappear
 Independent current-package VEX (#24), same-SHA CI (#25), protected real model
 admission, fresh ZAR generation and all native/independent/sustained acceptance
 remain required. Zero new autonomous ZAR reels, provider calls or publications.
+
+## Frozen Clean Gate, Before Legacy Correction
+
+Exact unchanged bash scripts/verify.sh at local-only commit
+7f3ee2f9ff93555eea7a45d26c23503bef8fb586, package
+f9c3871bb6cd3d32cff0203f8d222b78bce61ed0fc965cfe64a5efe8aefabc6e:
+6141 cases, 6139 pass, 2 fail, 0 errors/skips. JUnit2384.887s;
+observer2402.4763036000077s. Lint, strict typing and format pass389files.
+Frozen checkout and all watched files unchanged; original processes ended.
+Failures: original legacy motion-speaker expectation and current-source VEX
+binding (BLOCKED #24). No gate/CI/task completion or security renewal claimed.
+
+Raw C:/Users/Wareen/AppData/Local/HawEditEvidence/camera-admission-clean-gate-20261010:
+gate.xml SHA256a2131c636cea91b917d7fc5222120fab7c2209f33f6ad377c2ea202f9c31fe80;
+terminal.json SHA256097a2fd0bddbc08f87e4ff4834ebb187f48a043cb2b3f435309a2e305eb93f79.
+Actual failed artifacts additionally preserved under
+C:/Users/Wareen/HawEdit-video-rating-20261010/legacy-motion-clean-gate-artifacts.
+Owner approved the stricter legacy contract after the preceding evidence was
+frozen. This red gate remains original evidence; later corrections cannot turn
+it into a pass. Runtime/model/cloud/publication scope unchanged.

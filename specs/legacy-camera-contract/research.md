@@ -44,3 +44,27 @@ assertion untouched; request owner approval before correcting this expectation.
 No skipped/deselected case, weakened claim, gate override or evidence renewal.
 Independent current-package VEX (#24), same-SHA CI/runner (#25), native identity
 and editorial acceptance remain required regardless of a corrected local test.
+
+## First Approved Contract Trial
+
+Original frozen7f3ee2f gate:6141cases/6139pass/2fail/0errors/skips;
+the original speaker assertion and current VEX source binding fail. Raw gate
+and actual failed artifacts are preserved in evidence/camera-admission-20261010.md.
+
+The first four-module trial has469cases/467pass/2fail/0errors/skips,
+JUnit928.588s on the recorded host. Both preview/production actual Motion tracker
+checks pass: nonempty points, none speaking, final confirmed identities empty.
+No speaking-evidence assertion is removed or weakened.
+
+Two test assumptions were incorrect: Stage0 legitimately retains its source
+proxy.mp4 after camera refusal, and single-route private previews retain original
+legacy QC metadata as unauthenticated data (existing pipeline tests explicitly
+cover this), not an accepted approval. The contract now asserts an exact MP4 set
+containing only the measured Stage0 proxy in production, and preserved stale QC
+plus different measured preview hash, absent signature, private sidecars and
+awaiting-human-review/no-completion in preview. No candidate/publication allowed.
+This does not grant authority to the legacy QC fields or alter source policy.
+
+First trial XML SHA2560793138e5384d69ce4911bcf9efdffb2bd6f5bc51f5264ba0ae38a0564ffb318;
+original log/XML and both actual case directories are preserved under
+C:/Users/Wareen/HawEdit-video-rating-20261010, legacy-contract-first-trial-artifacts.

@@ -13,3 +13,12 @@ Actual five-pair Serena record and source hashes: research.md.
 Whole relevant cohorts: pipeline, reframe, candidate framing parity and review
 candidate cache, followed by exact clean committed bash scripts/verify.sh. Do not
 exclude the original test from any run. No fixtures/goldens/harness edits.
+
+Implementation retains the original collected name with default/production
+parameters. The actual pipeline's existing Boundary/IngestResult types provide
+the final span, measured turns/cuts and legitimate Stage0 proxy_path; source
+definitions inspected without edits. No imported helper signature was invented.
+Final affected469cases pass, including unchanged review-cache callers and known
+speaking/layout controls. Legacy QC metadata remains data-only and cannot satisfy
+the authenticated engine contract; explicit private/awaiting-review assertions
+and stale MP4 binding replace an incorrect absent-metadata trial assumption.

@@ -1654,12 +1654,14 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
 
 
 @needs_ffmpeg
+@pytest.mark.parametrize("profile", ["default", "production"])
 def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str
 ) -> None:
-    """Task T2.1: run_pipeline with MotionSpeakerTracker reframes in SPEAKER_TRACKED mode."""
+    """Detected boxes on this digit fixture cannot establish a speaking subject."""
     import cv2
 
+    from hawedit.boundary import Boundary
     from hawedit.reframe import MotionSpeakerTracker
     from hawedit.render import Reframe
 
@@ -1672,21 +1674,56 @@ def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
 
     monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _MockClassifier())
 
+    tracker = MotionSpeakerTracker(sample_fps=5.0)
+    work = tmp_path / "work"
+    legacy_qc = _test_qc(True, reviewed_sha256=MOTION_SPEAKER_TRACKED_RENDER_SHA256)
     run = run_pipeline(
         FIXTURE,
-        tmp_path / "work",
+        work,
         media_id="motion-speaker-tracked",
         transcript=a_transcript("motion-speaker-tracked"),
         diarizer=_MeasuredDiarizer(),
         select_sentences=(0,),
         verdict=replace(a_verdict(100, 1_700), candidate_id="motion-speaker-tracked-0"),
-        qc=_test_qc(True, reviewed_sha256=MOTION_SPEAKER_TRACKED_RENDER_SHA256),
-        speaker_tracker=MotionSpeakerTracker(sample_fps=5.0),
+        qc=legacy_qc,
+        speaker_tracker=tracker,
+        profile=profile,
     )
+    assert not run.complete
+    assert run.ingest is not None and not isinstance(run.ingest, StageSkipped)
+    assert run.ingest.diarization is not None
+    assert isinstance(run.boundary, Boundary)
+    assert tracker.confirmed_speaker_centers == {}
+    # Inspect the actual decoder/tracker, preserving the pipeline's measured clock/cuts.
+    points = tracker.track_speakers(
+        FIXTURE,
+        run.boundary.final_in_ms,
+        run.boundary.final_out_ms,
+        run.ingest.diarization,
+        shot_cuts_ms=run.ingest.shot_cuts_ms,
+    )
+    assert points
+    assert all(not point.is_speaking and point.state != "speaker" for point in points)
+    assert tracker.confirmed_speaker_centers == {}
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == FIXTURE_SHA256
+    if profile == "production":
+        assert isinstance(run.render, StageSkipped)
+        assert "no usable speaker evidence" in run.render.reason
+        assert run.clip is None
+        assert set(work.rglob("*.mp4")) == {Path(run.ingest.proxy_path)}
+        return
     assert run.clip is not None and run.clip.output is not None
-    assert run.clip.output.crop_target == "speaker_face"
+    assert run.clip.output.crop_target == "static_centre"
+    assert run.clip.qc == legacy_qc
     assert run.render is not None and not isinstance(run.render, StageSkipped)
-    assert run.render.reframe is Reframe.SPEAKER_TRACKED
+    assert run.render.reframe is Reframe.STATIC_CENTRE
+    path = Path(run.render.path)
+    assert path == work / "review" / run.clip.clip_id / f"{run.clip.clip_id}.mp4"
+    assert path.is_file()
+    measured = json.loads(path.with_suffix(".measured.json").read_text(encoding="utf-8"))
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == measured["file"]["sha256"]
+    assert legacy_qc.reviewed_sha256 != measured["file"]["sha256"]
+    assert not list(path.parent.glob("*.sig"))
     review_sidecars(run)
 
 
