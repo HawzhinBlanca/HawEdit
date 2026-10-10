@@ -138,3 +138,83 @@ current acceptance program: independent current-package VEX review is required
 new SHA. Model repository access (#4), labelled native identity evidence (#1),
 and current runner checks (#25) remain separate prerequisites. BLUEPRINT §3
 Stage 6 and §§8.1-8.3 govern output/evaluation claims.
+
+## Fresh Pre-Edit Caller Evidence, 2026-10-10
+
+Actual installed Serena/LSP map at9a7c8169bdd2f005177d52050aec5f68c2edd578:
+C:/Users/Wareen/HawEditCameraAdmissionCurrentMap-20261010/serena-map.json,
+SHA25609e607030679ff1883d4624fa4ec3c2313da36f1ee2c2fca5eea3bdeabb38bee.
+Nine definition/reference pairs, unchanged=true. Pipeline and reframe hashes
+still equal the original counterexample baseline above; no intervening edits
+to these symbols. The map also includes both actual render routes and the
+existing decoded-fixture tracker/run helpers before test edits.
+
+Proceed with approved AC-10 through AC-15, test-first in the existing reframe and
+candidate parity modules. Split regression compares real decoded output frames
+against uncontaminated labelled inputs, not an invented virality/accuracy score.
+Preserve sparse positive contracts and all existing fixtures/goldens/assertions.
+The actual private SDK config consumer now separately passes at the same source
+baseline; it is not real model admission or ZAR-output quality evidence.
+
+First new98-case cohort:76pass/22fail/0errors/skips, JUnit184.444s. Raw
+C:/Users/Wareen/HawEdit-video-rating-20261010/camera-admission-current-red.xml,
+SHA25609e4087069d8c421a6ac84d81bdece781825a2a102681e3d5dc580cecb5b4b81.
+Three failures used a misspelled test state offscreen; corrected to the actual
+existing off_screen enum before production edits, retaining original report.
+Other failures include actual wrong-camera renders and unequal decoded split
+frames. Episode decoding additionally exposed a stale RenderResult.path:
+_render_episode_single_clip publishes/moves the private bundle, but returns the
+staged path. The single route already uses dataclasses.replace with the final
+review path. Add the same returned-path parity for episodes, without changing
+MP4 bytes, measurement hashes, review/publication state or serving permissions.
+Fresh Serena maps this function and its sole caller _run_episode_delivery.
+This is the existing parent artifact/review parity obligation, not an added
+runtime architecture. Add its own measured-byte/path regression before fixing.
+
+Corrected pre-source cohort:100cases/77pass/23fail/0errors/skips,205.945s JUnit.
+Raw C:/Users/Wareen/HawEdit-video-rating-20261010/camera-admission-corrected-red.xml,
+SHA25648e019868a0f99bf564c64bed688e9aa21367f49015923e5c9738e3c299e12b0.
+Preserved its actual outputs under camera-corrected-red-artifacts in that root.
+No production source changed before either red cohort or the fresh caller map.
+
+First patched cohort:100pass/0fail/errors/skips,166.285s JUnit; raw
+camera-admission-first-green.xml in the same root, SHA256
+b6c436a0dc6067e48499e77510cb821b23095c5bc7d1aafc341ba489bee09c7b.
+Actual render outputs preserved under camera-first-green-artifacts. Strict
+mypy then required explicit variable-length tuple annotations in two new tests;
+no runtime assertions or source behavior were changed for that correction.
+Final fast lint/typecheck passes389files; fast is not the full gate.
+Windows bash resolved to WSL on the first fast attempt and refused a CR-bearing
+host-lock path; retained as an environment failure, not a passing check. The
+actual installed Git bash runs the unchanged canonical script correctly.
+
+Source package after repair is
+f9c3871bb6cd3d32cff0203f8d222b78bce61ed0fc965cfe64a5efe8aefabc6e.
+HawaPC01 Windows26300/Python3.12.10/pytest9.1.1/ruff0.9.6/mypy1.15.0,
+OpenCV4.12.0 and actual ffmpeg8.1.1-full_build-www.gyan.dev. These runs use
+the unchanged decoded fixture (ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15)
+and injected known observations, not measured provider accuracy or pinned-render
+release acceptance. Broader affected cohorts and exact clean gate remain required.
+
+Affected ten-module cohort:574cases/573pass/1fail/0errors/skips,672.275s JUnit.
+Raw camera-admission-affected.xml in that root, SHA256
+31aad365c24d07ba5830818e54aed77a7ec5a4e771129c5c3c4de73de97ae3a8.
+The existing test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe
+expects speaker_face/SPEAKER_TRACKED from the digit fixture with injected Haar
+boxes but no established speaking evidence. With repaired admission, its default
+preview falls through to correctly labelled static_centre. Keep this original
+test, assertions, QC digest and fixture unchanged; do not restore false camera
+admission to turn it green. Its expectation conflicts with the stronger approved
+AC-10/AC-12 contract and requires a separately researched contract correction,
+not an altered golden, fabricated identity or a skipped/deselected test.
+The full gate remains required and this unit remains WIP. Strengthen the new
+split comparison to every decoded frame and both measured frame counts before
+the frozen committed gate; the initial100-pass report checked only first frames.
+
+Final whole-stream cohort:100pass/0fail/errors/skips,165.294s JUnit.
+Raw camera-admission-whole-stream.xml, SHA256
+9e588d37ead7ad3eab1b171c7d20cfbb6493e1e6b555606852b28664b2c6703f.
+Both actual split outputs compare every decoded frame and both independent
+measured frame counts. Fast static checks pass389files. Current test-contract
+follow-up has its own actual five-pair Serena map and Approved-by:pending plan
+under specs/legacy-camera-contract; no legacy assertions/fixtures/QC modified.

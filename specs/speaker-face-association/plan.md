@@ -23,7 +23,7 @@ Approved-by: Hawa — 2026-08-15 (inherited from approved true-10/10 Phase 5)
 
 This follow-up implements the existing approved Phase 5 meaning/speaker fidelity
 obligation and current owner output-quality goal, not a new runtime architecture.
-Research and actual seven-pair Serena caller map precede edits. Implement AC-10
+Research and actual nine-pair refreshed Serena caller map precede edits. Implement AC-10
 through AC-15 as one sequential test-first unit: add red controls, repair only
 layout seed/admission and split aggregation, preserve structural callers, run
 whole affected cohorts and exact `bash scripts/verify.sh`, then preserve current
@@ -34,3 +34,9 @@ qualified independent current-package security review (#24) is required. Never
 self-rebind/renew VEX. Prior promotion/check marks do not cover this follow-up.
 No push, publication, new installation, model change, cloud media sharing or
 native speaker-accuracy claim is authorized by this clarification.
+
+Decoded output verification exposed the episode route's stale returned staging
+path. Include AC-16 as the parent program's existing review/artifact parity
+repair, using the already established single-route dataclasses.replace pattern.
+Add its explicit red regression; do not change the decoded test to follow a
+different path, weaken a media assertion, or label a private review published.

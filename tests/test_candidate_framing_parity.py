@@ -100,6 +100,27 @@ class _Tracker:
             return ()
         if self.outcome == "invalid":
             return (SpeakerFocusPoint(in_ms + 100, 150, "WRONG_SPEAKER"),)
+        unusable = {
+            "listener": ("listener", False, 1.0),
+            "unknown": ("unknown", False, 1.0),
+            "offscreen": ("off_screen", False, 1.0),
+            "non-speaking": ("speaker", False, 1.0),
+            "low-confidence": ("speaker", True, 0.59),
+        }
+        if self.outcome in unusable:
+            state, speaking, confidence = unusable[self.outcome]
+            return (SpeakerFocusPoint(in_ms + 100, 150, "SPEAKER_00", state, speaking, confidence),)
+        if self.outcome == "split-contaminated":
+            return (
+                SpeakerFocusPoint(in_ms + 100, 150, "SPEAKER_00"),
+                SpeakerFocusPoint(300, 320, "SPEAKER_00", "listener", False, 1.0),
+                SpeakerFocusPoint(400, 320, "SPEAKER_00", "speaker", False, 1.0),
+                SpeakerFocusPoint(500, 320, "SPEAKER_00", "speaker", True, 0.59),
+                SpeakerFocusPoint(1_000, 490, "SPEAKER_01"),
+                SpeakerFocusPoint(1_100, 320, "SPEAKER_01", "unknown", False, 1.0),
+                SpeakerFocusPoint(1_200, 320, "SPEAKER_01", "speaker", False, 1.0),
+                SpeakerFocusPoint(1_300, 320, "SPEAKER_01", "speaker", True, 0.59),
+            )
         if self.outcome == "three":
             return (
                 SpeakerFocusPoint(100, 120, "SPEAKER_00"),
@@ -210,6 +231,90 @@ def test_production_association_failure_never_substitutes_a_crop(
     assert len(tracker.calls) == 1
     assert face.calls == 0
     assert not list(work.glob("review/*/*.mp4"))
+
+
+@pytest.mark.parametrize("route", ["single", "episode"])
+@pytest.mark.parametrize(
+    "outcome", ["listener", "unknown", "offscreen", "non-speaking", "low-confidence"]
+)
+def test_production_rejects_non_speaking_camera_evidence_in_both_routes(
+    tmp_path: Path, route: str, outcome: str
+) -> None:
+    before = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
+    tracker = _Tracker(outcome)
+    face = _ForbiddenFaceTracker()
+    work = tmp_path / "work"
+    run = _run(work, route, tracker, face=face)
+    assert "usable speaker evidence" in _refusal(run, route)
+    assert len(tracker.calls) == 1 and face.calls == 0
+    assert not list(work.glob("review/*/*.mp4"))
+    assert not run.complete
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize("route", ["single", "episode"])
+def test_split_centres_ignore_non_speaking_observations_in_both_routes(
+    tmp_path: Path, route: str
+) -> None:
+    import cv2
+    import numpy as np
+
+    before = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
+    clean = _run(tmp_path / "clean", route, _Tracker("split"), turns=_TWO_TURNS, split="always")
+    contaminated = _run(
+        tmp_path / "contaminated",
+        route,
+        _Tracker("split-contaminated"),
+        turns=_TWO_TURNS,
+        split="always",
+    )
+    captures = []
+    measured_counts = []
+    try:
+        for run in (clean, contaminated):
+            assert run.clip is not None and run.clip.output is not None
+            assert run.clip.output.crop_target == "two_person_split"
+            assert run.render is not None and not isinstance(run.render, StageSkipped)
+            path = Path(run.render.path)
+            measured = json.loads(path.with_suffix(".measured.json").read_text(encoding="utf-8"))
+            measured_counts.append(measured["video"]["frames_count"])
+            capture = cv2.VideoCapture(str(path))
+            captures.append(capture)
+            assert capture.isOpened()
+            assert not run.complete
+        decoded_count = 0
+        while True:
+            clean_ok, clean_frame = captures[0].read()
+            contaminated_ok, contaminated_frame = captures[1].read()
+            assert clean_ok == contaminated_ok
+            if not clean_ok:
+                break
+            assert clean_frame is not None and contaminated_frame is not None
+            assert clean_frame.shape == contaminated_frame.shape == (1_920, 1_080, 3)
+            np.testing.assert_array_equal(clean_frame, contaminated_frame)
+            decoded_count += 1
+        assert decoded_count > 0
+        assert measured_counts == [decoded_count, decoded_count]
+    finally:
+        for capture in captures:
+            capture.release()
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize("route", ["single", "episode"])
+def test_review_render_path_names_the_measured_private_bytes_in_both_routes(
+    tmp_path: Path, route: str
+) -> None:
+    work = tmp_path / "work"
+    run = _run(work, route, _Tracker())
+    assert run.clip is not None
+    assert run.render is not None and not isinstance(run.render, StageSkipped)
+    path = Path(run.render.path)
+    assert path == work / "review" / run.clip.clip_id / f"{run.clip.clip_id}.mp4"
+    assert path.is_file()
+    measured = json.loads(path.with_suffix(".measured.json").read_text(encoding="utf-8"))
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == measured["file"]["sha256"]
+    assert not run.complete and run.clip.qc is None
 
 
 @pytest.mark.parametrize("route", ["single", "episode"])

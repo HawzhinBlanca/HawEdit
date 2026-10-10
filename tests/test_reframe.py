@@ -117,6 +117,69 @@ def test_speaker_focus_points_are_strictly_ordered_and_inside_the_final_clip() -
         )
 
 
+@pytest.mark.parametrize(
+    ("state", "speaking", "confidence"),
+    [
+        ("listener", False, 1.0),
+        ("unknown", False, 1.0),
+        ("off_screen", False, 1.0),
+        ("speaker", False, 1.0),
+        ("speaker", True, 0.59),
+    ],
+)
+def test_layout_policy_refuses_unestablished_camera_evidence(
+    state: str, speaking: bool, confidence: float
+) -> None:
+    turns = (Segment(0, 2_000, "SPEAKER_00"),)
+    points = (
+        SpeakerFocusPoint(100, 800, "SPEAKER_00", state, speaking, confidence),
+        SpeakerFocusPoint(1_000, 800, "SPEAKER_00", state, speaking, confidence),
+    )
+    assert layout_policy(points, turns, 0, 2_000) == ()
+
+
+@pytest.mark.parametrize("cuts", [(1_000,), (1_000, 1_500)])
+def test_layout_policy_refuses_ambiguous_post_cut_seed(cuts: tuple[int, ...]) -> None:
+    turns = (Segment(0, 3_000, "SPEAKER_00"),)
+    points: tuple[SpeakerFocusPoint, ...] = (
+        SpeakerFocusPoint(500, 200, "SPEAKER_00"),
+        SpeakerFocusPoint(1_100, 800, "SPEAKER_00", "listener", False, 0.0),
+        SpeakerFocusPoint(1_700, 400, "SPEAKER_00"),
+    )
+    if len(cuts) == 1:
+        points = points[:2]
+    assert layout_policy(points, turns, 0, 3_000, shot_cuts_ms=cuts) == ()
+
+
+@pytest.mark.parametrize("after_cut", [False, True])
+def test_layout_policy_seeds_from_first_verified_observation(after_cut: bool) -> None:
+    turns = (Segment(0, 3_000, "SPEAKER_00"),)
+    points: tuple[SpeakerFocusPoint, ...] = (
+        SpeakerFocusPoint(1_100, 800, "SPEAKER_00", "unknown", False, 0.0),
+        SpeakerFocusPoint(1_700, 400, "SPEAKER_00"),
+        SpeakerFocusPoint(2_100, 850, "SPEAKER_00", "listener", False, 0.0),
+    )
+    if after_cut:
+        points = (SpeakerFocusPoint(500, 200, "SPEAKER_00"), *points)
+    path = layout_policy(points, turns, 0, 3_000, shot_cuts_ms=(1_000,) if after_cut else ())
+    assert path
+    assert all(point.center_x not in (800, 850) for point in path)
+    if after_cut:
+        assert any(point.center_x == 200 for point in path if point.at_ms < 1_000)
+        assert all(point.center_x == 400 for point in path if point.at_ms > 1_000)
+    else:
+        assert path[0] == FocusPoint(1_700, 400)
+        assert all(point.center_x == 400 for point in path)
+
+
+def test_structural_listener_validation_does_not_assert_camera_admission() -> None:
+    turns = (Segment(0, 2_000, "SPEAKER_00"),)
+    points = (SpeakerFocusPoint(100, 800, "SPEAKER_00", "listener", False, 0.0),)
+    assert validate_speaker_focus_points(points, turns, 0, 2_000) == (FocusPoint(100, 800),)
+    assert points[0].state == "listener" and not points[0].is_speaking
+    assert layout_policy(points, turns, 0, 2_000) == ()
+
+
 def test_face_tracker_runs_on_real_media_and_reports_no_invented_subject() -> None:
     # The fixture contains only large digits, not faces. Empty is evidence that no face was
     # detected; fabricating a centre point here would make a static shot look tracked.

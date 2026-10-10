@@ -26,7 +26,7 @@
 
 ## Current Follow-Up Caller Map (2026-10-10)
 
-Actual Serena seven-pair map and original source hashes are in research.md.
+Actual Serena nine-pair refreshed map and original source hashes are in research.md.
 
 | Symbol | Actual callers | Repair/coverage |
 |---|---|---|
@@ -43,3 +43,26 @@ media. The decoded-media contract tests inject known labelled observations to
 exercise the real resolver/layout/render; they do not measure the tracker or
 prove native identity accuracy. Full affected cohorts include pipeline, episode,
 candidate framing, reframe, render and diarization acceptance.
+
+Current9a7 actual nine-pair refresh is recorded in research.md. References are
+unchanged: `_resolve_camera` has exactly the two production render callers;
+`layout_policy` is called there and in the existing reframe policy test;
+structural validation additionally serves acceptance reference ingestion and
+metrics, so it will not filter evidence. `_Tracker.track_speakers` and `_run`
+support all decoded parity tests and receive only additive outcomes/coverage.
+No provider, renderer, model, canonical transcript or review signature contract
+is changed by this unit.
+
+Decoded parity additionally exposed `_render_episode_single_clip`'s stale
+staging path after bundle promotion. Its sole actual caller is
+`_run_episode_delivery`; returned RenderResult is propagated into PipelineRun
+and CLI/status serialization. Reuse the existing single-route final-path
+replacement, keeping measured bytes and review-only state unchanged. Cover
+both routes with `test_review_render_path_names_the_measured_private_bytes_in_both_routes`
+and the unchanged episode/pipeline/delivery cohorts.
+
+The whole pipeline cohort exposes the existing motion-tracker integration test's
+conflicting unknown-only positive expectation (details and raw failure in research).
+Leave that test's source/QC/fixture/assertions unchanged in this unit. A future
+test-contract correction must map it and its helpers before any edits; current
+local focused passes cannot claim compatibility or full-gate acceptance.

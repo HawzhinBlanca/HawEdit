@@ -60,3 +60,9 @@ production refusal policy and the following stronger criteria apply.
   Tests: `test_layout_policy_seeds_from_first_verified_observation`.
 
 These names are planned regressions, not passing evidence or accuracy claims.
+
+- **AC-16:** WHEN either rendering route promotes a measured MP4 into its
+  private review bundle, THE returned render path SHALL name those existing
+  measured bytes and SHALL NOT retain the departed staging path or assert
+  publication/completion.
+  Test: `test_review_render_path_names_the_measured_private_bytes_in_both_routes`.

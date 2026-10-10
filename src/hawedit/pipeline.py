@@ -173,6 +173,7 @@ from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
 from hawedit.reframe import (
+    DEFAULT_MIN_CONFIDENCE,
     FocusPoint,
     SpeakerFocusPoint,
     SpeakerSubjectTracker,
@@ -1811,9 +1812,31 @@ def _resolve_camera(
                 points = speaker_tracker.track_speakers(
                     source, boundary.final_in_ms, boundary.final_out_ms, turns
                 )
-            focus = validate_speaker_focus_points(
+            validate_speaker_focus_points(
                 points, turns, boundary.final_in_ms, boundary.final_out_ms
             )
+            usable_points = tuple(
+                point
+                for point in points
+                if point.state == "speaker"
+                and point.is_speaking
+                and point.confidence >= DEFAULT_MIN_CONFIDENCE
+            )
+            dimensions: tuple[int, int] | None = None
+            focus: tuple[FocusPoint, ...] = ()
+            if usable_points:
+                dimensions = proxy_dimensions(source, ffmpeg)
+                crop_w, _ = vertical_crop_size(*dimensions)
+                focus = layout_policy(
+                    points,
+                    turns,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    dead_zone_px=max(1, crop_w // 10),
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    max_pan_px=max(1, int(crop_w * 0.6)),
+                    cut_on_max_pan=True,
+                )
         except Exception as exc:
             return _operational_failure("render", "speaker/face association", exc)
         finally:
@@ -1827,9 +1850,9 @@ def _resolve_camera(
                 RuntimeError("requested association returned no usable speaker evidence"),
             )
         if focus:
-            dimensions = proxy_dimensions(source, ffmpeg)
+            assert dimensions is not None
             centers: dict[str, list[int]] = {}
-            for point in points:
+            for point in usable_points:
                 centers.setdefault(point.speaker, []).append(point.center_x)
             if two_person_split == "always" and len(centers) < 2:
                 raise ValueError(
@@ -1863,19 +1886,9 @@ def _resolve_camera(
                     source_dimensions=dimensions,
                     speaker_turns=turns,
                 )
-            crop_w, _ = vertical_crop_size(*dimensions)
             return _CameraResolution(
                 mode=Reframe.SPEAKER_TRACKED,
-                focus_points=layout_policy(
-                    points,
-                    turns,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    dead_zone_px=max(1, crop_w // 10),
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                    max_pan_px=max(1, int(crop_w * 0.6)),
-                    cut_on_max_pan=True,
-                ),
+                focus_points=focus,
                 source_dimensions=dimensions,
                 speaker_turns=turns,
             )
@@ -2526,6 +2539,7 @@ def _render_episode_single_clip(
 
         bundle.publish()
         final_mp4 = bundle.final_dir / f"{clip.clip_id}.mp4"
+        rendered = replace(rendered, path=str(final_mp4))
         _ensure_clip_cover_image(
             bundle.final_dir,
             clip.clip_id,
