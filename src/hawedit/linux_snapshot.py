@@ -9,6 +9,7 @@ import math
 import os
 import platform
 import re
+import socket
 import stat
 import sys
 import threading
@@ -59,6 +60,19 @@ class _Filter(ctypes.Structure):
 
 class _Program(ctypes.Structure):
     _fields_: ClassVar[Any] = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_Filter))]
+
+
+class _LandlockRuleset(ctypes.Structure):
+    _fields_: ClassVar[Any] = [
+        ("handled_access_fs", ctypes.c_uint64),
+        ("handled_access_net", ctypes.c_uint64),
+        ("scoped", ctypes.c_uint64),
+    ]
+
+
+class _LandlockPath(ctypes.Structure):
+    _pack_ = 1
+    _fields_: ClassVar[Any] = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
 
 
 def _seconds(value: float) -> float:
@@ -189,6 +203,11 @@ class LinuxSnapshot:
     _mode: SnapshotMode
     _kernel_entropy: bool
     _entropy: tuple[int, int] | None
+    _wsl_gpu: bool
+    _gpu: tuple[int, int] | None
+    _gpu_policy: tuple[int, tuple[int, int, int], tuple[int, int, int]] | None
+    _controls: dict[int, tuple[int, tuple[int, int, int]]]
+    _control_fds: frozenset[int]
     _retained: dict[int, tuple[int, tuple[int, int, int], SnapshotFile]]
 
     def __init__(
@@ -201,6 +220,8 @@ class LinuxSnapshot:
         timeout_seconds: float = 30.0,
         mode: SnapshotMode = SnapshotMode.DATA_ONLY,
         kernel_entropy: bool = False,
+        wsl_gpu: bool = False,
+        control_fds: tuple[int, ...] = (),
     ) -> None:
         global _ATTEMPTED
         end = time.monotonic() + _seconds(timeout_seconds)
@@ -220,11 +241,18 @@ class LinuxSnapshot:
             raise LinuxSnapshotError(
                 "Snapshot initial no-new-privileges/zero capabilities required"
             )
-        names = self._declarations(root, files, max_bytes, max_files, mode, kernel_entropy)
+        names = self._declarations(
+            root, files, max_bytes, max_files, mode, kernel_entropy, wsl_gpu, control_fds
+        )
         self._root = root
         self._mode = mode
         self._kernel_entropy = kernel_entropy
         self._entropy = None
+        self._wsl_gpu = wsl_gpu
+        self._gpu = None
+        self._gpu_policy = None
+        self._controls = {}
+        self._control_fds = frozenset(control_fds)
         self._names = frozenset(names)
         self._creator = (os.getpid(), threading.get_ident())
         self._thread = threading.current_thread()
@@ -251,6 +279,8 @@ class LinuxSnapshot:
             self._initialize(end)
             if kernel_entropy:
                 self._acquire_entropy()
+            if wsl_gpu:
+                self._acquire_gpu()
             self._mount(
                 b"tmpfs",
                 os.fsencode(root),
@@ -270,6 +300,8 @@ class LinuxSnapshot:
                 self._prepare_proc()
                 if kernel_entropy:
                     self._prepare_entropy()
+                if wsl_gpu:
+                    self._prepare_gpu()
             # A live writer makes remount fail. Never keep any copied write FD.
             target = (
                 f"/proc/self/fd/{self._anchor}" if mode is SnapshotMode.ROOTED_IMAGE else str(root)
@@ -281,6 +313,8 @@ class LinuxSnapshot:
                 before = -1
                 self._enter_root()
             self._drop_caps()
+            if wsl_gpu:
+                self._enforce_gpu_policy()
             self._fence()
             for label in ("user", "mnt", "pid"):
                 fd = os.open(f"/proc/self/ns/{label}", _flags("O_RDONLY", "O_CLOEXEC"))
@@ -308,6 +342,8 @@ class LinuxSnapshot:
         max_files: int,
         mode: SnapshotMode = SnapshotMode.DATA_ONLY,
         kernel_entropy: bool = False,
+        wsl_gpu: bool = False,
+        control_fds: tuple[int, ...] = (),
     ) -> set[str]:
         if (
             not isinstance(root, Path)
@@ -318,6 +354,13 @@ class LinuxSnapshot:
             or type(mode) is not SnapshotMode
             or type(kernel_entropy) is not bool
             or (kernel_entropy and mode is not SnapshotMode.ROOTED_IMAGE)
+            or type(wsl_gpu) is not bool
+            or (wsl_gpu and (mode is not SnapshotMode.ROOTED_IMAGE or not kernel_entropy))
+            or type(control_fds) is not tuple
+            or len(control_fds) > 131
+            or any(type(fd) is not int or fd < 3 for fd in control_fds)
+            or len(set(control_fds)) != len(control_fds)
+            or (control_fds and not wsl_gpu)
             or type(max_bytes) is not int
             or not 0
             < max_bytes
@@ -339,6 +382,10 @@ class LinuxSnapshot:
                 name in ("dev", "dev/urandom") or name.startswith("dev/urandom/")
             ):
                 raise LinuxSnapshotError("Snapshot entropy path is reserved for kernel state")
+            if wsl_gpu and (name == "dev/dxg" or name.startswith("dev/dxg/")):
+                raise LinuxSnapshotError(
+                    "Snapshot GPU path is reserved for the fixed kernel endpoint"
+                )
             if item.executable and mode is not SnapshotMode.ROOTED_IMAGE:
                 raise LinuxSnapshotError("Snapshot executables require explicit rooted mode")
             parts = name.split("/")
@@ -395,6 +442,8 @@ class LinuxSnapshot:
         for fd, original in inventory:
             self._left(end)
             mode = original[2]
+            if self._wsl_gpu and not stat.S_ISREG(mode):
+                self._gpu_outside_description(fd, original)
             if (
                 self._kernel_entropy
                 and os.readlink(f"/proc/self/fd/{fd}") == "anon_inode:[io_uring]"
@@ -436,6 +485,37 @@ class LinuxSnapshot:
             self._remember(anchor)
             self._retained[fd] = (anchor, original, selected)
             self._retained_bytes(fd, selected, end)
+        if self._wsl_gpu and set(self._controls) != self._control_fds:
+            raise LinuxSnapshotError("GPU original control descriptions unavailable")
+
+    def _gpu_outside_description(self, fd: int, original: tuple[int, int, int]) -> None:
+        if (
+            fd in (0, 1, 2)
+            and stat.S_ISCHR(original[2])
+            and _api(os.fstat(fd), "st_rdev") == _api(os, "makedev")(1, 3)
+        ):
+            return
+        if fd not in self._control_fds or not stat.S_ISSOCK(original[2]):
+            raise LinuxSnapshotError("GPU refuses pre-policy foreign I/O descriptions")
+        channel = socket.socket(fileno=fd)
+        try:
+            if (
+                channel.family != int(_api(socket, "AF_UNIX"))
+                or channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_SEQPACKET
+                or channel.getsockname() != ""
+                or channel.getpeername() != ""
+                or not channel.getblocking()
+                or _fcntl().fcntl(fd, _fcntl().F_GETFL) & int(_api(os, "O_NONBLOCK"))
+                or os.get_inheritable(fd)
+            ):
+                raise LinuxSnapshotError(
+                    "GPU requires original unnamed noninheritable control socket"
+                )
+        finally:
+            channel.detach()
+        anchor = os.dup(fd)
+        self._remember(anchor)
+        self._controls[fd] = (anchor, original)
 
     def _retained_bytes(self, fd: int, item: SnapshotFile, end: float) -> None:
         info = os.fstat(fd)
@@ -553,6 +633,123 @@ class LinuxSnapshot:
             or not int(_api(os, "fstatvfs")(self._anchor).f_flag) & int(_api(os, "ST_NODEV"))
         ):
             raise LinuxSnapshotError("Snapshot private entropy mount policy changed")
+
+    def _acquire_gpu(self) -> None:
+        parent = _directory(Path("/dev"))
+        try:
+            fd = os.open("dxg", _flags("O_PATH", "O_NOFOLLOW", "O_CLOEXEC"), dir_fd=parent)
+        finally:
+            os.close(parent)
+        self._remember(fd)
+        anchor = os.dup(fd)
+        self._remember(anchor)
+        self._gpu = (fd, anchor)
+        self._gpu_custody()
+
+    def _gpu_custody(self) -> None:
+        if self._gpu is None:
+            raise LinuxSnapshotError("Snapshot original GPU description unavailable")
+        for fd in self._gpu:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISCHR(info.st_mode)
+                or _api(info, "st_rdev") != _api(os, "makedev")(10, 258)
+                or info.st_nlink != 1
+                or _identity(fd) != self._known.get(fd)
+                or os.get_inheritable(fd)
+                or not _fcntl().fcntl(fd, _fcntl().F_GETFL) & int(_api(os, "O_PATH"))
+            ):
+                raise LinuxSnapshotError("Snapshot fixed original O_PATH GPU identity substituted")
+        if _fcntl().fcntl(self._gpu[0], 1027, self._gpu[1]) != 1:
+            raise LinuxSnapshotError("Snapshot original GPU description substituted")
+
+    def _prepare_gpu(self) -> None:
+        self._gpu_custody()
+        assert self._gpu is not None
+        directory = os.open(
+            "dev", _flags("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"), dir_fd=self._anchor
+        )
+        try:
+            fd = os.open(
+                "dxg",
+                _flags("O_WRONLY", "O_CREAT", "O_EXCL", "O_NOFOLLOW", "O_CLOEXEC"),
+                0o600,
+                dir_fd=directory,
+            )
+            os.close(fd)
+            target = os.fsencode(f"/proc/self/fd/{self._anchor}/dev/dxg")
+            self._mount(os.fsencode(f"/proc/self/fd/{self._gpu[0]}"), target, None, 4096)
+            self._mount(None, target, None, 32 | 4096 | 1 | 2 | 8)
+            self._gpu_custody()
+        finally:
+            os.close(directory)
+
+    def _enforce_gpu_policy(self) -> None:
+        self._gpu_custody()
+        assert self._gpu is not None
+        if len(tuple(Path("/proc/self/task").iterdir())) != 1 or not _zero_caps(_status()):
+            raise LinuxSnapshotError("GPU policy requires single thread and dropped capabilities")
+        call = self._native.syscall
+        call.restype = ctypes.c_long
+        abi = int(call(444, 0, 0, 1))
+        if abi < 0:
+            raise OSError(ctypes.get_errno(), "Required GPU Landlock ABI query refused")
+        if abi < 6:
+            raise LinuxSnapshotError("GPU requires Landlock ABI >= 6; no compatibility fallback")
+        # ABI 6 handles all write/creation/truncation/device-ioctl rights plus scopes.
+        rules = _LandlockRuleset((1 << 16) - 1, 3, 3)
+        fd = int(call(444, ctypes.byref(rules), ctypes.sizeof(rules), 0))
+        if fd < 0:
+            raise OSError(ctypes.get_errno(), "Required GPU Landlock ruleset refused")
+        try:
+            for parent, access in ((self._anchor, 1 | 4 | 8), (self._gpu[0], 2 | 4 | (1 << 15))):
+                rule = _LandlockPath(access, parent)
+                if call(445, fd, 1, ctypes.byref(rule), 0) != 0:
+                    raise OSError(ctypes.get_errno(), "Required GPU Landlock leaf rule refused")
+            if call(446, fd, 0) != 0:
+                raise OSError(ctypes.get_errno(), "Required GPU Landlock enforcement refused")
+            self._gpu_policy = (abi, _identity(self._anchor), _identity(self._gpu[0]))
+            self._check_gpu_policy()
+        finally:
+            os.close(fd)
+
+    def _check_gpu_policy(self) -> None:
+        self._gpu_custody()
+        assert self._gpu is not None
+        if (
+            self._gpu_policy is None
+            or self._gpu_policy[0] < 6
+            or self._gpu_policy[1:] != (_identity(self._anchor), _identity(self._gpu[0]))
+        ):
+            raise LinuxSnapshotError("Snapshot enforced GPU policy custody unavailable")
+        # Kernel denial is checked, not inferred from the saved policy declaration.
+        for path in (
+            "/dev/urandom",
+            "/proc/self/fd/" + str(self._entropy[0] if self._entropy else -1),
+        ):
+            try:
+                opened = os.open(path, _flags("O_RDWR", "O_CLOEXEC"))
+            except OSError as exc:
+                if exc.errno != errno.EACCES:
+                    raise LinuxSnapshotError(
+                        "GPU readonly entropy policy enforcement uncertain"
+                    ) from exc
+            else:
+                os.close(opened)
+                raise LinuxSnapshotError("GPU kernel policy allowed a non-GPU writable open")
+
+    def _inspect_gpu(self) -> None:
+        self._check_gpu_policy()
+        assert self._gpu is not None
+        current = os.stat("/dev/dxg", follow_symlinks=False)
+        flags = int(_api(os, "statvfs")("/dev/dxg").f_flag)
+        required = _flags("ST_RDONLY", "ST_NOSUID", "ST_NOEXEC")
+        if (
+            (current.st_dev, current.st_ino, current.st_mode) != _identity(self._gpu[0])
+            or flags & required != required
+            or flags & int(_api(os, "ST_NODEV"))
+        ):
+            raise LinuxSnapshotError("Snapshot private GPU identity/mount policy changed")
 
     def _enter_root(self) -> None:
         _api(os, "fchdir")(self._anchor)
@@ -700,7 +897,11 @@ class LinuxSnapshot:
         ]
         if self._kernel_entropy:
             # Readonly mounts do not prohibit character-device writes/reopens.
-            write_flags = _flags("O_ACCMODE", "O_CREAT", "O_TRUNC", "O_APPEND")
+            if self._wsl_gpu:
+                self._check_gpu_policy()
+            write_flags = _flags("O_CREAT", "O_TRUNC", "O_APPEND")
+            if not self._wsl_gpu:
+                write_flags |= _flags("O_ACCMODE")
             for number, offset in ((2, 24), (257, 32)):
                 instructions.extend(
                     [
@@ -719,6 +920,20 @@ class LinuxSnapshot:
                 (427, errno.ENOSYS),
             ):
                 instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | code)])
+        if self._wsl_gpu:
+            # No new external socket domains or incoming SCM_RIGHTS after admission.
+            for number in (41, 53):
+                instructions.extend(
+                    [
+                        (0x15, 0, 3, number),
+                        (0x20, 0, 0, 16),
+                        (0x15, 1, 0, int(_api(socket, "AF_UNIX"))),
+                        (0x06, 0, 0, 0x50000 | errno.EPERM),
+                        (0x20, 0, 0, 0),
+                    ]
+                )
+            for number in (47, 299, 438):
+                instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | errno.EPERM)])
         for number in (272, 308, 165, 166, 155, 161, 428, 429, 430, 431, 432, 433, 442, 435):
             instructions.extend(
                 [
@@ -761,6 +976,16 @@ class LinuxSnapshot:
             pairs = [(self._root_fd, self._anchor), *self._namespaces.values()]
             if self._entropy is not None:
                 pairs.append(self._entropy)
+            if self._gpu is not None:
+                pairs.append(self._gpu)
+            for fd, (anchor, original) in self._controls.items():
+                if (
+                    _identity(fd) != original
+                    or os.get_inheritable(fd)
+                    or _fcntl().fcntl(fd, _fcntl().F_GETFL) & int(_api(os, "O_NONBLOCK"))
+                ):
+                    raise LinuxSnapshotError("Snapshot original control description substituted")
+                pairs.append((fd, anchor))
             for fd, (anchor, original, _) in self._retained.items():
                 if _identity(fd) != original or os.get_inheritable(fd):
                     raise LinuxSnapshotError("Snapshot retained private descriptor substituted")
@@ -784,6 +1009,8 @@ class LinuxSnapshot:
                     raise LinuxSnapshotError("Snapshot original process root/cwd/proc changed")
                 if self._kernel_entropy:
                     self._inspect_entropy()
+                if self._wsl_gpu:
+                    self._inspect_gpu()
             status = _status()
             if (
                 not _zero_caps(status)
@@ -813,6 +1040,9 @@ class LinuxSnapshot:
         pairs = [(self._root_fd, self._anchor), *self._namespaces.values()]
         if self._entropy is not None:
             pairs.append(self._entropy)
+        if self._gpu is not None:
+            pairs.append(self._gpu)
+        pairs.extend((fd, item[0]) for fd, item in self._controls.items())
         pairs.extend((fd, item[0]) for fd, item in self._retained.items())
         for first, anchor in pairs:
             if first >= 0 and anchor >= 0:

@@ -15993,3 +15993,54 @@ full SDK/model/input closure, resource/controller/member admission, GPU/device
 permission, billable provider readiness, authenticated reel publication or a
 10/10 verdict. Exact full gate and same-SHA CI obligations remain; task rows WIP.
 
+## D-327: Fixed Private WSL GPU And Mandatory Leaf Policy
+
+2026-10-11. Wareen explicitly approved specs/rooted-wsl-gpu/plan.md. Extends
+D-325/D-326 without a new runtime dependency, model, installation, host directory,
+cloud scope/spending increase or publication. Implements BLUEPRINT §§3,5,7;
+§§8.1-8.3 evidence obligations and BLOCKED #24/#25 remain independent.
+
+Default-off exact boolean wsl_gpu requires rooted image and genuine readonly
+entropy. Admit only no-follow /dev/dxg character10:258, single-link original
+noninheritable O_PATH descriptor/anchor. Acquire after private mount cloning;
+bind only that endpoint, readonly/nosuid/noexec without nodev on the leaf,
+retain readonly/nodev private root and all original-description checks. Device
+bytes are kernel state, never represented as hash-bound copied files. Host UID0
+maps to overflowuid in Bootstrap's existing user namespace; worker UID is not
+host ownership proof. No caller path/device allowlist or source-backed runtime.
+
+Before SDK imports or device I/O, require actual unprivileged Landlock ABI>=6
+and successful ruleset/add-rule/restrict-self calls while single-threaded with
+NoNewPrivs1/zero capabilities. Handle filesystem rights0-15 (including creation,
+write/truncate/remove/refer/device ioctl), TCP bind/connect and abstract-UNIX/
+signal scopes. Grant image read/execute and fixed GPU leaf read/write/device
+ioctl only, never writable entropy or scratch. Policy inheritance is tested
+through real fork, threads and freshly executed copied Python. No permissive
+compatibility fallback. Kernel entropy-write/reopen denial is inspected on use,
+not inferred from stored affirmative policy flags. Landlock may still permit
+common safe ioctls; do not claim that every ioctl is blocked.
+
+Pre-policy descriptions are exempt from Landlock. Refuse foreign devices,
+pipes/anonymous I/O, asynchronous rings and undeclared sockets; only Bootstrap's
+fixed null stdio, declared readonly executable descriptions and explicitly
+declared borrowed unnamed AF_UNIX/SOCK_SEQPACKET control channels remain.
+Controls require original FD-anchor custody, noninheritability and actual
+kernel blocking flags, not Python wrapper getblocking alone. Original controller
+authentication/member lifetime/resource admission are NOT established by this
+component's socket declaration. Never close a substituted borrowed description.
+
+GPU mode alone may replace the global access-mode open denial after actual leaf
+enforcement; retain create/truncate/append, creat/openat2/io_uring, namespace
+entry/clone restrictions. Deny new non-AF_UNIX socket/socketpair domains,
+recvmsg/recvmmsg handle transfer and pidfd_getfd. Original control recv/send and
+in-domain socketpairs remain usable; real external abstract connections refuse.
+GPU driver calls reach Windows and add attack surface; this is not zero-risk
+or a qualified VEX review. Primary policy semantics:
+https://docs.kernel.org/userspace-api/landlock.html.
+
+Native endpoint/control passes do not establish CUDA tensors, canonical model/
+input closure, trusted validator bytes, reserved RAM/VRAM, production owner
+lifetime or protected DBOS/HTTP adoption. Full exact gate, same-SHA CI, current
+independent driver/runtime review, real ZAR and native editorial/reliability/
+accessibility/performance/30-day acceptance remain. All task rows WIP.
+
