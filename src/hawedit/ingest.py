@@ -36,6 +36,7 @@ import importlib
 import json
 import os
 import stat
+import struct
 import subprocess
 import tempfile
 import threading
@@ -796,6 +797,24 @@ def ingest(
         raise IngestError(f"cannot inspect Stage 0 source {source}: {exc}") from exc
     if source_size == 0:
         raise IngestError("Source media is empty")
+    try:
+        with source.open("rb") as stream:
+            header = stream.read(16)
+    except OSError as exc:
+        raise IngestError(f"cannot read Stage 0 source {source}: {exc}") from exc
+    if len(header) >= 8:
+        box_size, box_type = struct.unpack(">I4s", header[:8])
+        if box_type == b"ftyp":
+            minimum_size = 16
+            if box_size == 1:
+                if len(header) < 16:
+                    raise IngestError("Source media has an incomplete ISO header")
+                box_size = struct.unpack(">Q", header[8:16])[0]
+                minimum_size = 24
+            elif box_size == 0:
+                box_size = source_size
+            if not minimum_size <= box_size <= source_size:
+                raise IngestError("Source media has an incomplete ISO header")
     binary = _ffmpeg(ffmpeg)
     work_dir.mkdir(parents=True, exist_ok=True)
     identifier = media_id or source.stem

@@ -10,3 +10,8 @@ Approved-by: Wareen, existing approved full repair and current continuation.
 4. Run ingest, soak and render caller cohorts; static checks and exact full gate
    after the implementation unit. Preserve every failure and require same-SHA CI
    before any task promotion. No fixture, threshold or enforcement change.
+
+5. Approved full-repair continuation, test-first: remove stale capability-cache
+   answers and refuse independently incomplete ordinary/extended ftyp headers
+   before decoder discovery. Keep real decoding,30s probe bounds and every
+   existing timing/encode assertion; repeat the caller cohort and exact gate.

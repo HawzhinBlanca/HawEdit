@@ -42,7 +42,6 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -561,7 +560,6 @@ class Encoder(Enum):
     NVENC = "h264_nvenc"
 
 
-@lru_cache(maxsize=8)
 def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
     """Can this ffmpeg actually encode with `encoder`? Attempted, not looked up.
 
@@ -573,8 +571,8 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
 
     This is §4.3.2's lesson applied to encoders: "a build accepting the option may still lack
     the backing library". The only answer worth having comes from trying it, so this encodes
-    one frame to a real file and checks that bytes came out. Cached — the answer cannot change
-    within a process, and the probe costs an ffmpeg launch.
+    one frame to a real file and checks that bytes came out. Availability is probed on each
+    request: executable bytes, driver readiness and available resources can change in-process.
 
     **The probe encodes at the size Stage 6 actually outputs, and that is not a detail.** It
     used to use 64x64, and on hawapc01 — the machine §6 says to use NVENC on — that reported

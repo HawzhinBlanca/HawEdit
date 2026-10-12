@@ -281,3 +281,65 @@ C:/Users/Wareen/HawEditGateEvidence-e243f66-20261012/last-test-run.xml, SHA256
 7b733605b9dcda6e0d241f319f39da522168b02b873680120584b17c6f512fd3.
 Only the gate generated that report. Source/runtime/model/producer promotion
 remains unproven; the actual owned controller integration is the next unit.
+
+## Actual Installed Interpreter And Driver Closure
+
+Unchanged b78dacf/package62316472b207: all15 kernel calibration cases also
+pass under the installed ASR Python3.12.0/Clang17.0.1, not only native3.14.4.
+HawEditThreadNameActualRuntime-b78dacf-20261012 stdout SHA256
+c037e9a76c025342dfc5f386edec9e75613a5594457f67b542b19c6a998a4050,
+observer1.109s. HawaPC01/Windows26300/hostPython3.12.10, WSL6.18.40.1,
+LandlockABI7. Installed-interpreter compatibility is not copied-image admission.
+
+A separate bounded private CUDA calibration exercises the real vendor library
+with an original controllerPID1, workerPID2, readonly root/proc, zero caps,
+worker mandatory LandlockABI7, fixed genuine dxg and readonly entropy. The
+actual vendor requests another original live thread with0x241/0666; atomic
+ADDFD_SEND returns a real descriptor. No wider endpoint/scratch permission.
+
+Real ptrace evidence after successful thread-name open discovers two further
+missing runtime inputs:libnvdxgdmal.so.1 and nvcubins.bin. These are existing
+vendor bytes, not installation/new endpoint requests. Explicit readonly copies
+complete this driver diagnostic's input set alongside libcuda.so.1.1/DXCore:
+
+| Input | Bytes | SHA256 |
+| --- | --- | --- |
+| libcuda.so.1.1 | 27803920 | b0fc5b0c2265e2a81c6c8b39983ee9ff163628f5448c157c95c7901b4cb075b6 |
+| libdxcore.so | 942048 | 83d1671a839bcf71709349e77cd68341515df2e63080765618876996a0f4190c |
+| libnvdxgdmal.so.1 | 67656 | 8d9b719509f93f461bcf8c985e68577fd9630be03202f8bfb6d6463d2bb11c3e |
+| nvcubins.bin | 93590996 | a34c8fa41d74d44341add22d276bcf2d76c4460819f18fc6dea4e000af993c42 |
+
+v13 actual cuInit0/CUDA_SUCCESS inventories both RTX3090Ti GPUs; worker exits0
+and original private mounts disappear. Raw HawEditThreadNameCuda-v13-b78dacf-
+20261012 stdout SHA46b8345f92275662d2057e9d1cbad39e42d0d67d3d9060f358cb36d11f373038;
+observer3.593s, traced cuInit0.734s on the above runtime/hardware. Actual host
+nvidia-smi at2026-10-12 reports driver610.88; older596.36 records are historical.
+
+v17 further creates a real CUDA context, allocates16bytes, uploads four float32
+values and reads back exactly[1.0,-2.5,3.25,0.125]. Allocation/upload/readback/
+release/context-destroy statuses are all0, actual worker/coordinator exits0,
+and original private mounts disappear. Two real thread-name requests are
+served. Raw HawEditThreadNameCuda-v17-b78dacf-20261012 stdout SHA
+c860e03ea8f9e29f3e7235399aa5978466d83731db28c0865d5d4979ff72c128;
+observer28.609s, cuInit1.988s. Device0 measured free memory24413995008bytes
+before and24411897856bytes afterward, total25756696576bytes. This is a bounded
+tiny driver diagnostic, not resource reservation or throughput acceptance.
+
+Preserved failures include old-namespace endpoint bindEINVAL (acquire the
+genuine fixed endpoint after entering its original private mount namespace,
+as LinuxSnapshot does, with independent inode/device readback), absent
+os.pidfd_open on3.12 (use genuine syscall434), readonly proc EROFS before
+Landlock, missing DMA library/CUDA500, missing cubins/SIGSEGV stop, native
+Windows command bound refusal before launch, tracing256-record exhaustion
+and traced30s deadline refusal. v17 is explicitly untraced; it does not claim
+that the earlier traced allocation met its deadline. No bound is increased.
+
+Full b78 gate completed:6194 passed/3 failed/1 warning in4731.32s. Current
+NVENC stale-cache and truncated-input latency failures need repair; original
+VEX remains source-bound/expired and requires qualified review. Gate XML
+copied unchanged outside .gate, SHAf8613e1485d04042b0d9bffcad919841f8ae102d91f9830764ffae7b37d74b71.
+No task promotion, same-SHA CI, production broker, full freshly exec'd copied
+Torch, model deserialization, producer/ZAR/video quality, cloud spending or
+publication is established. The production package is unchanged by every
+kernel/driver observation above. Complete copied runtime and original
+controller integration remain the next implementation requirements.
