@@ -5,7 +5,7 @@ The narrow plan is approved. T2 production integration remains conditional on
 the T1 feasibility and refusal corpus; the 2026-10-12 research matrix establishes
 a private-root path but does not yet implement it in LinuxSnapshot.
 
-T1 adds only `scripts/studio_research/thread_name_kernel.py` (a literal native
+T1 adds only `tests/thread_name_kernel_probe.py` (a literal native
 probe program, executed only by its tests) and
 `tests/test_thread_name_kernel.py`. Existing production symbols and the
 `tests/test_linux_bootstrap.execute` harness are unchanged. The latter's actual
@@ -15,6 +15,12 @@ snapshot/scope/bootstrap Serena definition/reference pairs remain unchanged at
 the recorded source digests. New source has no production callers. Every
 literal syscall is exercised on the real installed kernel; no SDK/model/API
 request or publication is performed by this calibration.
+
+The e243 full gate exposed the initial helper's incompatible placement in the
+historical-tool directory. Actual Serena three-pair helper/scope map SHA256
+ed8b4ac8c8581b0bc076feadc89c3a8067f207958890abf3d811456c215d77d3 precedes
+its move. The only loader is kernel_matrix in tests/test_thread_name_kernel.py.
+The existing research-scope test and its exact inventory remain unchanged.
 
 | Existing Symbol | Actual Callers | Required Regression Scope |
 | --- | --- | --- |

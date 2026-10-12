@@ -1,4 +1,4 @@
-"""Real T1 kernel calibration; not production GPU or model admission."""
+"""Native test program for T1 kernel feasibility, not producer admission."""
 
 KERNEL_CODE = r"""
 import array, ctypes, errno, fcntl, json, os, signal, socket, struct, threading, tempfile, select
@@ -305,6 +305,17 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
             done = threading.Event()
             finish = threading.Event()
             failure = []
+            native.fopen.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+            native.fopen.restype = ctypes.c_void_p
+            native.fwrite.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.c_void_p,
+            ]
+            native.fwrite.restype = ctypes.c_size_t
+            native.fclose.argtypes = [ctypes.c_void_p]
+            native.fclose.restype = ctypes.c_int
             program = (Filter * 7)(
                 Filter(0x20, 0, 0, 4),
                 Filter(0x15, 1, 0, AUDIT_ARCH_X86_64),
@@ -335,6 +346,10 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
                     current = threading.get_native_id()
                     tid.append(current)
                     ready.set()
+                    if mode == "vendor_shape":
+                        if not finish.wait(8):
+                            raise RuntimeError("vendor target completion timeout")
+                        return
                     if not go.wait(5):
                         raise RuntimeError("target release timeout")
                     requested = "/proc/self/task/%d/comm" % current
@@ -394,6 +409,26 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
                 command = right.recv(16)
             if command != b"GO":
                 raise RuntimeError("no release")
+            if mode == "vendor_shape":
+                requested = ctypes.create_string_buffer(
+                    ("/proc/self/task/%d/comm" % tid[0]).encode("ascii"), 128
+                )
+                stream = native.fopen(ctypes.cast(requested, ctypes.c_char_p), b"w")
+                if not stream:
+                    raise_errno("actual libc fopen")
+                try:
+                    data = b"VendorShape\n"
+                    written = native.fwrite(ctypes.c_char_p(data), 1, len(data), stream)
+                finally:
+                    close_status = native.fclose(stream)
+                if written != 12 or close_status != 0:
+                    raise RuntimeError("actual libc write differs")
+                right.send(
+                    json.dumps(
+                        dict(write=written, caller_tid=threading.get_native_id(), target_tid=tid[0])
+                    ).encode("ascii")
+                )
+                done.set()
             if not done.wait(5):
                 raise RuntimeError("write timeout")
             if failure:
@@ -428,6 +463,7 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
     )
     taskfd = -1
     threadfd = -1
+    callerfd = -1
     try:
         metadata = json.loads(left.recv(1024))
         case["metadata"] = metadata
@@ -482,6 +518,17 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
                 raise RuntimeError("root is writable")
             if os.path.exists("/home") or os.path.exists("/mnt"):
                 raise RuntimeError("host path exposed")
+        if mode == "vendor_shape":
+            callerfd = os.open(
+                str(worker), os.O_RDONLY | os.O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, dir_fd=taskfd
+            )
+            proc_check(callerfd)
+            mainfd = os.open("comm", os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=callerfd)
+            try:
+                case["caller_comm_before"] = os.read(mainfd, 64).decode("ascii").strip()
+            finally:
+                os.close(mainfd)
+            left.send(b"GO")
         buf = bytearray(80)
         fcntl.ioctl(listener, NOTIF_RECV, buf, True)
         ident, pid, flags = struct.unpack_from("<QII", buf, 0)
@@ -494,18 +541,22 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
         case.update(notification_pid=pid, syscall=number, arch=arch, requested=requested)
         admitted = bool(
             ident
-            and pid == metadata["tid"]
+            and pid == (worker if mode == "vendor_shape" else metadata["tid"])
             and flags == 0
             and number == SYS_OPENAT
             and arch == AUDIT_ARCH_X86_64
             and args[0] == (1 << 64) - 100
             and args[2] == EXPECTED_FLAGS
-            and args[3] == 0o600
+            and args[3] == (0o666 if mode == "vendor_shape" else 0o600)
             and requested == "/proc/self/task/%d/comm" % metadata["tid"]
         )
         case["request_admitted"] = admitted
-        if admitted != (mode in ("valid", "mutable", "stale", "listener_loss")):
+        if admitted != (mode in ("valid", "mutable", "stale", "listener_loss", "vendor_shape")):
             raise RuntimeError("request validation differs from challenge")
+        if mode == "vendor_shape":
+            case.update(caller_tid=pid, target_tid=metadata["tid"], creation_mode=oct(args[3]))
+            if pid == metadata["tid"]:
+                raise RuntimeError("vendor calibration did not target another thread")
         fcntl.ioctl(listener, NOTIF_ID_VALID, struct.pack("<Q", ident))
         target = "/proc/%d/task/%d/comm" % (worker, metadata["tid"])
         if select.select([original_pidfd], [], [], 0)[0]:
@@ -613,7 +664,8 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
         finally:
             os.close(source)
         if case["addfd_errno"] is None:
-            left.send(b"GO")
+            if mode != "vendor_shape":
+                left.send(b"GO")
             case["worker_result"] = json.loads(left.recv(256))
             verify = (
                 os.open("comm", os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=threadfd)
@@ -624,8 +676,21 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
                 case["measured_comm"] = os.read(verify, 64).decode("ascii", "strict").strip()
             finally:
                 os.close(verify)
-            if case["measured_comm"] != "HawUserns" or case["worker_result"]["write"] != 10:
+            expected_name = "VendorShape" if mode == "vendor_shape" else "HawUserns"
+            expected_count = 12 if mode == "vendor_shape" else 10
+            if (
+                case["measured_comm"] != expected_name
+                or case["worker_result"]["write"] != expected_count
+            ):
                 raise RuntimeError("real comm measurement differs")
+            if callerfd >= 0:
+                mainfd = os.open("comm", os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=callerfd)
+                try:
+                    case["measured_caller_comm"] = os.read(mainfd, 64).decode("ascii").strip()
+                finally:
+                    os.close(mainfd)
+                if case["measured_caller_comm"] != case["caller_comm_before"]:
+                    raise RuntimeError("wrong original thread renamed")
             left.send(b"DONE")
             case["result"] = json.loads(left.recv(256))
         else:
@@ -640,6 +705,8 @@ def run_case(use_userns, zero_caps=False, worker_landlock=False, private_root=No
             os.close(taskfd)
         if threadfd >= 0:
             os.close(threadfd)
+        if callerfd >= 0:
+            os.close(callerfd)
         os.close(original_pidfd)
         if listener >= 0:
             os.close(listener)
@@ -666,6 +733,7 @@ for private_pid, mode in (
             "mutable",
             "stale",
             "listener_loss",
+            "vendor_shape",
         )
     ),
 ):

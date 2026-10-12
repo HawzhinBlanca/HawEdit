@@ -14,7 +14,7 @@ from test_linux_bootstrap import execute
 
 @pytest.fixture(scope="module")
 def kernel_matrix(tmp_path_factory: pytest.TempPathFactory) -> list[dict[str, Any]]:
-    path = Path(__file__).parents[1] / "scripts/studio_research/thread_name_kernel.py"
+    path = Path(__file__).with_name("thread_name_kernel_probe.py")
     spec = importlib.util.spec_from_file_location("thread_name_kernel_calibration", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -28,7 +28,7 @@ def kernel_matrix(tmp_path_factory: pytest.TempPathFactory) -> list[dict[str, An
     assert record["kind"] == "seccomp-addfd-send-userns-boundary-matrix"
     assert isinstance(record["kernel"], str) and record["kernel"]
     rows: list[dict[str, Any]] = record["results"]
-    assert len(rows) == 14
+    assert len(rows) == 15
     for row in rows:
         assert "probe_error" not in row, row
         assert row["exit"] == (-9 if row["mode"] == "stale" else 0), row
@@ -120,3 +120,17 @@ def test_thread_name_kernel_listener_loss_refuses_real_open(
     assert row["descriptor_injected"] is False and row["worker_result"]["refused_errno"] == 38
     assert row["measured_comm"] == row["before_comm"]
     assert "write" not in row["worker_result"] and "addfd_return" not in row
+
+
+def test_thread_name_kernel_vendor_main_names_its_other_live_thread(
+    kernel_matrix: list[dict[str, Any]],
+) -> None:
+    row = next(row for row in kernel_matrix if row["mode"] == "vendor_shape")
+    assert row["controller_pid"] == 1 and row["worker"] == 2
+    assert row["caller_tid"] == 2 and row["target_tid"] == 3
+    assert row["notification_pid"] == row["caller_tid"]
+    assert row["requested"] == "/proc/self/task/3/comm" and row["creation_mode"] == "0o666"
+    assert row["addfd_errno"] is None and row["worker_result"]["write"] == 12
+    assert row["worker_result"]["caller_tid"] == 2 and row["worker_result"]["target_tid"] == 3
+    assert row["measured_comm"] == "VendorShape"
+    assert row["measured_caller_comm"] == row["caller_comm_before"]

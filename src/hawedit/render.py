@@ -588,29 +588,32 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
     """
     with tempfile.TemporaryDirectory() as work:
         probe = Path(work) / "probe.mp4"
-        result = subprocess.run(
-            [
-                str(ffmpeg),
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                f"color=c=black:s={ENCODER_PROBE_SIZE[0]}x{ENCODER_PROBE_SIZE[1]}:d=0.1",
-                "-frames:v",
-                "1",
-                "-c:v",
-                encoder.value,
-                "-pix_fmt",
-                "yuv420p",
-                "-y",
-                str(probe),
-            ],
-            capture_output=True,
-            check=False,
-            timeout=30.0,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    str(ffmpeg),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=black:s={ENCODER_PROBE_SIZE[0]}x{ENCODER_PROBE_SIZE[1]}:d=0.1",
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    encoder.value,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-y",
+                    str(probe),
+                ],
+                capture_output=True,
+                check=False,
+                timeout=30.0,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
         # ffmpeg can exit 0 having written nothing when the encoder fails to initialise, so
         # the exit code alone is not the answer either.
         return result.returncode == 0 and probe.exists() and probe.stat().st_size > 0

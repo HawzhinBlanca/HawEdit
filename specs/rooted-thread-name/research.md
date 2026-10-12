@@ -218,3 +218,66 @@ Kernel source inspection supports checking ioctl ABI/flags/state before
 attributing EINVAL to isolation. The installed calibration, rather than a
 branch-tip source page, establishes the measured kernel behavior:
 https://raw.githubusercontent.com/microsoft/WSL2-Linux-Kernel/linux-msft-wsl-6.18.y/kernel/seccomp.c
+
+## Committed Gate And Helper Correction
+
+Local-only e243f66da8c7008f17d5b0de7bffd984b90862a5 records the first kernel
+regressions. Exact `bash scripts/verify.sh` completed on HawaPC01 in 4365.61s:
+6184 passed,7 failed,3 errors,1 warning. The source was held unchanged throughout
+that run; `.gate/last-test-run.xml` was written only by the gate. Captured log:
+`C:/Users/Wareen/HawEditThreadNameGate-e243f66-20261012.log`.
+
+One new defect is owned by this unit: a literal test helper was placed in
+scripts/studio_research, whose existing scope test permits exactly its named
+historical tools. Move that literal helper to `tests/thread_name_kernel_probe.py`
+and update its only dynamic loader; retain the original exact scope assertion.
+Actual installed Serena three-pair map before that edit, unchanged e243:
+HawEditThreadNameHelperMap-e243f66-20261012, SHA256
+ed8b4ac8c8581b0bc076feadc89c3a8067f207958890abf3d811456c215d77d3.
+The new kernel_matrix fixture and KERNEL_CODE definitions/callers, and existing
+scope-test definition/callers, were mapped. No production symbol changes.
+
+Other fresh failures are preserved: four wheel-build outcomes refuse the
+pre-existing untracked `specs/openchatcut-assessment/research.md`; that unrelated
+owner file remains untouched. An inherited audit stream exceeded2s, two NVENC
+probes timed out at30s, empty-file ingest exceeded2s, and checked-in VEX still
+binds old source81f6 rather than current package4b5. No assertion, threshold,
+fixture, review expiry or policy binding is changed to manufacture a pass.
+
+## Actual Vendor Request Shape
+
+Captured unmodified vendor trace v3 shows syscall257 from main worker TID2,
+requesting `/proc/self/task/3/comm`, flags577(0x241), mode438(0666). Its preserved
+stdout SHA256 is c2473c4b570ce5a63fc9980bc90e662c97ebabe9eac3db5ccd1707189b2f5dbe.
+The initial own-thread/0600 calibration is valid kernel feasibility but is not
+the actual vendor contract. The approved plan permits only another live
+original thread in that same registered worker; it does not require requester
+and target TIDs to coincide. Foreign groups remain refused.
+
+An additional actual libc `fopen("w")`/fwrite/fclose calibration on unchanged
+e243 reproduces the vendor shape in private PID1/worker2/target3. Atomic FD4
+injection lets main2 write12 bytes and independently measured target3 becomes
+VendorShape; main2 stays python3. Root/proc remain readonly, both capability sets
+are all zero, worker LandlockABI7 remains active, and private mounts disappear.
+Raw HawEditThreadNameVendorShape-e243f66-20261012 observation SHA256
+e2e45f94fd803610c32d26639cc66c266942ae481521cd57707b32c5c566cdd2;
+stdout4dfb94c161e1b25a33893cc58ce8b1b9d3df6925aebd010ad8d60712eae4f4e1,
+observer1.500s. Native Python3.14.4/glibc2.43/WSL6.18.40.1, hostPython3.12.10/
+Windows26300. This is libc/vendor-call-shape proof, not actual cuInit, copied
+Python3.12.0, Torch, model or producer success. Add a named regression alongside
+the existing own-thread controls; do not weaken those controls.
+
+The helper correction retains the existing exact historical-tool scope test.
+The new helper lives under tests and now covers15 real kernel cases, including
+the actual other-thread/0666 libc request. The kernel/research-scope/GPU caller
+cohort exits0 (79 instances), and lint/mypy remain green. The untouched owner-
+requested OpenChatCut research note was reviewed and preserved in a separate
+local-only f239cae commit to address clean-build refusal; its bytes remain SHA256
+6011046817ee058a19dd924cf08b86f6e07c475687198a390b00629a34ba7d68.
+This preservation is not integration or licensing approval for OpenChatCut.
+
+The original e243 canonical gate XML is copied without alteration to
+C:/Users/Wareen/HawEditGateEvidence-e243f66-20261012/last-test-run.xml, SHA256
+7b733605b9dcda6e0d241f319f39da522168b02b873680120584b17c6f512fd3.
+Only the gate generated that report. Source/runtime/model/producer promotion
+remains unproven; the actual owned controller integration is the next unit.

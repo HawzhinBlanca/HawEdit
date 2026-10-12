@@ -790,6 +790,12 @@ def ingest(
         IngestError: ffmpeg is unavailable, a pass failed, the audio is the wrong format, or
             a VAD segment exceeds the ASR ceiling.
     """
+    try:
+        source_size = source.stat().st_size
+    except OSError as exc:
+        raise IngestError(f"cannot inspect Stage 0 source {source}: {exc}") from exc
+    if source_size == 0:
+        raise IngestError("Source media is empty")
     binary = _ffmpeg(ffmpeg)
     work_dir.mkdir(parents=True, exist_ok=True)
     identifier = media_id or source.stem
