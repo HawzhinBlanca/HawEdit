@@ -99,3 +99,45 @@ GPU, increasing the product timeout, changing drivers, weakening the existing
 comparison or silently substituting x264. Keep the remaining refusal visible
 and require further lifecycle/driver diagnosis. An explicitly selected x264
 route is distinct from a hidden NVENC fallback. No task promotion or VEX renewal.
+# Ingest Deadline And Launch Refusal Continuation, 2026-10-13
+
+Approved parent execution repair and the owner's explicit current-file continuation.
+Source baseline dd172d5bbf92d1184a171b82a5d8dc2c72c4dadc, clean native Windows Git.
+BLUEPRINT sections3/5/8.1-8.3. No new dependency, kernel capability, model,
+cloud scope, installation, trust-policy change or publication is proposed.
+
+The existing `_run` parses HAWEDIT_INGEST_TIMEOUT_S without validation before
+calling subprocess.run. Malformed values escape as ValueError; NaN, infinity,
+nonpositive or practically unbounded values are not refused before launch.
+OSError from a missing executable also escapes this helper. Its two actual
+callers are probe_stream and _extract_once. The latter removes its staging
+file, but currently describes launch errors as publication errors.
+
+Actual installed Serena1.7.1.dev0 LSP mapped `_run`, `probe_stream`,
+`_extract_once` and their references before edits. Source and checkout unchanged.
+Map C:/Users/Wareen/HawEditIngestDeadlineMap-dd172d5-20261013/serena-map.json,
+SHA2561f5c2ab8edf1fa6990e553ce8a8a4f3d904cc1c4d328f47a24be4ef2997207a7.
+Impact-map records the transitive consumers. Literal/CLI entrypoints supplement
+static references; no assumed signatures are used.
+
+Preserve the300-second default and empty/unset override behavior. Require
+positive finite numeric deadlines at most43200 seconds, matching the existing
+bounded native/Linux execution interfaces. Refuse invalid settings before any
+real child launch and identify the setting. Translate actual process launch
+OSError into IngestError with the executable and retained cause. Preserve
+nonzero-exit/timeout behavior, decoder work, hashes and atomic publication.
+
+New regressions use actual child execution and absent executable paths, not a
+mocked runner. A real child writes a marker if accidentally launched with an
+invalid setting. Existing source/fixtures/goldens/timeout assertions stay intact.
+No claim that subprocess timeout bounds process creation/cleanup or replaces
+the separately pending owned producer integration.
+
+Native Windows11 build26300/Python3.12.10/pytest9.1.1/ruff0.9.6/mypy1.15.0/
+DBOS2.29.0: new module initially17 failures/3 passes, preserving the original
+log HawEditIngestDeadlineRed-dd172d5-20261013.log outside the repository.
+After implementation, new/runtime-refusal pair25 tests pass in2.416s;
+whole ingest/ingest_cache/fast/runtime-refusal cohort98 tests pass in74.543s,
+zero failures/errors/skips in both externally saved JUnit reports.
+Canonical verify.sh --fast passes lint/mypy394files; format check passes both
+edited Python files. These do not replace the full gate or same-SHA CI.

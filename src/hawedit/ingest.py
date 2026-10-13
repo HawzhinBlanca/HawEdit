@@ -34,6 +34,7 @@ import gc
 import hashlib
 import importlib
 import json
+import math
 import os
 import stat
 import struct
@@ -127,11 +128,23 @@ class SpeechSegment:
 
 def _run(command: list[str], *, timeout: float = 300.0) -> subprocess.CompletedProcess[bytes]:
     env_timeout = os.environ.get("HAWEDIT_INGEST_TIMEOUT_S")
-    effective_timeout = float(env_timeout) if env_timeout else timeout
+    setting = "HAWEDIT_INGEST_TIMEOUT_S" if env_timeout else "Ingest timeout"
+    try:
+        effective_timeout = float(env_timeout) if env_timeout else timeout
+    except (ValueError, OverflowError) as exc:
+        raise IngestError(f"{setting} must be finite, positive and at most 43200 seconds") from exc
+    if (
+        type(effective_timeout) not in (int, float)
+        or not 0 < effective_timeout <= 43200
+        or not math.isfinite(effective_timeout)
+    ):
+        raise IngestError(f"{setting} must be finite, positive and at most 43200 seconds")
     try:
         result = subprocess.run(command, capture_output=True, timeout=effective_timeout)
     except subprocess.TimeoutExpired as exc:
         raise IngestError(f"{Path(command[0]).name} timed out after {effective_timeout}s") from exc
+    except OSError as exc:
+        raise IngestError(f"{Path(command[0]).name} could not launch: {exc}") from exc
     if result.returncode != 0:
         raise IngestError(
             f"{Path(command[0]).name} failed ({result.returncode}): "
