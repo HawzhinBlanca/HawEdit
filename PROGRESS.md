@@ -12,6 +12,12 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | --- | --- | --- | --- |
 | M9.102 | Anchor original worker threads through kernel birth/exec stops before driver release | WIP | `src/hawedit/linux_thread_registry.py`, `tests/test_linux_thread_registry.py`, `tests/original_registry_kernel_probe.py`; D-328, `specs/rooted-thread-name/registry-plan.md`, `evidence/original-thread-registry-20261013.md`. Initial module-accounting row, not a promotion. Whole235-case isolation cohort passes; real current-source private CUDA readback and foreign/listener-loss refusals observed. Exact44e9ece gate6243pass/3fail: two agent documentation omissions being corrected and stale independent VEX source binding. Typed command/broker, fresh copied SDK/model/resource/external-owner/protected producer adoption, new ZAR reels, full gate and same-SHA CI remain required. |
 
+## Bounded Original Thread-Name Broker (WIP)
+
+| Task | Deliverable | Status | Evidence |
+| --- | --- | --- | --- |
+| M9.103 | Service genuine original-thread comm notifications through the production broker | WIP | `src/hawedit/linux_thread_name.py`, `tests/test_linux_thread_name.py`, `tests/thread_name_broker_probe.py`; D-328, `specs/rooted-thread-name/broker-research.md`, `evidence/thread-name-broker-20261013.md`. Initial accounting, not promotion. Actual libc injection, foreign/shape/listener/custody/deadline and watchdog refusals; real NVIDIA private readback with source registry and broker, original2-6 all reaped. Source preparation failures retained. Typed stopped-worker command, fresh copied Python/Torch/model/resources/original owner, producer/ZAR output, exact full gate and same-SHA CI still required. |
+
 ## Ingest Mutation Readiness (WIP)
 
 specs/ingest-mutation-readiness T1: deliberate copied-FFmpeg byte drift now waits

@@ -16078,3 +16078,23 @@ The component does not replace Snapshot or grant model/effect admission. Typed
 stopped-worker/broker integration, copied runtime/Torch, original external owner,
 resource admission, full gate/CI and independent security/quality remain pending.
 
+### D-328 Implementation: Bounded Source Comm Broker
+
+2026-10-13. The approved original-registry/broker boundary now has a production
+notification component, still default-off and not a general file service. Actual
+kernel ABI sizes and genuine borrowed listener descriptions are checked before
+use. Copy at most128ASCII pathname bytes, validate registered original caller/
+target and exact open/openat path/dirfd/flags/mode, then atomic ADDFD_SEND from
+the genuine original task comm leaf. Unknown shapes get actual EPERM; kernel
+stale IDs retain ENOENT.32requests/30s/one controller, no CONTINUE or fake FD.
+
+Private PID1 ignores default signal actions, and O_NONBLOCK does not bound
+NOTIF_RECV. A fixed controller-only SIGALRM handler plus a genuine absolute
+CLOCK_MONOTONIC POSIX timer bounds receive/copy/response. Never reset/restore
+ITIMER_REAL: an existing original one-shot remains physically unchanged and
+can interrupt earlier. Custom handlers and periodic timers refuse. Delete only
+the broker's original timer; retain uncertainty on handler/timer cleanup failure.
+No arbitrary callback, worker signal via ptrace, installation or new dependency.
+Qualified VEX review, typed stopped-worker lifecycle, complete copied SDK/model/
+input/resource/external owner and production effects remain separate obligations.
+

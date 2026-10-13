@@ -53,3 +53,21 @@ Constructor/open_comm/stop have no static external references yet; the new
 native BODY invokes them dynamically. trace_original_worker likewise is invoked
 by BODY after mandatory worker Landlock. These consumers share the whole new
 registry module's real kernel regressions. No existing production caller changes.
+
+## Bounded Broker Consumers
+
+Current seven-pair map cd59089c67ce7f8998dc0ca82414af1ea25405089d5c5cf0a57b2e0ba88d3b2f
+precedes new consumers in linux_thread_name.py. Description hold/inspect/close
+already serve Registry construction/custody/cleanup; new broker borrows that
+same description contract without changing it. Registry._check/open_comm/stop
+and registered_tids retain their signatures and original-context restrictions.
+New broker native tests exercise actual registry + genuine notification/kernel
+leaf behavior together. Existing default Snapshot and kernel setup stay unchanged;
+native BODY references are dynamic and supplement static zero-reference results.
+
+Actual source-broker four-pair map before vendor consumers/corrections:
+SHAa2389e3da898bd60069dcfde583b3ff27a5b1fd0ccb7a9bce064de3d9e3b24e7,
+C:/Users/Wareen/HawEditSourceBrokerMap-b9f1b26-20261013/serena-map.json.
+Constructor/serve_once/close have dynamic native test/diagnostic consumers;
+_receive_and_respond has static caller serve_once. Every new consumer retains
+original registry and actual kernel regressions; Snapshot default code unchanged.
