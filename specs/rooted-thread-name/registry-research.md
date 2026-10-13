@@ -126,3 +126,13 @@ connected to the typed command or protected producer; fresh copied interpreter/
 Torch/model/input/resource/owner admission and new ZAR reels remain unfinished.
 Full clean committed-source gate and applicable CI remain required; the expired
 VEX policy and all WIP rows are unchanged. No model/cloud/publication was run.
+
+Exact committed44e9ece gate subsequently exits1:6243pass/3fail/1warning,
+2506.77s. Agent omissions are missing README module map and PROGRESS module
+accounting; corrected with an initial WIP row/map, not a promotion. Whole
+claims module then67passed in13.44s. New evidence frontmatter and original raw
+gate/XML hashes are in evidence/original-thread-registry-20261013.md. Registry
+promotion IDs RT1--RT3 are unchecked in canonical tasks.md so the prescribed
+script can find them when full gate and CI genuinely permit promotion.
+Remaining gate failure is independent VEX source binding, not waived/edited.
+Corrected-document full committed rerun remains required; no completion claim.

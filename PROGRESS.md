@@ -6,6 +6,12 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Original Thread Registry (WIP)
+
+| Task | Deliverable | Status | Evidence |
+| --- | --- | --- | --- |
+| M9.102 | Anchor original worker threads through kernel birth/exec stops before driver release | WIP | `src/hawedit/linux_thread_registry.py`, `tests/test_linux_thread_registry.py`, `tests/original_registry_kernel_probe.py`; D-328, `specs/rooted-thread-name/registry-plan.md`, `evidence/original-thread-registry-20261013.md`. Initial module-accounting row, not a promotion. Whole235-case isolation cohort passes; real current-source private CUDA readback and foreign/listener-loss refusals observed. Exact44e9ece gate6243pass/3fail: two agent documentation omissions being corrected and stale independent VEX source binding. Typed command/broker, fresh copied SDK/model/resource/external-owner/protected producer adoption, new ZAR reels, full gate and same-SHA CI remain required. |
+
 ## Ingest Mutation Readiness (WIP)
 
 specs/ingest-mutation-readiness T1: deliberate copied-FFmpeg byte drift now waits
