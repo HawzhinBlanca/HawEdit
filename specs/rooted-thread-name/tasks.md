@@ -26,3 +26,11 @@ Definition of Done: required evidence in registry-plan.md and registry-spec.md,
 exact bash scripts/verify.sh green AND applicable required CI at the same SHA.
 Only scripts/update-ledger.sh may check these entries. No copied-runtime/model,
 security review, publication or system10 claim follows from component passes.
+
+## Approved Private-View Handoff Extension
+
+Approved-by: Wareen, 2026-10-13, explicit "Approve the typed private-view handoff plan" reply.
+
+- [ ] RT2A Original pre-preparation owner/worker and prepared-view kernel binding.
+- [ ] RT2B Shared typed Snapshot command/fence/return invariants and all callers.
+- [ ] RT3A Actual fresh copied interpreter/Torch outcome with complete evidence.

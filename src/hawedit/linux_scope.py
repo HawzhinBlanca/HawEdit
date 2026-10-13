@@ -415,6 +415,142 @@ class LinuxScope:
             self._failed = True
             raise LinuxScopeError("Linux scope liveness uncertain; capabilities retained") from exc
 
+    def require_preparation_ready(self, *, timeout_seconds: float = 5.0) -> None:
+        """Check original PID1/stopped PID2 before copying; never release a worker.
+
+        This is a point-in-time precondition, not a prepared-view or SDK grant.
+        The trusted launch must hold PID2 stopped through preparation and perform
+        the separate original namespace/root transition proof before execution.
+        Refusal preserves the original scope's cancellation authority.
+        """
+        seconds = _seconds(timeout_seconds)
+        if seconds > 30:
+            raise LinuxScopeError("Preparation deadline exceeds thirty seconds")
+        end = time.monotonic() + seconds
+        self._guard()
+        if len(tuple(Path("/proc/self/task").iterdir())) != 1:
+            raise LinuxScopeError("Preparation requires a dedicated single-thread creator")
+        if self._stopped or len(self._anchors) != 4:
+            raise LinuxScopeError("Preparation requires exactly original PID1 and PID2")
+        temporary: list[int] = []
+        try:
+            init, namespace, user, worker = self._anchors
+            init_ids, worker_ids = _pid_info(init), _pid_info(worker)
+            if (
+                init_ids[-1] != 1
+                or worker_ids[-1] != 2
+                or len(init_ids) != len(worker_ids)
+                or init_ids[0] != self._sender_pid
+                or self._ready((init, worker), 0)
+            ):
+                raise LinuxScopeError("Preparation original process identities refused")
+            mounts: list[tuple[int, int, int]] = []
+            for member in (init, worker):
+                self._left(end)
+                for operation, expected in ((0xFF05, namespace), (0xFF09, user)):
+                    observed = int(_fcntl().ioctl(member, operation))
+                    temporary.append(observed)
+                    if os.get_inheritable(observed) or _identity(observed) != _identity(expected):
+                        raise LinuxScopeError("Preparation already transitioned original member")
+                mount = int(_fcntl().ioctl(member, 0xFF03))
+                temporary.append(mount)
+                owner = int(_fcntl().ioctl(mount, 0xB701))
+                temporary.append(owner)
+                if (
+                    os.get_inheritable(mount)
+                    or os.get_inheritable(owner)
+                    or _fcntl().ioctl(mount, 0xB703) != 0x20000
+                    or _identity(owner) != _identity(user)
+                ):
+                    raise LinuxScopeError("Preparation original mount/user binding refused")
+                mounts.append(_identity(mount))
+            if mounts[0] != mounts[1]:
+                raise LinuxScopeError("Preparation worker differs from original mount view")
+            self._preparation_member(init, init_ids, parent=None, stopped=False)
+            self._left(end)
+            self._preparation_member(worker, worker_ids, parent=init_ids[0], stopped=True)
+            self._inspect()
+            if (
+                _pid_info(init) != init_ids
+                or _pid_info(worker) != worker_ids
+                or self._ready((init, worker), 0)
+            ):
+                raise LinuxScopeError("Preparation original liveness changed during observation")
+            self._left(end)
+        except (OSError, ValueError, KeyError, struct.error) as exc:
+            raise LinuxScopeError(
+                "Preparation kernel evidence unavailable; worker not admitted"
+            ) from exc
+        finally:
+            self._close_list(temporary)
+
+    def _preparation_member(
+        self, member: int, ids: tuple[int, ...], *, parent: int | None, stopped: bool
+    ) -> None:
+        # Version-zero PIDFD_GET_INFO: only kernel-filled PID/credential fields.
+        info = bytearray(64)
+        _fcntl().ioctl(member, 0xC040FF0B, info, True)
+        fields = struct.unpack("=QQ12I", info)
+        if (
+            fields[0] & 3 != 3
+            or fields[2] != ids[0]
+            or fields[3] != ids[0]
+            or (parent is not None and fields[4] != parent)
+            or fields[5:13] != (self._uid, self._gid) * 4
+        ):
+            raise LinuxScopeError("Preparation original kernel lineage/credentials refused")
+        directory = os.open(
+            f"/proc/{ids[0]}",
+            os.O_RDONLY
+            | int(_capability(os, "O_DIRECTORY"))
+            | int(_capability(os, "O_NOFOLLOW"))
+            | int(_capability(os, "O_CLOEXEC")),
+        )
+        try:
+            status_fd = os.open(
+                "status",
+                os.O_RDONLY
+                | int(_capability(os, "O_NOFOLLOW"))
+                | int(_capability(os, "O_CLOEXEC")),
+                dir_fd=directory,
+            )
+            with os.fdopen(status_fd, "rb") as stream:
+                raw = stream.read(65537)
+            if len(raw) > 65536:
+                raise LinuxScopeError("Preparation original kernel status exceeds bound")
+            status: dict[str, str] = {}
+            for line in raw.decode("ascii").splitlines():
+                name, separator, value = line.partition(":")
+                if not separator or name in status:
+                    raise LinuxScopeError("Preparation original kernel status malformed")
+                status[name] = value.strip()
+            task = os.open(
+                "task",
+                os.O_RDONLY
+                | int(_capability(os, "O_DIRECTORY"))
+                | int(_capability(os, "O_NOFOLLOW"))
+                | int(_capability(os, "O_CLOEXEC")),
+                dir_fd=directory,
+            )
+            try:
+                threads = os.listdir(task)
+            finally:
+                os.close(task)
+            if (
+                status["NoNewPrivs"] != "1"
+                or status["Threads"] != "1"
+                or threads != [str(ids[0])]
+                or any(int(status[key], 16) for key in ("CapInh", "CapPrm", "CapEff", "CapAmb"))
+                or int(status["TracerPid"]) != 0
+                or (stopped and not status["State"].startswith("T ("))
+                or tuple(int(item) for item in status["NSpid"].split()) != ids
+            ):
+                raise LinuxScopeError(
+                    "Preparation requires original single-thread zero-cap stopped worker"
+                )
+        finally:
+            os.close(directory)
+
     def stop(self, *, timeout_seconds: float = 5.0) -> None:
         seconds = _seconds(timeout_seconds)
         self._guard()

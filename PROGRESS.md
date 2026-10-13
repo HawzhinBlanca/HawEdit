@@ -8,6 +8,14 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Original Thread Registry (WIP)
 
+Approved private-view handoff, D-329: initial RT2A preparation precondition is
+implemented in LinuxScope, not the complete prepared-view transition or launch.
+Actual122-case Scope/Bootstrap/Registry/preparation cohort passes, zero failures,
+errors or skips, 29.000s on HawaPC01/Windows26300/CPython3.12.10 and real WSL.
+Strict fast checks401files pass; full committed gate/current CI remain required.
+No ledger promotion, copied SDK/model release, new ZAR reel or quality verdict.
+Evidence: evidence/original-preparation-boundary-20261013.md.
+
 | Task | Deliverable | Status | Evidence |
 | --- | --- | --- | --- |
 | M9.102 | Anchor original worker threads through kernel birth/exec stops before driver release | WIP | `src/hawedit/linux_thread_registry.py`, `tests/test_linux_thread_registry.py`, `tests/original_registry_kernel_probe.py`; D-328, `specs/rooted-thread-name/registry-plan.md`, `evidence/original-thread-registry-20261013.md`. Initial module-accounting row, not a promotion. Whole235-case isolation cohort passes; real current-source private CUDA readback and foreign/listener-loss refusals observed. Exact44e9ece gate6243pass/3fail: two agent documentation omissions being corrected and stale independent VEX source binding. Typed command/broker, fresh copied SDK/model/resource/external-owner/protected producer adoption, new ZAR reels, full gate and same-SHA CI remain required. |

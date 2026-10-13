@@ -16098,3 +16098,34 @@ No arbitrary callback, worker signal via ptrace, installation or new dependency.
 Qualified VEX review, typed stopped-worker lifecycle, complete copied SDK/model/
 input/resource/external owner and production effects remain separate obligations.
 
+## D-329: Original Stopped-Worker Preparation Boundary
+
+2026-10-13. Wareen explicitly approved the typed private-view handoff in
+specs/rooted-thread-name/launch-plan.md. Extends D-319/D-325/D-328, no new
+dependency, installation, spending, publication or model-policy change.
+BLUEPRINT sections 2,3,5,7 and 8.1--8.3; BLOCKED #24 stays unresolved.
+
+The first additive source unit checks the original Scope before image copying.
+Exactly original PID1 and stopped PID2, direct kernel PIDFD_GET_INFO lineage
+and credentials, original PID/user namespaces, matching original mount view
+and owning user namespace, single-thread creator/members, NNP and zero
+effective/permitted/inheritable/ambient capabilities are required. Preserve
+the early CapBnd boundary; dropping it here would alter Snapshot preparation.
+Proc observations use only numeric identities derived from live original
+pidfds, bounded original task-directory reads and before/after custody/liveness
+checks; no process discovery, caller boolean or late worker adoption.
+
+require_preparation_ready returns no authority, never signals or executes, and
+has a finite deadline capped at thirty seconds. Refusal retains the existing
+Scope's cancellation capability. It is explicitly point-in-time: trusted launch
+must keep the worker held, and separately prove the prepared private user/mount/
+root transition, fence the worker and drain the controller before any SDK
+release. That integration is not implemented by this initial precondition.
+Default Scope admission/EOF/stop/close and Snapshot defaults remain unchanged.
+
+Primary Linux v6.18 UAPI/kernel sources for PIDFD_GET_INFO and namespace queries:
+https://raw.githubusercontent.com/torvalds/linux/v6.18/include/uapi/linux/pidfd.h
+https://raw.githubusercontent.com/torvalds/linux/v6.18/fs/pidfs.c
+Actual native preparation regressions are not copied-Python/Torch, ASR, GPU
+security admission, same-SHA CI, native-editor review or a new ZAR deliverable.
+
