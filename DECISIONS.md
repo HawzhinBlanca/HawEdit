@@ -16044,3 +16044,37 @@ lifetime or protected DBOS/HTTP adoption. Full exact gate, same-SHA CI, current
 independent driver/runtime review, real ZAR and native editorial/reliability/
 accessibility/performance/30-day acceptance remain. All task rows WIP.
 
+## D-328: Original Kernel Thread Registry Before Driver Release
+
+2026-10-13. Wareen explicitly approved specs/rooted-thread-name/registry-plan.md.
+Extends D-325--D-327 without new dependencies, installation, host directories,
+spending, licence acceptance, push or publication. BLUEPRINT sections 2,3,5,7
+and 8.1--8.3; BLOCKED #24/#25 and current independent VEX remain separate.
+
+Opt-in Linux x86_64 private PID1 controller, NNP/kernel fence/zero capabilities,
+readonly root/proc and only original PID2 child. Borrow original pidfd/task root;
+kernel TRACEME/startup/clone/exec stops establish membership before resumption.
+No caller registration or late task enumeration. Independent descriptor anchors
+and F_DUPFD_QUERY reject substitutions and even same-inode reopening. Original
+task status must establish Pid/Tgid/TracerPid. Reap all kernel-born members,
+including a refused budget-exceeding birth, before releasing custody. Preserve
+foreign substituted primary slots; retain uncertainty when anchors differ.
+
+Controller ptrace filter permits only signal-free CONT, exact TRACECLONE/
+TRACEEXEC/EXITKILL SETOPTIONS and GETEVENTMSG on non-controller targets; kernel
+tracer relationship further limits authority. No attach, syscall tracing,
+memory/register writes or altered syscall results. Bootstrap-only worker TRACEME
+is followed by irreversible ptrace/process-creation refusals. Thread clone flags
+are explicitly whitelisted; UNTRACED/PTRACE/parent/namespace escape flags refuse.
+clone3 returns genuine seccomp ENOSYS, matching the existing snapshot policy and
+allowing glibc to use the strictly checked clone call, not unrestricted creation.
+
+At most64 lifetime births,256 wait events and30s including cancellation/reaping.
+Lower admission budgets withhold rejected births and retain kernel relationship
+solely for drain. This feasibility lifetime does not authorize a full ASR job.
+Genuine comm leaf descriptions must reach the original group through atomic
+ADDFD_SEND; a controller-side write itself is refused EINVAL by the kernel.
+The component does not replace Snapshot or grant model/effect admission. Typed
+stopped-worker/broker integration, copied runtime/Torch, original external owner,
+resource admission, full gate/CI and independent security/quality remain pending.
+
