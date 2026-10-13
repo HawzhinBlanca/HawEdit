@@ -33,3 +33,33 @@ by Bootstrap and ThreadRegistry. Their signatures and behavior are unchanged.
 The additive require_preparation_ready method has no existing production caller.
 Coverage: new real-kernel preparation tests plus whole Scope/Bootstrap/Registry
 cohorts; final launch adoption remains RT2B, not an affirmative admission flag.
+
+## Prepared-View Unit Before Source Edits
+
+Actual nine-pair map at2065b07 is recorded in launch-research.md. Existing
+exports have no static consumers; Scope has dynamic actual native helpers.
+Preparation method has no static production caller; _preparation_member is
+called only from preparation readiness. _guard/live/creator retain their
+existing Scope ctor/preparation/stop/close callers. _pid_info is also imported
+by Bootstrap and Registry. _identity is internal to Scope. Their signatures and
+semantics remain unchanged; only exports gain the additive witness class.
+New tests compile actual unchanged Scope plus the new witness and use real
+kernel original-member/namespace/root/descriptor/credential operations.
+Whole Scope/preparation/Bootstrap/Registry callers plus Snapshot/rooted/entropy/
+GPU cohorts and exact full gate are required. No Snapshot/studio/ASR source edit
+or production release adoption occurs in this component unit.
+
+Prepared-view corrections were preceded by eight more actual definition/ref
+pairs at unchanged inspected WIP source:
+C:/Users/Wareen/HawEditPreparedViewControlsMap-2065b07-20261013/serena-map.json,
+SHAdcb122e315d680bec3838a2bb111ccca647e1f2a2db7220e80303199dbd97abf.
+View guard callers are ctor/wait/observe/verify/kernel verification; kernel
+verification callers observe/verify. Scope preparation predicate retains all
+assertions but delegates its original PIDFD_GET_INFO predicate to shared
+_kernel_lineage, also used for prepared PID1. No signature changed.
+Existing _execute callers are Scope _drive and preparation _drive_boundary;
+new _drive_view now reuses it. Windows code growth exceeded native argument
+bounds, so the same trusted code travels through bounded stdin on both hosts.
+Timeout/output/actual executable identity and all original assertions unchanged.
+The visible .codystem-allow-self-edit records this deliberate test-driver edit.
+All Scope/preparation tests and whole isolation caller cohort remain required.

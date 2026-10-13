@@ -1,0 +1,3 @@
+2026-10-13: Deliberate Scope test-driver transport correction for prepared-view
+coverage. Send the unchanged trusted Python program through bounded stdin;
+do not bypass native command limits, alter assertions, fixtures or gate steps.

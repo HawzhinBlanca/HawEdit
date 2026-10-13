@@ -98,3 +98,51 @@ https://raw.githubusercontent.com/torvalds/linux/v6.18/include/uapi/linux/pidfd.
 https://raw.githubusercontent.com/torvalds/linux/v6.18/fs/pidfs.c
 Hence this additive check is point-in-time and never a reusable release token.
 Prepared-view proof and final launch policies remain RT2A/RT2B work.
+
+## RT2A Prepared-View Witness
+
+Baseline2065b078ae30b4b65fc1e4dc5452e95c96ca857a. The approved original
+preparation check is present, but no prepared-root witness or producer adopts
+it. Fresh nine-pair actual Serena map:
+C:/Users/Wareen/HawEditPreparedViewMap-2065b07-20261013/serena-map.json,
+SHAabac3fa7f26efa620e98a741cd1775186fe99e998261aa26d258f72e0e15b326,
+unchanged inspected source/status. Includes exports, Scope/preparation member/
+guard/liveness/creator and kernel identity helpers. Caller impact below.
+
+Primary Linux sources rechecked2026-10-13: pidfd.h GET_MNT/GET_USER/GET_PID;
+ioctl_nsfs type/parent/owner relationships; proc_pid_root documents that root
+provides the actual target mount view and requires READ_FSCREDS access:
+https://raw.githubusercontent.com/torvalds/linux/v6.18/include/uapi/linux/pidfd.h
+https://man7.org/linux/man-pages/man2/ioctl_nsfs.2.html
+https://man7.org/linux/man-pages/man5/proc_pid_root.5.html
+Do not substitute host directory names for that view. Original pidfd-derived
+task directories must be captured before preparation, retained and rechecked.
+Failure to observe the genuine root/namespace is refusal, not permission bypass.
+
+Implementation under approved launch-plan: additive LinuxPreparedView retains
+baseline original task/root/mount descriptions before any preparation release.
+A separate original anonymous SEQPACKET channel carries only a fresh nonce and
+three SCM_RIGHTS (private user, mount, root), actual original PID1 credentials
+and sealed EOF. Generic Scope admission/EOF behavior stays unchanged. Namespace
+types/direct child/owner binding, fresh original PID1 pidfd observations, actual
+chroot/cwd, new readonly tmpfs root, genuine readonly proc for original PID1 and
+still-stopped original PID2 are checked. Independent OFD anchors detect later
+substitution, including same-inode reopening. Repeated verification is required;
+no boolean, path, callback, namespace-joining or executable grant is exposed.
+Thirty-second maximum bounded observation; all rights/queries accounted for.
+Close preserves substituted foreign slots and reports uncertain cleanup.
+
+This observer does not prove complete manifest bytes, final worker fencing,
+Landlock, resources, copied-runtime execution or model admission. Root proof is
+one component of RT2A; trusted typed RT2B must perform and re-observe the original
+worker join with all protections before any SDK execution. No approval expansion.
+
+Source implementation now preserves original FD witnesses and re-observes the
+genuine prepared PID1 view. Stronger actual controls reproduced two source
+defects: post-preparation PID1 could gain a second thread without rejection,
+and restoration of a substituted slot erased prior uncertainty. Both are fixed.
+Real RLIMIT_NOFILE pressure then reproduced two leaked delivered rights when
+the first anchor allocation failed; all delivered rights are now collected
+before adoption and pending originals closed even on failure. Reports retained,
+no syscall mocking or modified production response. Original Scope lineage
+predicate extracted unchanged for shared PID1 verification. WIP remains.

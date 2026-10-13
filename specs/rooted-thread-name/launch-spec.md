@@ -38,3 +38,28 @@ CI before completion. No model inference or video acceptance from kernel tests.
 
 These tests do not satisfy the separate prepared-view, actual-exec or full-video
 criteria above. All task rows remain unchecked.
+
+## Prepared-View Witness Criteria
+
+- WHEN a witness is constructed, THE observer SHALL retain original stopped
+  PID2 and PID1 task/root/mount evidence before image preparation.
+  Test: test_rooted_launch_owner_reobserves_original_prepared_view.
+- WHEN prepared rights arrive, THE observer SHALL require a fresh nonce,
+  original PID1 kernel credentials, exactly three rights and sealed EOF.
+  Test: test_rooted_launch_prepared_handoff_framing_refuses.
+- WHEN root or namespace evidence is foreign, wrong-type, non-descendant,
+  writable, non-procfs or not PID1's actual root/cwd, THE observer SHALL refuse.
+  Test: test_rooted_launch_refuses_foreign_prepared_view.
+- WHEN original PID2 resumes, exits or changes view before the join, THE
+  observer SHALL refuse. Test: test_rooted_launch_prepared_worker_must_remain_held.
+- WHEN original descriptor slots are substituted or reopened, THE observer
+  SHALL refuse and SHALL NOT close foreign slots during cleanup.
+  Test: test_rooted_launch_prepared_view_preserves_substituted_slots.
+- WHEN a prepared observation repeats, THE observer SHALL recheck genuine
+  kernel evidence without signalling, namespace joining or executing.
+  Test: test_rooted_launch_prepared_view_is_not_execution_authority.
+- WHEN observation deadlines are invalid or a sender stalls, THE observer
+  SHALL refuse within the original finite lifetime.
+  Test: test_rooted_launch_prepared_view_deadline_refuses.
+
+No test above substitutes for actual copied SDK/worker fence/production release.

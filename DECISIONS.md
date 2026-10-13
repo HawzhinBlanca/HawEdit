@@ -16129,3 +16129,29 @@ https://raw.githubusercontent.com/torvalds/linux/v6.18/fs/pidfs.c
 Actual native preparation regressions are not copied-Python/Torch, ASR, GPU
 security admission, same-SHA CI, native-editor review or a new ZAR deliverable.
 
+### D-329 Implementation: Original Prepared-View Witness
+
+2026-10-13. Approved launch-plan RT2A now has an additive outside-owner witness.
+Capture original task/root/mount descriptions while original PID2 is held,
+before preparation. Separate unnamed original SEQPACKET channel requires fresh
+nonce, exact original PID1 kernel credentials, three namespace/root rights and
+sealed EOF. Independent OFD anchors reject substitutions and same-inode reopen.
+Observe actual PID1 through original pidfds/tasks, direct child private user,
+mount-owner binding, current root/cwd, new readonly tmpfs and genuine readonly
+proc for original PID1. Original PID2 must remain stopped in its initial view.
+Check original PID1 lineage, NNP, single-thread/untraced state; preserve early
+preparation capabilities, not premature full dropping. Thirty-second maximum.
+
+Custody uncertainty is sticky. Collect all delivered rights before anchoring;
+real allocation failure must not leak rights. Close only verified owned OFDs,
+preserve foreign primary/anchor/witness slots and refuse uncertain cleanup.
+Closing a witness does not claim original Scope drain. Default Scope admission,
+EOF/stop/close and Snapshot behavior remain unchanged. No path/callback/boolean
+SDK grant, general FD service, namespace join or unfenced Snapshot is exposed.
+
+Test program transport uses existing bounded native stdin rather than exceeding
+Windows argument limits. Visible self-edit marker; existing assertions and
+fixture/golden/gate steps unchanged. Genuine kernel controls, not simulation.
+Original worker join/final fence, actual copied runtime/model/producer/ZAR and
+qualified current VEX/CI/quality acceptance remain separate unfinished work.
+

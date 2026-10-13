@@ -10,6 +10,7 @@ import os
 import select
 import signal
 import socket
+import stat
 import struct
 import sys
 import threading
@@ -18,11 +19,12 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-__all__ = ["LinuxScope", "LinuxScopeError"]
+__all__ = ["LinuxPreparedView", "LinuxScope", "LinuxScopeError"]
 
 _MAX_FDS = 131
 _ADMISSION = threading.Lock()
 _ACTIVE: LinuxScope | None = None
+_PREPARED_ACTIVE: LinuxPreparedView | None = None
 
 
 class LinuxScopeError(RuntimeError):
@@ -487,18 +489,7 @@ class LinuxScope:
     def _preparation_member(
         self, member: int, ids: tuple[int, ...], *, parent: int | None, stopped: bool
     ) -> None:
-        # Version-zero PIDFD_GET_INFO: only kernel-filled PID/credential fields.
-        info = bytearray(64)
-        _fcntl().ioctl(member, 0xC040FF0B, info, True)
-        fields = struct.unpack("=QQ12I", info)
-        if (
-            fields[0] & 3 != 3
-            or fields[2] != ids[0]
-            or fields[3] != ids[0]
-            or (parent is not None and fields[4] != parent)
-            or fields[5:13] != (self._uid, self._gid) * 4
-        ):
-            raise LinuxScopeError("Preparation original kernel lineage/credentials refused")
+        self._kernel_lineage(member, ids, parent=parent)
         directory = os.open(
             f"/proc/{ids[0]}",
             os.O_RDONLY
@@ -550,6 +541,20 @@ class LinuxScope:
                 )
         finally:
             os.close(directory)
+
+    def _kernel_lineage(self, member: int, ids: tuple[int, ...], *, parent: int | None) -> None:
+        # Version-zero PIDFD_GET_INFO: only kernel-filled PID/credential fields.
+        info = bytearray(64)
+        _fcntl().ioctl(member, 0xC040FF0B, info, True)
+        fields = struct.unpack("=QQ12I", info)
+        if (
+            fields[0] & 3 != 3
+            or fields[2] != ids[0]
+            or fields[3] != ids[0]
+            or (parent is not None and fields[4] != parent)
+            or fields[5:13] != (self._uid, self._gid) * 4
+        ):
+            raise LinuxScopeError("Preparation original kernel lineage/credentials refused")
 
     def stop(self, *, timeout_seconds: float = 5.0) -> None:
         seconds = _seconds(timeout_seconds)
@@ -623,3 +628,445 @@ class LinuxScope:
         with _ADMISSION:
             if _ACTIVE is self:
                 _ACTIVE = None
+
+
+class LinuxPreparedView:
+    """Original outside owner observes a held worker's prepared private view.
+
+    Construct before preparation. The separate borrowed channel receives only
+    original PID1's kernel-authenticated namespace/root rights. Neither successful
+    observation nor retained descriptors authorize worker release or SDK code.
+    The trusted launch must separately join, fence and re-observe original PID2.
+    """
+
+    _scope: LinuxScope
+    _borrowed: socket.socket
+    _borrowed_fd: int
+    _native: Any
+    _ids: tuple[tuple[int, ...], tuple[int, ...]]
+    _tasks: tuple[int, ...]
+    _original_roots: tuple[int, ...]
+    _base_mount: int
+    _init_parent: int
+    _closed: bool
+    _failed: bool
+    _cleanup_uncertain: bool
+    _observed: bool
+    _cmsg_cloexec: int
+    _dontwait: int
+    _nosignal: int
+    _rights: int
+    _credentials: int
+    _pollerr: int
+    _pollnval: int
+
+    def __init__(
+        self, scope: LinuxScope, channel: socket.socket, *, timeout_seconds: float = 5.0
+    ) -> None:
+        global _PREPARED_ACTIVE
+        end = self._deadline(timeout_seconds)
+        if sys.platform != "linux" or _capability(os, "uname")().machine != "x86_64":
+            raise LinuxScopeError("Prepared view requires a dedicated Linux x86_64 owner")
+        if type(scope) is not LinuxScope or type(channel) is not socket.socket:
+            raise LinuxScopeError("Prepared view requires original Scope and unnamed channel")
+        scope.require_preparation_ready(timeout_seconds=timeout_seconds)
+        if (
+            channel.family != socket.AF_UNIX
+            or channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_SEQPACKET
+            or channel.getsockname() != ""
+            or channel.getpeername() != ""
+            or not channel.getblocking()
+            or os.get_inheritable(channel.fileno())
+            or channel.getsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED) != 1
+            or struct.unpack("3i", channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            != (os.getpid(), scope._uid, scope._gid)
+            or channel.fileno() == scope._channel_fd
+        ):
+            raise LinuxScopeError("Prepared view original separate channel refused")
+        self._scope = scope
+        self._borrowed = channel
+        self._borrowed_fd = channel.fileno()
+        self._cmsg_cloexec = int(_capability(socket, "MSG_CMSG_CLOEXEC"))
+        self._dontwait = int(_capability(socket, "MSG_DONTWAIT"))
+        self._nosignal = int(_capability(socket, "MSG_NOSIGNAL"))
+        self._rights = int(_capability(socket, "SCM_RIGHTS"))
+        self._credentials = int(_capability(socket, "SCM_CREDENTIALS"))
+        self._pollerr = int(_capability(select, "POLLERR"))
+        self._pollnval = int(_capability(select, "POLLNVAL"))
+        self._socket: socket.socket | None = None
+        self._owned: dict[int, tuple[int, int, tuple[int, int, int]]] = {}
+        self._closed = self._failed = self._cleanup_uncertain = self._observed = False
+        self._prepared: tuple[int, int, int] | None = None
+        self._ids = (_pid_info(scope._anchors[0]), _pid_info(scope._anchors[3]))
+        scope._kernel_lineage(scope._anchors[0], self._ids[0], parent=None)
+        init_info = bytearray(64)
+        _fcntl().ioctl(scope._anchors[0], 0xC040FF0B, init_info, True)
+        self._init_parent = int(struct.unpack("=QQ12I", init_info)[4])
+        self._native = ctypes.CDLL(None, use_errno=True)
+        self._native.fstatfs.argtypes = [ctypes.c_int, ctypes.c_void_p]
+        self._native.fstatfs.restype = ctypes.c_int
+        with _ADMISSION:
+            if _PREPARED_ACTIVE is not None:
+                raise LinuxScopeError("Original prepared view lifetime retained; admission refused")
+            _PREPARED_ACTIVE = self
+        try:
+            self._socket = channel.dup()
+            self._adopt(self._socket.fileno())
+            self._tasks = tuple(
+                self._adopt(self._directory(f"/proc/{ids[0]}")) for ids in self._ids
+            )
+            for task in self._tasks:
+                self._filesystem(task, 0x9FA0)
+            self._original_roots = tuple(
+                self._adopt(self._process_leaf(index, "root")) for index in (0, 1)
+            )
+            self._base_mount = self._adopt(int(_fcntl().ioctl(scope._anchors[0], 0xFF03)))
+            scope.require_preparation_ready(timeout_seconds=timeout_seconds)
+            self._guard()
+            scope._left(end)
+        except (OSError, ValueError, LinuxScopeError) as exc:
+            self._failed = True
+            raise LinuxScopeError("Original pre-preparation witness refused; retain scope") from exc
+
+    @staticmethod
+    def _deadline(seconds: float) -> float:
+        value = _seconds(seconds)
+        if value > 30:
+            raise LinuxScopeError("Prepared view deadline exceeds thirty seconds")
+        return time.monotonic() + value
+
+    @staticmethod
+    def _directory(path: str, *, parent: int | None = None) -> int:
+        return os.open(
+            path,
+            os.O_RDONLY
+            | int(_capability(os, "O_DIRECTORY"))
+            | int(_capability(os, "O_NOFOLLOW"))
+            | int(_capability(os, "O_CLOEXEC")),
+            dir_fd=parent,
+        )
+
+    def _process_leaf(self, index: int, name: str) -> int:
+        # These two kernel magic links are opened only under retained original tasks.
+        if name not in ("root", "cwd"):
+            raise LinuxScopeError("Prepared view process leaf refused")
+        return os.open(
+            name,
+            os.O_RDONLY | int(_capability(os, "O_DIRECTORY")) | int(_capability(os, "O_CLOEXEC")),
+            dir_fd=self._tasks[index],
+        )
+
+    def _adopt(self, fd: int) -> int:
+        anchor = witness = -1
+        try:
+            identity = _identity(fd)
+            if fd in self._owned or os.get_inheritable(fd):
+                raise LinuxScopeError("Prepared view newly owned description invalid")
+            anchor = os.dup(fd)
+            witness = os.dup(fd)
+            self._owned[fd] = (anchor, witness, identity)
+            return fd
+        except BaseException:
+            for original in (witness, anchor, fd):
+                if original >= 0:
+                    os.close(original)
+            raise
+
+    def _filesystem(self, fd: int, expected: int) -> None:
+        buffer = (ctypes.c_long * 32)()
+        if self._native.fstatfs(fd, ctypes.byref(buffer)) != 0 or buffer[0] != expected:
+            raise LinuxScopeError("Prepared view genuine filesystem type refused")
+
+    def _guard(self) -> None:
+        self._scope._creator_check()
+        if self._failed or self._closed:
+            raise LinuxScopeError("Prepared view refused/closed; uncertainty retained")
+        try:
+            self._scope.require_live()
+            if len(tuple(Path("/proc/self/task").iterdir())) != 1:
+                raise LinuxScopeError("Prepared view requires single-thread original creator")
+            for fd, (anchor, witness, identity) in self._owned.items():
+                if (
+                    any(
+                        _identity(item) != identity or os.get_inheritable(item)
+                        for item in (fd, anchor, witness)
+                    )
+                    or _fcntl().fcntl(fd, 1027, anchor) != 1
+                    or _fcntl().fcntl(anchor, 1027, witness) != 1
+                ):
+                    raise LinuxScopeError("Prepared view original description substituted")
+            if (
+                self._socket is None
+                or self._borrowed.fileno() != self._borrowed_fd
+                or os.get_inheritable(self._borrowed_fd)
+                or _fcntl().fcntl(self._borrowed_fd, 1027, self._socket.fileno()) != 1
+            ):
+                raise LinuxScopeError("Prepared view original control substituted")
+        except (OSError, LinuxScopeError) as exc:
+            self._failed = True
+            raise LinuxScopeError("Prepared view original custody uncertain; no retry") from exc
+
+    def _init_evidence(self) -> None:
+        self._scope._kernel_lineage(self._scope._anchors[0], self._ids[0], parent=self._init_parent)
+        fd = os.open(
+            "status",
+            os.O_RDONLY | int(_capability(os, "O_NOFOLLOW")) | int(_capability(os, "O_CLOEXEC")),
+            dir_fd=self._tasks[0],
+        )
+        with os.fdopen(fd, "rb") as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            raise LinuxScopeError("Prepared view original init status exceeds bound")
+        fields: dict[str, str] = {}
+        for line in raw.decode("ascii").splitlines():
+            key, separator, value = line.partition(":")
+            if not separator or key in fields:
+                raise LinuxScopeError("Prepared view original init status malformed")
+            fields[key] = value.strip()
+        task = self._directory("task", parent=self._tasks[0])
+        try:
+            threads = os.listdir(task)
+        finally:
+            os.close(task)
+        if (
+            fields.get("NoNewPrivs") != "1"
+            or fields.get("Threads") != "1"
+            or fields.get("TracerPid") != "0"
+            or tuple(int(value) for value in fields.get("NSpid", "").split()) != self._ids[0]
+            or threads != [str(self._ids[0][0])]
+        ):
+            raise LinuxScopeError("Prepared view requires original untraced single-thread PID1")
+
+    def _wait(self, end: float, *, reading: bool) -> None:
+        assert self._socket is not None
+        while True:
+            self._guard()
+            try:
+                observed = select.select(
+                    [self._socket] if reading else [],
+                    [] if reading else [self._socket],
+                    [],
+                    self._scope._left(end),
+                )
+            except InterruptedError:
+                continue
+            self._guard()
+            self._scope._left(end)
+            if observed[0] if reading else observed[1]:
+                return
+
+    def _receive(
+        self, end: float
+    ) -> tuple[bytes, list[int], list[tuple[int, int, int]], int, bool]:
+        assert self._socket is not None
+        while True:
+            self._wait(end, reading=True)
+            try:
+                packet, ancillary, flags, _ = _capability(self._socket, "recvmsg")(
+                    37, _space(16) + _space(12), self._cmsg_cloexec | self._dontwait
+                )
+                break
+            except (BlockingIOError, InterruptedError):
+                continue
+        rights: list[int] = []
+        pending: list[int] = []
+        credentials: list[tuple[int, int, int]] = []
+        malformed = False
+        for level, kind, data in ancillary:
+            if level == socket.SOL_SOCKET and kind == self._rights:
+                values = array.array("i")
+                malformed |= len(data) % values.itemsize != 0
+                values.frombytes(data[: len(data) // values.itemsize * values.itemsize])
+                pending.extend(values)
+            elif level == socket.SOL_SOCKET and kind == self._credentials and len(data) == 12:
+                credentials.append(struct.unpack("3i", data))
+            else:
+                malformed = True
+        # recvmsg installed every delivered right, even if a later dup fails.
+        try:
+            while pending:
+                fd = pending.pop(0)
+                rights.append(self._adopt(fd))
+        finally:
+            LinuxScope._close_list(pending)
+        self._scope._left(end)
+        return packet, rights, credentials, flags, malformed
+
+    def observe_prepared(self, *, timeout_seconds: float = 5.0) -> None:
+        """Authenticate original prepared rights; never release or join PID2."""
+        end = self._deadline(timeout_seconds)
+        self._guard()
+        if self._prepared is not None or self._observed:
+            raise LinuxScopeError("Prepared view handoff is single-use")
+        try:
+            nonce = os.urandom(32)
+            if len(nonce) != 32:
+                raise LinuxScopeError("Prepared view challenge refused")
+            self._wait(end, reading=False)
+            assert self._socket is not None
+            if self._socket.send(b"HEQ1" + nonce, self._dontwait | self._nosignal) != 36:
+                raise LinuxScopeError("Prepared view challenge send refused")
+            packet, rights, credentials, flags, malformed = self._receive(end)
+            if (
+                malformed
+                or flags & ~self._cmsg_cloexec
+                or packet != b"HEP1" + nonce
+                or len(rights) != 3
+                or credentials != [(self._ids[0][0], self._scope._uid, self._scope._gid)]
+            ):
+                raise LinuxScopeError("Prepared view original framing/rights/credentials refused")
+            self._prepared = (rights[0], rights[1], rights[2])
+            tail, extra, creds, tail_flags, malformed = self._receive(end)
+            poll = _capability(select, "poll")()
+            poll.register(self._socket.fileno(), int(_capability(select, "POLLIN")) | 0x2000)
+            observed = poll.poll(0)
+            if (
+                tail
+                or extra
+                or creds
+                or malformed
+                or tail_flags & ~self._cmsg_cloexec
+                or len(observed) != 1
+                or not observed[0][1] & 0x2000
+                or observed[0][1] & (self._pollerr | self._pollnval)
+            ):
+                raise LinuxScopeError("Prepared view unsealed or trailing handoff refused")
+            self._verify_kernel(end)
+            self._observed = True
+        except (OSError, ValueError, LinuxScopeError) as exc:
+            self._failed = True
+            raise LinuxScopeError("Prepared view original evidence refused; no release") from exc
+
+    def _verify_kernel(self, end: float) -> None:
+        self._guard()
+        assert self._prepared is not None
+        user, mount, root = self._prepared
+        init, namespace, original_user, worker = self._scope._anchors
+        temporary: list[int] = []
+
+        def query(fd: int, operation: int) -> int:
+            self._scope._left(end)
+            current = int(_fcntl().ioctl(fd, operation))
+            temporary.append(current)
+            if os.get_inheritable(current):
+                raise LinuxScopeError("Prepared view inheritable kernel query refused")
+            return current
+
+        try:
+            self._init_evidence()
+            if (
+                _fcntl().ioctl(user, 0xB703) != 0x10000000
+                or _fcntl().ioctl(mount, 0xB703) != 0x20000
+                or _identity(user) == _identity(original_user)
+                or _identity(mount) == _identity(self._base_mount)
+                or _identity(query(user, 0xB702)) != _identity(original_user)
+                or _identity(query(mount, 0xB701)) != _identity(user)
+            ):
+                raise LinuxScopeError("Prepared view direct private namespace relationship refused")
+            owner = array.array("I", [0])
+            if _fcntl().ioctl(user, 0xB704, owner, True) != 0 or owner[0] != self._scope._euid:
+                raise LinuxScopeError("Prepared view original private user owner refused")
+            for member, expected_user, expected_mount in (
+                (init, user, mount),
+                (worker, original_user, self._base_mount),
+            ):
+                if (
+                    _identity(query(member, 0xFF09)) != _identity(expected_user)
+                    or _identity(query(member, 0xFF03)) != _identity(expected_mount)
+                    or _identity(query(member, 0xFF05)) != _identity(namespace)
+                ):
+                    raise LinuxScopeError("Prepared view original pidfd namespace differs")
+            self._scope._preparation_member(
+                worker, self._ids[1], parent=self._ids[0][0], stopped=True
+            )
+            current_root = self._process_leaf(0, "root")
+            temporary.append(current_root)
+            current_cwd = self._process_leaf(0, "cwd")
+            temporary.append(current_cwd)
+            worker_root = self._process_leaf(1, "root")
+            temporary.append(worker_root)
+            if (
+                _identity(current_root) != _identity(root)
+                or _identity(current_cwd) != _identity(root)
+                or _identity(worker_root) != _identity(self._original_roots[1])
+                or _identity(root) == _identity(self._original_roots[0])
+                or not stat.S_ISDIR(os.fstat(root).st_mode)
+                or os.fstat(root).st_uid != self._scope._uid
+            ):
+                raise LinuxScopeError("Prepared view original private process root/cwd differs")
+            self._filesystem(root, 0x01021994)
+            root_flags = int(_capability(os, "fstatvfs")(root).f_flag)
+            if root_flags & 7 != 7:
+                raise LinuxScopeError("Prepared view root must be readonly/nosuid/nodev")
+            proc = self._directory("proc", parent=root)
+            temporary.append(proc)
+            self._filesystem(proc, 0x9FA0)
+            if int(_capability(os, "fstatvfs")(proc).f_flag) & 15 != 15:
+                raise LinuxScopeError("Prepared view proc must be readonly/nosuid/nodev/noexec")
+            init_proc = self._directory("1", parent=proc)
+            temporary.append(init_proc)
+            for label, expected in (("pid", namespace), ("user", user)):
+                fd = os.open(
+                    f"ns/{label}", os.O_RDONLY | int(_capability(os, "O_CLOEXEC")), dir_fd=init_proc
+                )
+                temporary.append(fd)
+                if _identity(fd) != _identity(expected):
+                    raise LinuxScopeError("Prepared view proc is not original PID1's namespace")
+            self._guard()
+            if (_pid_info(init), _pid_info(worker)) != self._ids:
+                raise LinuxScopeError("Prepared view original process identity changed")
+            self._scope._left(end)
+        finally:
+            LinuxScope._close_list(temporary)
+
+    def verify_prepared(self, *, timeout_seconds: float = 5.0) -> None:
+        """Re-observe genuine original kernel evidence, never affirmative flags."""
+        end = self._deadline(timeout_seconds)
+        self._guard()
+        if not self._observed:
+            raise LinuxScopeError("Prepared view has no authenticated original handoff")
+        try:
+            self._verify_kernel(end)
+        except (OSError, ValueError, LinuxScopeError) as exc:
+            self._failed = True
+            raise LinuxScopeError("Prepared view verification uncertain; no release") from exc
+
+    def close(self) -> None:
+        """Close only witnessed owned descriptions; caller still owns Scope drain."""
+        global _PREPARED_ACTIVE
+        self._scope._creator_check()
+        if self._closed:
+            return
+        if self._cleanup_uncertain:
+            raise LinuxScopeError("Prepared view cleanup uncertainty retained")
+        if self._socket is not None:
+            self._socket.detach()
+            self._socket = None
+        uncertain = False
+        for fd, (anchor, witness, identity) in self._owned.items():
+            originals: list[int] = []
+            try:
+                if (
+                    _identity(anchor) != identity
+                    or _identity(witness) != identity
+                    or _fcntl().fcntl(anchor, 1027, witness) != 1
+                ):
+                    uncertain = True
+                    continue
+                originals.extend((anchor, witness))
+                if _identity(fd) == identity and _fcntl().fcntl(fd, 1027, witness) == 1:
+                    originals.insert(0, fd)
+                else:
+                    uncertain = True
+                for original in originals:
+                    os.close(original)
+            except OSError:
+                uncertain = True
+        if uncertain:
+            self._failed = self._cleanup_uncertain = True
+            raise LinuxScopeError("Prepared view cleanup refused foreign descriptions")
+        self._owned.clear()
+        self._closed = True
+        with _ADMISSION:
+            if _PREPARED_ACTIVE is self:
+                _PREPARED_ACTIVE = None

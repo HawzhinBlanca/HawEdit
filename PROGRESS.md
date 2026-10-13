@@ -16,6 +16,15 @@ Strict fast checks401files pass; full committed gate/current CI remain required.
 No ledger promotion, copied SDK/model release, new ZAR reel or quality verdict.
 Evidence: evidence/original-preparation-boundary-20261013.md.
 
+RT2A prepared-view witness, D-329: captures before preparation and verifies
+original PID1's private user/mount/root through genuine kernel evidence; original
+PID2 remains held. Real PID1 thread, restored-descriptor uncertainty and partial
+anchor-allocation leaks reproduced and fixed. Whole310-case isolation cohort
+passes, zero failures/errors/skips,106.175s on recorded Windows/WSL hardware.
+No actual worker join, copied runtime, model, protected producer or ZAR output
+yet. Full committed gate/current CI required; all ledger targets remain WIP.
+Evidence: evidence/original-prepared-view-20261013.md.
+
 | Task | Deliverable | Status | Evidence |
 | --- | --- | --- | --- |
 | M9.102 | Anchor original worker threads through kernel birth/exec stops before driver release | WIP | `src/hawedit/linux_thread_registry.py`, `tests/test_linux_thread_registry.py`, `tests/original_registry_kernel_probe.py`; D-328, `specs/rooted-thread-name/registry-plan.md`, `evidence/original-thread-registry-20261013.md`. Initial module-accounting row, not a promotion. Whole235-case isolation cohort passes; real current-source private CUDA readback and foreign/listener-loss refusals observed. Exact44e9ece gate6243pass/3fail: two agent documentation omissions being corrected and stale independent VEX source binding. Typed command/broker, fresh copied SDK/model/resource/external-owner/protected producer adoption, new ZAR reels, full gate and same-SHA CI remain required. |

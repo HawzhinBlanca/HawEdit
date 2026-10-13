@@ -103,19 +103,23 @@ def _execute(tmp_path: Path, code: str) -> Any:
         executable = Path("C:/Program Files/WSL/wsl.exe")
         private = PrivateDirectory(tmp_path / "execution", exclusive=True)
         return run_native(
-            (str(executable), "--exec", "/usr/bin/python3", "-I", "-B", "-c", code),
+            (str(executable), "--exec", "/usr/bin/python3", "-I", "-B", "-"),
             cwd=private.path,
             environment={
                 "SystemRoot": os.environ.get("SYSTEMROOT", "C:/Windows"),
                 "USERPROFILE": os.environ["USERPROFILE"],
             },
             expected_executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
-            input_bytes=b"",
+            input_bytes=code.encode("utf-8"),
             timeout_seconds=20,
             output_limit_bytes=262144,
         )
     return subprocess.run(
-        [sys.executable, "-I", "-B", "-c", code], capture_output=True, timeout=20, check=False
+        [sys.executable, "-I", "-B", "-"],
+        input=code.encode("utf-8"),
+        capture_output=True,
+        timeout=20,
+        check=False,
     )
 
 
