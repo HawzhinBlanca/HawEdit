@@ -1,9 +1,12 @@
 ---
 date: 2026-10-13
+commit: 17967e2d6d7ca1b13466dd811c5dd61dd6a7aa68
 baseline_sha: a530ab2221345689227f47fad6be240a4a709d8a
+media_sha256: n/a (kernel fixture, no source video or model inference)
 status: WIP component, not video or release acceptance
 host: HawaPC01, Threadripper3990X, Windows26300, CPython3.12.10; WSL6.18.54.1-microsoft-standard-WSL2, trusted system Python3.14.4/GCC15.2.0
 libraries: pytest9.1.1, ruff0.9.6, mypy1.15.0
+command: .venv/Scripts/python.exe -m pytest tests/test_linux_joined_view.py tests/test_linux_scope.py tests/test_linux_preparation_boundary.py tests/test_linux_prepared_view.py tests/test_linux_bootstrap.py tests/test_linux_thread_registry.py tests/test_linux_thread_name.py tests/test_linux_snapshot.py tests/test_rooted_linux_image.py tests/test_rooted_kernel_entropy.py tests/test_rooted_wsl_gpu.py --junitxml=C:/Users/Wareen/HawEditJoinedView-cohort-final-20261013.xml
 ---
 
 # Original Joined-Worker Observation
@@ -44,3 +47,12 @@ The trusted fixtures join exact namespace handles and enter genuine readonly
 tmpfs/proc. Observation checks only original kernel identity/view/capabilities;
 it does not inspect retained outside handles or establish Landlock/seccomp.
 Those missing obligations stay explicit in RT2B, not affirmative flags.
+
+First exact committed full gate at17967e2:6352pass/2fail/1warning,2518.73s,
+exit1. Lint/type/format403files pass. One failure is this record's missing
+required header fields, now corrected without changing the validator. The other
+is the unchanged stale independent VEX source binding. Full original evidence,
+canonical XML copy and hashes are preserved externally in
+C:/Users/Wareen/HawEditGateEvidence-17967e2-20261013/observation.md.
+No green gate or ledger/CI completion is claimed. Fresh committed gate required
+after this record correction; production source stays byte-identical to17967e2.
