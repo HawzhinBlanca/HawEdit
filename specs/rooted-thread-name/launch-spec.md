@@ -63,3 +63,23 @@ criteria above. All task rows remain unchecked.
   Test: test_rooted_launch_prepared_view_deadline_refuses.
 
 No test above substitutes for actual copied SDK/worker fence/production release.
+# Joined-Worker Kernel Observation
+
+- WHEN the outside owner verifies a joined worker, THE observer SHALL require
+  the retained original PID2 in the exact prepared user/mount/root/cwd, stopped,
+  single-thread, untraced, NNP and with all five capability sets zero.
+  Tests: test_rooted_launch_owner_reobserves_joined_original_worker,
+  test_rooted_launch_joined_worker_damaged_transition_refuses.
+- WHEN authenticated prepared evidence is absent or the worker has not joined,
+  THE observer SHALL refuse without signalling or executing the worker.
+  Test: test_rooted_launch_joined_observation_requires_actual_transition.
+- WHEN joined observation repeats, THE observer SHALL recheck kernel evidence
+  without leaking descriptors or granting release/fence/SDK authority.
+  Test: test_rooted_launch_joined_observation_has_no_execution_authority.
+
+This observation does not prove Landlock/seccomp policy or close inherited FDs;
+those remain mandatory typed-launch checks before any copied execution.
+Authenticated-handoff, original death and reopened descriptor refusals are also
+covered by test_rooted_launch_joined_observation_requires_authenticated_handoff,
+test_rooted_launch_joined_observation_refuses_dead_original_scope and
+test_rooted_launch_joined_observation_preserves_substituted_description.

@@ -146,3 +146,17 @@ the first anchor allocation failed; all delivered rights are now collected
 before adoption and pending originals closed even on failure. Reports retained,
 no syscall mocking or modified production response. Original Scope lineage
 predicate extracted unchanged for shared PID1 verification. WIP remains.
+# Joined-Worker Observation Refinement, 2026-10-13
+
+Approved launch-plan RT2A step 6 still lacks outside-owner re-observation after
+the original held worker joins the prepared view. Implement this missing check
+before Snapshot adoption. It is observation only, not a fence/exec grant.
+Use the retained original pidfd/task/root descriptions; require exact prepared
+user/mount/root/cwd, original PID/parent/credentials, stopped single-thread NNP
+worker and zero effective/permitted/inheritable/bounding/ambient capabilities.
+Keep verify_prepared's original unjoined contract unchanged. Failures are sticky.
+Real kernel fixtures exercise setns/chroot/capability drop and damaged transitions.
+No SDK, model, cloud call, Snapshot return change or release-authority claim.
+
+Actual seven-pair Serena map at unchanged a530ab2:
+C:/Users/Wareen/HawEditJoinedViewMap-a530ab2-20261013/serena-map.json.

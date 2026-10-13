@@ -16155,3 +16155,22 @@ fixture/golden/gate steps unchanged. Genuine kernel controls, not simulation.
 Original worker join/final fence, actual copied runtime/model/producer/ZAR and
 qualified current VEX/CI/quality acceptance remain separate unfinished work.
 
+### D-329 Implementation: Joined Original Worker Re-Observation
+
+2026-10-13. Approved launch-plan RT2A step6 now has an additive outside-owner
+verify_joined observation. Reuse retained original pidfds/tasks and authenticated
+prepared rights; require the same original PID2/parent/credentials/PID namespace
+in exactly the prepared user/mount/root/cwd. Worker must remain stopped,
+single-thread, untraced and NNP with all five capability sets zero, including
+CapBnd. This later boundary intentionally differs from pre-copy readiness.
+Repeat original worker status/custody/liveness checks; refuse sticky uncertainty.
+verify_prepared's unjoined contract and all Scope/Snapshot defaults stay intact.
+
+Actual trusted kernel fixtures perform setns/chroot/capability drop and refuse
+damaged transitions, tracing, additional mounts, retained bounding capabilities,
+threads, death, running state and reopened descriptions. No SDK import/exec.
+Observation signals nothing, returns no authority and proves neither closed
+outside handles nor Landlock/seccomp policy. Typed Snapshot integration, final
+worker/controller fences and copied runtime remain mandatory before any model
+release. No new architecture authority, dependency, rights, spending or bypass.
+

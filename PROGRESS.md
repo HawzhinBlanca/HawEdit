@@ -1275,3 +1275,14 @@ required same-SHA CI absent/no push, no ledger DONE. This is not model/runtime/
 GPU/effect/producer admission or an improved ZAR reel. Full original seven-phase
 system and independent sustained acceptance remain open.
 
+# Original Joined-Worker Observation, 2026-10-13
+
+Approved launch-plan RT2A step6, D-329, WIP. Outside owner now independently
+checks the same held original worker after exact private view/root entry and
+complete capability drop. Default unjoined observation and Snapshot unchanged.
+Actual328-case caller cohort passes/0errors/skips,112.52s,18new native cases;
+baselinea530ab2, hardware/versions/red records/commands in
+evidence/original-joined-view-20261013.md. Exact committed gate and CI still
+required. No ledger completion, security-review renewal, copied-runtime/model
+admission, producer adoption, fresh ZAR reel, publication or10/10 verdict.
+

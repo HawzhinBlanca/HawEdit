@@ -807,11 +807,18 @@ class LinuxPreparedView:
             raise LinuxScopeError("Prepared view original custody uncertain; no retry") from exc
 
     def _init_evidence(self) -> None:
-        self._scope._kernel_lineage(self._scope._anchors[0], self._ids[0], parent=self._init_parent)
+        self._member_evidence(0)
+
+    def _member_evidence(self, index: int) -> None:
+        self._scope._kernel_lineage(
+            self._scope._anchors[0 if index == 0 else 3],
+            self._ids[index],
+            parent=self._init_parent if index == 0 else self._ids[0][0],
+        )
         fd = os.open(
             "status",
             os.O_RDONLY | int(_capability(os, "O_NOFOLLOW")) | int(_capability(os, "O_CLOEXEC")),
-            dir_fd=self._tasks[0],
+            dir_fd=self._tasks[index],
         )
         with os.fdopen(fd, "rb") as stream:
             raw = stream.read(65537)
@@ -823,7 +830,7 @@ class LinuxPreparedView:
             if not separator or key in fields:
                 raise LinuxScopeError("Prepared view original init status malformed")
             fields[key] = value.strip()
-        task = self._directory("task", parent=self._tasks[0])
+        task = self._directory("task", parent=self._tasks[index])
         try:
             threads = os.listdir(task)
         finally:
@@ -832,10 +839,18 @@ class LinuxPreparedView:
             fields.get("NoNewPrivs") != "1"
             or fields.get("Threads") != "1"
             or fields.get("TracerPid") != "0"
-            or tuple(int(value) for value in fields.get("NSpid", "").split()) != self._ids[0]
-            or threads != [str(self._ids[0][0])]
+            or tuple(int(value) for value in fields.get("NSpid", "").split()) != self._ids[index]
+            or threads != [str(self._ids[index][0])]
         ):
-            raise LinuxScopeError("Prepared view requires original untraced single-thread PID1")
+            raise LinuxScopeError("Prepared view requires original untraced single-thread member")
+        if index == 1 and (
+            not fields.get("State", "").startswith("T (")
+            or any(
+                int(fields.get(key, "-1"), 16)
+                for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
+            )
+        ):
+            raise LinuxScopeError("Joined view requires stopped original worker with all caps zero")
 
     def _wait(self, end: float, *, reading: bool) -> None:
         assert self._socket is not None
@@ -937,7 +952,7 @@ class LinuxPreparedView:
             self._failed = True
             raise LinuxScopeError("Prepared view original evidence refused; no release") from exc
 
-    def _verify_kernel(self, end: float) -> None:
+    def _verify_kernel(self, end: float, *, joined: bool = False) -> None:
         self._guard()
         assert self._prepared is not None
         user, mount, root = self._prepared
@@ -968,7 +983,7 @@ class LinuxPreparedView:
                 raise LinuxScopeError("Prepared view original private user owner refused")
             for member, expected_user, expected_mount in (
                 (init, user, mount),
-                (worker, original_user, self._base_mount),
+                (worker, user if joined else original_user, mount if joined else self._base_mount),
             ):
                 if (
                     _identity(query(member, 0xFF09)) != _identity(expected_user)
@@ -976,9 +991,12 @@ class LinuxPreparedView:
                     or _identity(query(member, 0xFF05)) != _identity(namespace)
                 ):
                     raise LinuxScopeError("Prepared view original pidfd namespace differs")
-            self._scope._preparation_member(
-                worker, self._ids[1], parent=self._ids[0][0], stopped=True
-            )
+            if joined:
+                self._member_evidence(1)
+            else:
+                self._scope._preparation_member(
+                    worker, self._ids[1], parent=self._ids[0][0], stopped=True
+                )
             current_root = self._process_leaf(0, "root")
             temporary.append(current_root)
             current_cwd = self._process_leaf(0, "cwd")
@@ -988,12 +1006,17 @@ class LinuxPreparedView:
             if (
                 _identity(current_root) != _identity(root)
                 or _identity(current_cwd) != _identity(root)
-                or _identity(worker_root) != _identity(self._original_roots[1])
+                or _identity(worker_root) != _identity(root if joined else self._original_roots[1])
                 or _identity(root) == _identity(self._original_roots[0])
                 or not stat.S_ISDIR(os.fstat(root).st_mode)
                 or os.fstat(root).st_uid != self._scope._uid
             ):
                 raise LinuxScopeError("Prepared view original private process root/cwd differs")
+            if joined:
+                worker_cwd = self._process_leaf(1, "cwd")
+                temporary.append(worker_cwd)
+                if _identity(worker_cwd) != _identity(root):
+                    raise LinuxScopeError("Joined view original worker cwd differs")
             self._filesystem(root, 0x01021994)
             root_flags = int(_capability(os, "fstatvfs")(root).f_flag)
             if root_flags & 7 != 7:
@@ -1013,6 +1036,8 @@ class LinuxPreparedView:
                 if _identity(fd) != _identity(expected):
                     raise LinuxScopeError("Prepared view proc is not original PID1's namespace")
             self._guard()
+            if joined:
+                self._member_evidence(1)
             if (_pid_info(init), _pid_info(worker)) != self._ids:
                 raise LinuxScopeError("Prepared view original process identity changed")
             self._scope._left(end)
@@ -1030,6 +1055,18 @@ class LinuxPreparedView:
         except (OSError, ValueError, LinuxScopeError) as exc:
             self._failed = True
             raise LinuxScopeError("Prepared view verification uncertain; no release") from exc
+
+    def verify_joined(self, *, timeout_seconds: float = 5.0) -> None:
+        """Observe the same stopped PID2 after its trusted join; not a fence/exec grant."""
+        end = self._deadline(timeout_seconds)
+        self._guard()
+        if not self._observed:
+            raise LinuxScopeError("Joined view has no authenticated original prepared handoff")
+        try:
+            self._verify_kernel(end, joined=True)
+        except (OSError, ValueError, LinuxScopeError) as exc:
+            self._failed = True
+            raise LinuxScopeError("Joined view verification uncertain; no release") from exc
 
     def close(self) -> None:
         """Close only witnessed owned descriptions; caller still owns Scope drain."""

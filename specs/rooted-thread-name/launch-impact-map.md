@@ -63,3 +63,17 @@ bounds, so the same trusted code travels through bounded stdin on both hosts.
 Timeout/output/actual executable identity and all original assertions unchanged.
 The visible .codystem-allow-self-edit records this deliberate test-driver edit.
 All Scope/preparation tests and whole isolation caller cohort remain required.
+# Joined-Worker Re-Observation Before Edits
+
+Current seven-pair actual Serena map at a530ab2 reports unchanged source:
+C:/Users/Wareen/HawEditJoinedViewMap-a530ab2-20261013/serena-map.json.
+SHA256: 8c357620f9307990e210f4ab53e073a7401c41437b75bf6f071139d8424fcde4.
+_verify_kernel callers are observe_prepared and verify_prepared; their unjoined
+default stays unchanged. _init_evidence and _process_leaf have only witness
+callers. _preparation_member and _kernel_lineage retain their Scope preparation
+and witness callers without changing signatures or requirements. New additive
+verify_joined has no existing caller; it independently observes original PID2,
+not a passed readiness flag. Existing _drive_view and all 45 prepared-view cases
+remain unchanged; new native tests reuse their actual program transport.
+Whole Scope/preparation/view/Bootstrap/Registry/Snapshot/rooted/entropy/GPU
+cohorts and exact full gate required. RT2B/RT3 and all video claims remain open.
