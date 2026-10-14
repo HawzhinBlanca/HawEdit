@@ -9,6 +9,11 @@ test_rooted_controller_actual_cpu_comm_service_returns_fenced;
 test_rooted_controller_actual_gpu_comm_service_returns_fenced;
 test_rooted_controller_actual_gpu_elf_returns_fenced.
 
+WHEN controller completion acknowledgment is absent or its kernel sender/frame
+differs, THE native fixture SHALL refuse a GPU test pass even if the worker
+already exited. Regressions: test_rooted_gpu_controller_missing_final_ack_is_not_a_pass;
+test_rooted_gpu_controller_wrong_completion_frame_is_not_a_pass.
+
 | Criterion | Proposed Named Test |
 | --- | --- |
 | WHEN the diagnostic controller runs, THE system SHALL retain its existing30s/64KiB/64birth/32request ceilings. | test_protected_asr_preserves_diagnostic_limits |

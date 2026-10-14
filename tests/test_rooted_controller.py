@@ -56,6 +56,12 @@ def _controller_run(tmp_path: Path, case: str) -> None:
         else str(Path(__file__).parents[1] / "src")
     )
     prefix = INIT.split("snapshot=LinuxSnapshot(root,files", 1)[0]
+    prefix = prefix.replace(
+        "root=Path(sys.argv[3])",
+        "root=Path(sys.argv[3])\n"
+        "completion=socket.socket(fileno=int(sys.argv[4]))\n"
+        "os.set_inheritable(completion.fileno(),False)",
+    )
     prefix = prefix.replace("PACKAGE", repr(package)).replace(
         "CASE",
         repr("none" if case in ("elf", "gpu_elf", "gpu_mismatch", "task_reopen") else "python"),
@@ -122,7 +128,8 @@ refusals=('overflow','timeout','manifest','owner_eof','gpu_mismatch','task_reope
 try:
  snapshot=LinuxSnapshot(root,files,mode=SnapshotMode.ROOTED_IMAGE,
   kernel_entropy=True,max_bytes=maximum,launch=launch,
-  wsl_gpu=GPU_ENABLED and TEST_CASE!='gpu_mismatch')
+  wsl_gpu=GPU_ENABLED and TEST_CASE!='gpu_mismatch',
+  control_fds=(completion.fileno(),) if GPU_ENABLED and TEST_CASE!='gpu_mismatch' else ())
 except Exception as exc:
  if TEST_CASE not in refusals:raise
  expected={'overflow':'output','timeout':'deadline','manifest':'manifest','owner_eof':'owner',
@@ -152,6 +159,9 @@ else:
   assert json.loads(result.output)=={'comm':'HawEditOriginal','tid':3,
    'entropy_errno':13 if GPU_ENABLED else 1,'device':[10,258] if GPU_ENABLED else None}
  snapshot.verify();snapshot.close()
+ if TEST_CASE=='gpu_late_failure':os._exit(73)
+completion.send(b'WRONG' if TEST_CASE=='gpu_wrong_ack' else
+ b'HEASSERT-v1:'+TEST_CASE.encode('ascii'));completion.close()
 time.sleep(9)
 """
     )
@@ -183,6 +193,29 @@ time.sleep(.1)
             "pl.shutdown(socket.SHUT_WR)",
         )
     driver = DRIVER.replace("SOURCE", repr(_source())).replace("INIT_PROGRAM", repr(init))
+    action += """
+assert select.select([cl],[],[],5)[0],'completion acknowledgment refused: timeout'
+packet,ancillary,flags,_=cl.recvmsg(65,socket.CMSG_SPACE(12),socket.MSG_CMSG_CLOEXEC)
+assert packet==b'HEASSERT-v1:'+TEST_CASE.encode('ascii'),\
+ 'completion acknowledgment refused: missing or wrong packet'
+assert flags&~socket.MSG_CMSG_CLOEXEC==0,\
+ 'completion acknowledgment refused: flags'
+assert ancillary==[(socket.SOL_SOCKET,socket.SCM_CREDENTIALS,
+ struct.pack('3i',scope._sender_pid,scope._uid,scope._gid))],\
+ 'completion acknowledgment refused: sender'
+""".replace("TEST_CASE", repr(case))
+    driver = driver.replace(
+        "pl.setsockopt(socket.SOL_SOCKET,socket.SO_PASSCRED,1)",
+        "pl.setsockopt(socket.SOL_SOCKET,socket.SO_PASSCRED,1)\n"
+        "cl,cr=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)\n"
+        "cl.setsockopt(socket.SOL_SOCKET,socket.SO_PASSCRED,1)",
+    )
+    driver = driver.replace("str(root)],pass_fds=", "str(root),str(cr.fileno())],pass_fds=")
+    driver = driver.replace(
+        "pass_fds=(right.fileno(),pr.fileno())", "pass_fds=(right.fileno(),pr.fileno(),cr.fileno())"
+    )
+    driver = driver.replace("right.close();pr.close()", "right.close();pr.close();cr.close()")
+    driver = driver.replace("left.close();pl.close()", "left.close();pl.close();cl.close()")
     if gpu:
         driver = driver.replace("stderr=subprocess.PIPE)", "stderr=subprocess.DEVNULL)")
         driver = driver.replace(
@@ -216,6 +249,16 @@ def test_rooted_controller_actual_gpu_comm_service_returns_fenced(tmp_path: Path
 
 def test_rooted_controller_actual_gpu_elf_returns_fenced(tmp_path: Path) -> None:
     _controller_run(tmp_path, "gpu_elf")
+
+
+def test_rooted_gpu_controller_missing_final_ack_is_not_a_pass(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError, match="completion acknowledgment refused"):
+        _controller_run(tmp_path, "gpu_late_failure")
+
+
+def test_rooted_gpu_controller_wrong_completion_frame_is_not_a_pass(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError, match="completion acknowledgment refused"):
+        _controller_run(tmp_path, "gpu_wrong_ack")
 
 
 def test_rooted_controller_gpu_declaration_mismatch_refuses_before_copy(tmp_path: Path) -> None:

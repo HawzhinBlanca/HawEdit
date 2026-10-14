@@ -82,3 +82,18 @@ or admission. No privileged configuration. References consulted2026-10-14:
 https://docs.kernel.org/admin-guide/cgroup-v2.html and
 https://man7.org/linux/man-pages/man2/getrlimit.2.html. Do not claim RLIMIT_RSS
 is effective isolation or assume cgroup delegation is the only possible guard.
+
+## Positive GPU Test Evidence Correction
+
+At75f3a58, GPU fixture null stderr is required by outside-FD isolation but can
+hide a late controller failure after the worker already exits. Parent Scope
+worker-death observation alone does not prove init's final assertions. Do not
+count earlier GPU green rows as authenticated controller completion. Cancelled
+the in-flight75f3a58 gate by verified exact pytest child37968 only, no control
+characters or process-group signal; no fresh completed JUnit/gate pass exists.
+Raw cancelled log SHA256e9950e42a2d12b1995f728c14cb8cb9a2fa7b7f5a6becf9bbcf81c593421de74.
+Strengthen tests with a separate original fixed unnamed SEQPACKET acknowledgment
+using existing strict GPU control_fds rules, original init kernel credentials
+and exact case-bound packet after every final assertion. Worker receives no
+channel at exec; no production policy/code or outside-FD relaxation. Real init
+death before final acknowledgment must make the fixture refuse, not pass.

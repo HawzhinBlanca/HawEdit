@@ -9,6 +9,13 @@ status: WIP; source changes under approved PA1; no gate/CI pass, CUDA/ASR or rel
 
 # Original GPU Broker Service
 
+> [!WARNING] Subsequent Verification Correction
+> Initial GPU fixture null stderr could hide a late controller assertion failure;
+> its raw green rows alone do not prove final GPU completion. Real init exit73
+> before acknowledgment was wrongly accepted. Subsequent authenticated completion
+> tests correct the gap; see gpu-completion-ack-20261014.md. Retain the earlier
+> observations, not an acceptance claim from them.
+
 Header identifies baseline; measurements below used scoped working-tree PA1
 changes. Actual nine Serena pairs and source custody in protected producer
 research.md/impact-map.md. No model, SDK, cloud inference or video rendering.

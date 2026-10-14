@@ -56,3 +56,11 @@ typed service completion caller. Run complete original CPU/default/GPU/entropy,
 Scope/View, registry/broker and rooted worker/controller modules. Only original
 private worker-task descriptions join typed custody; generic outside rules and
 worker's closed outside handles remain unchanged.
+
+Before positive acknowledgment correction at75f3a58, actual Serena maps the
+current _controller_run definition and all actual static test callers, unchanged
+source: C:/Users/Wareen/HawEditGPUAckMap-75f3a58-20261014/serena-map.json,
+SHA25607a809969ed6db8b29ae0727b628b69bc597e068908662d4279dcca4828dc036.
+Only test helper/ordinary tests change. Original GPU control_fds validation is
+used unchanged for a fixed private test-only acknowledgment channel. Never
+interpret parent worker-death observation alone as verified controller success.

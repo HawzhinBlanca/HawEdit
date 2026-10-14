@@ -16287,3 +16287,16 @@ actual dxg open is not proof of CUDA computation. Complete SDK/model/resource
 closure, protected canonical inference/host checkpoints, qualified current VEX,
 native Sorani review and a real ZAR reel remain separate requirements.
 
+### Authenticated Diagnostic Completion Evidence, 2026-10-14
+
+GPU null stderr must not conceal init failures in native tests. Worker-death
+observation alone is not a passing final controller result. Keep production
+isolation unchanged; test uses a separate fixed original unnamed SEQPACKET
+channel through existing strict GPU control_fds policy. Parent requires exact
+case-bound frame and kernel credentials of original Scope init after every
+final assertion. Real init exit73 and corrupt final frame refuse test success.
+Earlier75f3a58 canonical gate cancelled by verified exact child PID only;
+no completed JUnit/gate result or original GPU acceptance attributed to it.
+No simulation of kernel results, caller ready flags, writable proc, broader
+FD admission, SDK/model release, source policy change or gate bypass.
+
