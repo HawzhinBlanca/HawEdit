@@ -16,6 +16,7 @@ run on real weights.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -56,7 +57,12 @@ from hawedit.asr import (
 from hawedit.asr_worker import run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
-from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
+from hawedit.omni_assets import (
+    CANONICAL_CTC_CARD,
+    CANONICAL_LLM_CARD,
+    FusedCheckpointAsset,
+    OmniAssetError,
+)
 from hawedit.registry import ModelEntry, ModelExcluded, ModelNotInRegistry
 from hawedit.transcripts import (
     AsrProvenance,
@@ -1343,6 +1349,7 @@ def _capture_wsl_request(
     adapter: Path | None,
     *,
     fault: str | None = None,
+    fused: Path | None = None,
 ) -> dict[str, Any]:
     """Run the producer with the worker faked, and return the request it wrote.
 
@@ -1393,7 +1400,9 @@ def _capture_wsl_request(
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
     monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
     monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
-    WslOmniAsrProducer(interpreter="/opt/hawedit/python", lora_adapter=adapter).transcribe(
+    WslOmniAsrProducer(
+        interpreter="/opt/hawedit/python", lora_adapter=adapter, fused_checkpoint=fused
+    ).transcribe(
         "zar38",
         tmp_path / "audio.wav",
         (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
@@ -1416,6 +1425,26 @@ def test_the_wsl_request_carries_the_adapter_across_the_boundary(
     assert request["lora_adapter"] == "/mnt/c/shared", (
         "the adapter did not reach the worker, so it would have run base weights"
     )
+
+
+def test_the_wsl_request_carries_the_fused_checkpoint_across_the_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-331: the fused champion crosses the same single channel under its own identity."""
+    (tmp_path / "v12").mkdir()
+    checkpoint = tmp_path / "v12" / "kurdish_omniasr_7b_v12_c750.pt"
+    checkpoint.write_bytes(b"synthetic-fused-weights")
+    digest = hashlib.sha256(b"synthetic-fused-weights").hexdigest()
+    allowed = FusedCheckpointAsset("synthetic", checkpoint.name, 23, digest)
+    monkeypatch.setattr("hawedit.omni_assets.FUSED_CHECKPOINT_ASSETS", (allowed,))
+
+    request = _capture_wsl_request(
+        monkeypatch, tmp_path, tmp_path / "stage1", None, fused=checkpoint
+    )
+
+    assert request["fused_checkpoint"] == "/mnt/c/shared"
+    assert request["model_identity"] == f"fused:{digest}"
+    assert "lora_adapter" not in request
 
 
 def test_a_stock_wsl_request_contains_only_the_required_schema_fields(

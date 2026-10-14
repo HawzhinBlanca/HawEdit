@@ -167,17 +167,34 @@ def _infer_request(
             "ASR worker request names a LoRA adapter but a backend was supplied; the adapter "
             "would be ignored and its transcript filed under the adapter's name anyway"
         )
+    # The fused champion (D-331) follows the same rules under its own identity prefix, and
+    # neither kind may stand in for the other.
+    fused = payload.get("fused_checkpoint")
+    if fused is not None and not isinstance(fused, str):
+        raise ValueError("ASR worker request fused_checkpoint must be a path string")
+    if fused is not None and adapter is not None:
+        raise ValueError("ASR worker request names both a LoRA adapter and a fused checkpoint")
+    if fused is not None and backend is not None:
+        raise ValueError(
+            "ASR worker request names a fused checkpoint but a backend was supplied; the "
+            "checkpoint would be ignored and its transcript filed under its name anyway"
+        )
     claimed_identity = payload.get("model_identity")
-    if adapter is not None:
+    if adapter is not None or fused is not None:
+        kind, weights = ("lora", adapter) if adapter is not None else ("fused", fused)
         if (
-            not adapter.strip()
+            not weights
+            or not weights.strip()
             or not isinstance(claimed_identity, str)
-            or re.fullmatch(r"lora:[a-f0-9]{64}", claimed_identity) is None
+            or re.fullmatch(rf"{kind}:[a-f0-9]{{64}}", claimed_identity) is None
         ):
             raise ValueError("ASR worker requires a current complete adapter identity")
     elif claimed_identity is not None:
         raise ValueError("ASR worker stock request cannot claim an adapter identity")
-    model = backend or OmniAsrBackend(lora_adapter=Path(adapter) if adapter is not None else None)
+    model = backend or OmniAsrBackend(
+        lora_adapter=Path(adapter) if adapter is not None else None,
+        fused_checkpoint=Path(fused) if fused is not None else None,
+    )
     expected_identity = getattr(model, "adapter_name", None)
     if claimed_identity != expected_identity:
         raise ValueError("ASR worker adapter identity differs from the host request")

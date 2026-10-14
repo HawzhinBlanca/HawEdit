@@ -1133,17 +1133,20 @@ class OmniAsrProducer:
         # adapter was keyword-only on this branch and stays that way, which costs nobody.
         lora_adapter: Path | None = None,
         context_grouping: bool = False,
+        fused_checkpoint: Path | None = None,
     ) -> None:
         if type(context_grouping) is not bool:
             raise ValueError("ASR context grouping must be a boolean")
-        if backend is not None and lora_adapter is not None:
+        if backend is not None and (lora_adapter is not None or fused_checkpoint is not None):
             raise ValueError(
                 "pass the adapter to the backend, not to both: a supplied backend already "
                 "decides which weights run, and a second answer here could contradict it"
             )
         if validator is not None and validator_model_dir is not None:
             raise ValueError("provide a validator or validator_model_dir, not both")
-        self.backend = backend or OmniAsrBackend(lora_adapter=lora_adapter)
+        self.backend = backend or OmniAsrBackend(
+            lora_adapter=lora_adapter, fused_checkpoint=fused_checkpoint
+        )
         self.validator = validator
         self.validator_model_dir = validator_model_dir
         self.context_grouping = context_grouping
@@ -1654,13 +1657,20 @@ class WslOmniAsrProducer:
         lora_adapter: Path | None = None,
         validator_model_dir: Path | None = None,
         context_grouping: bool = False,
+        fused_checkpoint: Path | None = None,
     ) -> None:
         if type(context_grouping) is not bool:
             raise ValueError("ASR context grouping must be a boolean")
+        if lora_adapter is not None and fused_checkpoint is not None:
+            raise ValueError(
+                "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, "
+                "not both"
+            )
         self.distro = distro
         self.interpreter = interpreter
         self.wsl_executable = wsl_executable
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
+        self.fused_checkpoint = Path(fused_checkpoint) if fused_checkpoint is not None else None
         self.validator_model_dir = validator_model_dir
         self.context_grouping = context_grouping
         self._receipt_distro: str | None = None
@@ -1673,6 +1683,9 @@ class WslOmniAsrProducer:
         decision happens *before* the worker is invoked, and an identity that only exists after
         a 1,547 s transcription cannot key anything.
         """
+        if self.fused_checkpoint is not None:
+            # The allowlisted digest, not 15.6 GB of hashing: the worker hashes before loading.
+            return f"fused:{fused_checkpoint_asset(self.fused_checkpoint).sha256}"
         if self.lora_adapter is None:
             return None
         return f"lora:{adapter_fingerprint(self.lora_adapter)}"
@@ -1789,6 +1802,10 @@ class WslOmniAsrProducer:
                 # adapter field at all.
                 request["lora_adapter"] = self._wsl_path(self.lora_adapter)
                 request["model_identity"] = expected_identity
+            elif self.fused_checkpoint is not None:
+                # Same rule for the fused champion (D-331): absent from stock/LoRA requests.
+                request["fused_checkpoint"] = self._wsl_path(self.fused_checkpoint)
+                request["model_identity"] = expected_identity
             payload = json.dumps(request, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
             try:
                 with request_path.open("x", encoding="utf-8", newline="\n") as stream:
@@ -1867,16 +1884,35 @@ class WslOmniAsrProducer:
 
 
 def create_omni_asr_producer(
-    runtime: str = "auto", *, distro: str | None = None, lora_adapter: Path | None = None
+    runtime: str = "auto",
+    *,
+    distro: str | None = None,
+    lora_adapter: Path | None = None,
+    fused_checkpoint: Path | None = None,
 ) -> CanonicalTranscriptProducer:
     """Choose direct Linux inference or the WSL bridge without hiding that decision."""
     if runtime not in {"auto", "local", "wsl"}:
         raise ValueError("OmniASR runtime must be one of: auto, local, wsl")
+    if lora_adapter is not None and fused_checkpoint is not None:
+        raise ValueError(
+            "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, not both"
+        )
     if lora_adapter is not None:
         # Fingerprinting includes all three inputs, so an incomplete bundle fails here —
         # before Stage 0's regions are cut — rather than 1,547 s later inside WSL.
         adapter_fingerprint(Path(lora_adapter))
+    if fused_checkpoint is not None:
+        # Same early refusal for a missing or non-allowlisted .pt (D-331).
+        fused_checkpoint_asset(Path(fused_checkpoint))
     use_wsl = runtime == "wsl" or (runtime == "auto" and os.name == "nt")
+    if fused_checkpoint is not None:
+        return (
+            WslOmniAsrProducer(
+                distro=distro, fused_checkpoint=fused_checkpoint, context_grouping=True
+            )
+            if use_wsl
+            else OmniAsrProducer(fused_checkpoint=fused_checkpoint, context_grouping=True)
+        )
     return (
         WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter, context_grouping=True)
         if use_wsl
