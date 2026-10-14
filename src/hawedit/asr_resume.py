@@ -12,7 +12,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, Protocol, cast
 
 from hawedit.asr import (
     VALIDATOR_MODEL_ID,
@@ -46,6 +46,18 @@ def _digest(value: object) -> str:
 def _file_digest(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+class OperationCache(Protocol):
+    """Shared inference needs operations, not access to writable checkpoint storage."""
+
+    def operation(
+        self, stage: str, path: Path, duration_s: float, text: str | None = None
+    ) -> dict[str, object]: ...
+
+    def load(self, operation: Mapping[str, object]) -> Any: ...
+
+    def save(self, operation: Mapping[str, object], result: object) -> None: ...
 
 
 class OperationJournal:
@@ -226,7 +238,7 @@ def _segment(value: Any) -> SegmentTranscript:
 
 
 class ResumableBackend:
-    def __init__(self, backend: OmniSegmentBackend, journal: OperationJournal) -> None:
+    def __init__(self, backend: OmniSegmentBackend, journal: OperationCache) -> None:
         self.backend, self.journal = backend, journal
 
     @property
@@ -253,7 +265,7 @@ class ResumableBackend:
 
 
 class ResumableValidator:
-    def __init__(self, validator: SoraniValidator, journal: OperationJournal) -> None:
+    def __init__(self, validator: SoraniValidator, journal: OperationCache) -> None:
         self.validator, self.journal = validator, journal
         self.model_id = validator.model_id
 

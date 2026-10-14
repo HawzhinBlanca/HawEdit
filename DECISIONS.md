@@ -16313,3 +16313,26 @@ global free memory and PyTorch allocator settings are not owned VRAM/effect
 guards. No model/security/producer grant follows from this proof. Evidence:
 evidence/original-worker-resources-20261014.md; ledger remains unpromoted.
 
+### Host-Owned Protected ASR Checkpoint Boundary, 2026-10-14
+
+Approved producer PA3 extracts only the shared canonical inference and an
+operation-cache protocol. Legacy CLI keeps no-clobber file publication and its
+local journal. Protected inference requires the remote host journal, does not
+write worker files, and preserves champion/adapter/validator/origin/alignment
+and first-failure behavior. Host paths never come from frames: opaque audio IDs
+select source/configuration/runtime-bound host files, rehashed with clocks.
+Strict canonical UTF-8 frames cap64KiB; unique monotonically sequenced exchanges
+bind request and payload hashes. An error poisons the session, not a fallback.
+Host ACK follows actual atomic/fsynced persistence under the existing writer
+lease. A final private transcript is capped16MiB, transported in32KiB binary
+chunks, individually retained and hash-checked before a durable result record.
+This pending result is not canonical pipeline completion or publication.
+
+Frame hashes do not authenticate an endpoint. Original-owner native lifecycle,
+private channel credentials, deadline/resource enforcement, complete copied
+SDK closure, qualified current VEX and final effect drain still precede model
+release and acceptance. This unit deliberately does not widen RootedLaunch's
+EOF handoff, add generic callback/executable admission or switch to the legacy
+unprotected subprocess. Controlled backend tests establish protocol parity,
+not Sorani accuracy. No new dependency, licence or spending authority.
+

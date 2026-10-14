@@ -30,7 +30,7 @@ from hawedit.asr import (
     _validate_hard_segments,
     transcribe_prepared_segments,
 )
-from hawedit.asr_resume import ResumableBackend, ResumableValidator, worker_journal
+from hawedit.asr_resume import OperationCache, ResumableBackend, ResumableValidator, worker_journal
 from hawedit.transcripts import RawTranscript
 
 
@@ -72,6 +72,58 @@ def run_request(
             "ASR worker result already exists; preserve and reconcile it or use a new output path",
             str(output_path),
         )
+    transcript = _infer_request(request_path, backend, validator, checkpoint_root=checkpoint_root)
+    result_bytes = (transcript.to_json() + "\n").encode("utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    staging: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        ) as stream:
+            staging = Path(stream.name)
+            stream.write(result_bytes)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # The final name must expose complete bytes without replacing retained evidence.
+        os.link(staging, output_path)
+    finally:
+        if staging is not None:
+            staging.unlink(missing_ok=True)
+    return transcript
+
+
+def infer_protected_request(
+    request_path: Path,
+    journal: OperationCache,
+    backend: OmniSegmentBackend | None = None,
+    validator: SoraniValidator | None = None,
+) -> RawTranscript:
+    """Canonical inference without worker writes; launch admission is a separate prerequisite."""
+    from hawedit.asr_checkpoint import CheckpointJournal
+
+    if type(journal) is not CheckpointJournal:
+        raise TypeError("protected ASR requires the remote host checkpoint journal")
+    transcript = _infer_request(request_path, backend, validator, journal=journal)
+    if len((transcript.to_json() + "\n").encode("utf-8")) > 16 * 1024 * 1024:
+        raise RuntimeError("protected ASR transcript exceeds its 16MiB result bound")
+    journal.finish(transcript)
+    return transcript
+
+
+def _infer_request(
+    request_path: Path,
+    backend: OmniSegmentBackend | None,
+    validator: SoraniValidator | None,
+    *,
+    checkpoint_root: Path | None = None,
+    journal: OperationCache | None = None,
+) -> RawTranscript:
+    if checkpoint_root is not None and journal is not None:
+        raise ValueError("ASR inference cannot use both local and remote checkpoints")
     payload: Any = json.loads(request_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema_version") != 2:
         raise ValueError("unsupported OmniASR worker request schema")
@@ -137,7 +189,7 @@ def run_request(
                 )
             )
             if checkpoint_root is not None
-            else None
+            else journal
         )
         active_model: OmniSegmentBackend = ResumableBackend(model, journal) if journal else model
         # D-278: checkpoints preserve successes, never authorise failure continuation.
@@ -175,26 +227,6 @@ def run_request(
             rejected_validator_corrections=rejected_corrections,
             segment_origins=origins,
         )
-        result_bytes = (transcript.to_json() + "\n").encode("utf-8")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        staging: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                prefix=f".{output_path.name}.",
-                suffix=".tmp",
-                dir=output_path.parent,
-                delete=False,
-            ) as stream:
-                staging = Path(stream.name)
-                stream.write(result_bytes)
-                stream.flush()
-                os.fsync(stream.fileno())
-            # The final name must expose complete bytes without replacing retained evidence.
-            os.link(staging, output_path)
-        finally:
-            if staging is not None:
-                staging.unlink(missing_ok=True)
         return transcript
 
 
