@@ -4913,6 +4913,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--omni-asr-checkpoint",
+        type=Path,
+        help=(
+            "a fused fine-tuned OmniASR-7B checkpoint on HawEdit's code allowlist (exact name, "
+            "size and SHA-256) to draft with instead of the LoRA champion; also "
+            "HAWEDIT_CHAMPION_CHECKPOINT. CTC-3B and every timing stay untouched (D-331)"
+        ),
+    )
+    parser.add_argument(
         "--stock-decoder",
         action="store_true",
         help=(
@@ -5322,6 +5331,15 @@ def _build_and_run(
     if args.stock_decoder and not args.omni_asr:
         raise ValueError("--stock-decoder applies only to a Stage 1 run; it needs --omni-asr")
 
+    # D-331: a fused champion is a third decoder choice, never combined with the other two.
+    if (args.omni_asr_checkpoint or os.environ.get("HAWEDIT_CHAMPION_CHECKPOINT", "").strip()) and (
+        args.omni_asr_adapter or args.stock_decoder
+    ):
+        raise ValueError(
+            "--omni-asr-checkpoint (or HAWEDIT_CHAMPION_CHECKPOINT) cannot be combined with "
+            "--omni-asr-adapter or --stock-decoder; pick one decoder"
+        )
+
     if args.face_reframe:
         # First, ahead of every other check: an obsolete flag is a fact about the invocation
         # rather than about a combination, and answering it after an unrelated prerequisite
@@ -5356,6 +5374,8 @@ def _build_and_run(
         raise ValueError(
             "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
         )
+    if args.omni_asr_checkpoint and not args.omni_asr:
+        raise ValueError("--omni-asr-checkpoint requires --omni-asr")
     if args.gemini and args.vertex_project:
         raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
     if (args.gemini or args.vertex_project) and args.verdict:
@@ -5490,7 +5510,11 @@ def _build_and_run(
 
     canonical_asr = None
     if args.omni_asr:
-        from hawedit.asr import create_omni_asr_producer, resolve_champion_adapter
+        from hawedit.asr import (
+            create_omni_asr_producer,
+            resolve_champion_adapter,
+            resolve_champion_checkpoint,
+        )
 
         # The champion drafts everything unless the operator deliberately says otherwise. Its
         # absence raises rather than falling back to the base decoder: the owner's Champion
@@ -5498,12 +5522,18 @@ def _build_and_run(
         # that the base emits hallucinations the champion does not. An explicit --stock-decoder
         # is still allowed, because a deliberate choice is not a divert.
         adapter = args.omni_asr_adapter
-        if adapter is None and not args.stock_decoder:
+        # A fused champion (flag or HAWEDIT_CHAMPION_CHECKPOINT) replaces the LoRA default; the
+        # preflight above already refused it beside an adapter or --stock-decoder. D-331.
+        checkpoint = args.omni_asr_checkpoint
+        if checkpoint is None and adapter is None and not args.stock_decoder:
+            checkpoint = resolve_champion_checkpoint()
+        if adapter is None and checkpoint is None and not args.stock_decoder:
             adapter = resolve_champion_adapter()
         canonical_asr = create_omni_asr_producer(
             args.omni_asr_runtime,
             distro=args.wsl_distro,
             lora_adapter=adapter,
+            fused_checkpoint=checkpoint,
         )
 
     assert_devices_available(

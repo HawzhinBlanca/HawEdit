@@ -32,6 +32,7 @@ import pytest
 
 from hawedit.asr import (
     CHAMPION_ADAPTER_ENV,
+    CHAMPION_CHECKPOINT_ENV,
     LONG_AUDIO_THRESHOLD_S,
     AsrProductionFailure,
     ASRResult,
@@ -51,6 +52,7 @@ from hawedit.asr import (
     create_omni_asr_producer,
     long_audio_failure_rate,
     resolve_champion_adapter,
+    resolve_champion_checkpoint,
     transcribe_prepared_segments,
     validate_adapter,
 )
@@ -1595,6 +1597,26 @@ def test_the_environment_override_wins_over_the_defaults(tmp_path: Path) -> None
         env={CHAMPION_ADAPTER_ENV: str(bundle)},
     )
     assert found == bundle
+
+
+def test_the_fused_champion_environment_selects_or_halts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-331: unset keeps the LoRA default; set means that checkpoint or an honest halt."""
+    assert resolve_champion_checkpoint(env={}) is None
+    assert resolve_champion_checkpoint(env={CHAMPION_CHECKPOINT_ENV: "  "}) is None
+    (tmp_path / "v12").mkdir()
+    checkpoint = tmp_path / "v12" / "v12.pt"
+    checkpoint.write_bytes(b"fused")
+    digest = hashlib.sha256(b"fused").hexdigest()
+    selected = {CHAMPION_CHECKPOINT_ENV: str(checkpoint)}
+    with pytest.raises(ChampionUnavailable, match="allowlist"):
+        resolve_champion_checkpoint(env=selected)
+    allowed = FusedCheckpointAsset("synthetic", "v12.pt", 5, digest)
+    monkeypatch.setattr("hawedit.omni_assets.FUSED_CHECKPOINT_ASSETS", (allowed,))
+    assert resolve_champion_checkpoint(env=selected) == checkpoint
+    with pytest.raises(ChampionUnavailable, match="missing"):
+        resolve_champion_checkpoint(env={CHAMPION_CHECKPOINT_ENV: str(tmp_path / "absent.pt")})
 
 
 @pytest.mark.parametrize("adapted", [False, True])

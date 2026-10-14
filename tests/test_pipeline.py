@@ -3693,6 +3693,16 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--stock-decoder applies only to a Stage 1 run",
     ),
     (
+        "a fused champion beside the base decoder",
+        ["--omni-asr", "--omni-asr-checkpoint", "v12.pt", "--stock-decoder"],
+        "cannot be combined with --omni-asr-adapter or --stock-decoder",
+    ),
+    (
+        "a fused champion without the runtime",
+        ["--omni-asr-checkpoint", "v12.pt"],
+        "--omni-asr-checkpoint requires --omni-asr",
+    ),
+    (
         "claiming ZDR governance with nothing being sent anywhere",
         ["--transcript", "x.json", "--sentences", "0", "--zero-data-retention"],
         "governance flags apply only with a Gemini or Vertex route",
@@ -3786,6 +3796,18 @@ def test_injected_transport_preflight_refuses_before_any_input_work(
     with pytest.raises(ValueError, match=expected):
         build_and_run(args, judge_transport=forbidden)
     assert calls == []
+    assert not (tmp_path / "work").exists()
+
+
+@pytest.mark.parametrize("flag", ["--stock-decoder", "--omni-asr-adapter=x"])
+def test_the_fused_champion_environment_refuses_a_second_decoder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """D-331: HAWEDIT_CHAMPION_CHECKPOINT selects the champion as firmly as the flag does."""
+    monkeypatch.setenv("HAWEDIT_CHAMPION_CHECKPOINT", str(tmp_path / "v12.pt"))
+    code, stderr = _cli_exit(["--omni-asr", flag], tmp_path)
+    assert code == 2, stderr
+    assert "cannot be combined with --omni-asr-adapter or --stock-decoder" in stderr
     assert not (tmp_path / "work").exists()
 
 
@@ -5411,6 +5433,16 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "mutually exclusive Stage 1",
     ),
     ("runtime without OmniASR", ("--omni-asr-runtime", "wsl"), "require --omni-asr"),
+    (
+        "fused champion without OmniASR",
+        ("--omni-asr-checkpoint", "v12.pt"),
+        "--omni-asr-checkpoint requires --omni-asr",
+    ),
+    (
+        "fused champion beside a LoRA adapter",
+        ("--omni-asr", "--omni-asr-checkpoint", "v12.pt", "--omni-asr-adapter", "x"),
+        "cannot be combined with --omni-asr-adapter or --stock-decoder",
+    ),
     ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
     (
         "two cloud routes",

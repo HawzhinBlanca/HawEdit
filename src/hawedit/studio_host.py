@@ -14,7 +14,12 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from hawedit.asr import adapter_fingerprint, resolve_champion_adapter
+from hawedit.asr import (
+    adapter_fingerprint,
+    fused_checkpoint_asset,
+    resolve_champion_adapter,
+    resolve_champion_checkpoint,
+)
 from hawedit.candidate_review import _canonical, _json, _read
 from hawedit.environment import audit_installed_profile
 from hawedit.gemini import API_ROOT, Governance, Transport, VertexGeminiJudge
@@ -111,6 +116,19 @@ def _canonical_evidence_directory(
     return canonical
 
 
+def _studio_champion() -> dict[str, str]:
+    """The champion record; a LoRA record is unchanged, a fused one names its kind (D-331)."""
+    checkpoint = resolve_champion_checkpoint()
+    if checkpoint is not None:
+        return {
+            "path": str(checkpoint.absolute()),
+            "sha256": fused_checkpoint_asset(checkpoint).sha256,
+            "kind": "fused",
+        }
+    champion = resolve_champion_adapter()
+    return {"path": str(champion.absolute()), "sha256": adapter_fingerprint(champion)}
+
+
 def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioDeployment:
     """Perform actual selected checks; never load a supplied accepted/ready receipt.
 
@@ -140,8 +158,7 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
         stage = "profile"
         lock = audit_installed_profile("studio")
         stage = "champion"
-        champion = resolve_champion_adapter()
-        champion_digest = adapter_fingerprint(champion)
+        champion = _studio_champion()
         stage = "models"
         store = ModelStore()
         models = tuple(store.verify_checkpoint(model_id) for model_id in _MODELS)
@@ -200,8 +217,7 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
         if (
             repeated_store.root != store.root
             or tuple(repeated_store.verify_checkpoint(model_id) for model_id in _MODELS) != models
-            or resolve_champion_adapter() != champion
-            or adapter_fingerprint(champion) != champion_digest
+            or _studio_champion() != champion
             or audit_installed_profile("studio") != lock
             or package_digest() != source
             or _read_bound(configuration.vex_path, limit=1_048_576, label="studio VEX")
@@ -225,7 +241,7 @@ def capture_studio_deployment(configuration: StudioHostConfiguration) -> StudioD
             "native_interpreter": {"path": sys.executable, "version": sys.version},
             "models_root": str(store.root.absolute()),
             "models": [asdict(model) for model in models],
-            "champion": {"path": str(champion.absolute()), "sha256": champion_digest},
+            "champion": champion,
             "asr_runtime": {
                 **runtime,
                 "source_root": str(receipt.source_root.absolute()),

@@ -86,6 +86,7 @@ from hawedit.wsl_setup import (
 
 __all__ = [
     "CHAMPION_ADAPTER_ENV",
+    "CHAMPION_CHECKPOINT_ENV",
     "LONG_AUDIO_THRESHOLD_S",
     "ASRAdapter",
     "ASRResult",
@@ -106,6 +107,7 @@ __all__ = [
     "create_omni_asr_producer",
     "long_audio_failure_rate",
     "resolve_champion_adapter",
+    "resolve_champion_checkpoint",
     "validate_adapter",
 ]
 
@@ -236,6 +238,8 @@ CHAMPION_ADAPTER_CANDIDATES: Final = (
     r"\\wsl$\Ubuntu\home\ai\cortex_champion_model",
 )
 CHAMPION_ADAPTER_ENV: Final = "HAWEDIT_CHAMPION_ADAPTER"
+# A fused champion checkpoint (D-331). Unset means the LoRA champion above stays the default.
+CHAMPION_CHECKPOINT_ENV: Final = "HAWEDIT_CHAMPION_CHECKPOINT"
 
 
 class ChampionUnavailable(RuntimeError):
@@ -353,6 +357,21 @@ def _held_fused_checkpoint(checkpoint: Path, asset: FusedCheckpointAsset) -> Ite
         after = os.fstat(stream.fileno())
         if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != key:
             raise RuntimeError("Fused champion checkpoint changed during verified access")
+
+
+def resolve_champion_checkpoint(env: Mapping[str, str] | None = None) -> Path | None:
+    """The fused champion named by ``HAWEDIT_CHAMPION_CHECKPOINT``, or ``None`` when unset.
+
+    Set means required: a missing or non-allowlisted ``.pt`` raises ``ChampionUnavailable``
+    rather than drafting with the LoRA champion or the base decoder instead (D-260, D-331).
+    """
+    environ = os.environ if env is None else env
+    raw = environ.get(CHAMPION_CHECKPOINT_ENV, "").strip()
+    if not raw:
+        return None
+    checkpoint = Path(raw)
+    fused_checkpoint_asset(checkpoint)
+    return checkpoint
 
 
 def adapter_fingerprint(adapter_dir: Path) -> str:
