@@ -450,8 +450,7 @@
       "revision": "4bd860ac4f15ad1897a214615cccc700f8f71818"
     },
     "pyannote/speaker-diarization-community-1": {
-      "status": "blocked",
-      "reason": "The gated Hub API redacts all five LFS SHA-256 values without accepted repository access; refusing to invent or trust those digests.",
+      "status": "verified",
       "files": {
         ".gitattributes": {
           "algorithm": "git-sha1",
@@ -469,7 +468,8 @@
           "size_bytes": 444
         },
         "diarization.gif": {
-          "hub_digest_redacted": true,
+          "algorithm": "sha256",
+          "digest": "0d925ad38995d89009260e493b0ae2e684c3e1397f495265ed841c45c4f73a35",
           "size_bytes": 861445
         },
         "embedding/README.md": {
@@ -478,7 +478,8 @@
           "size_bytes": 938
         },
         "embedding/pytorch_model.bin": {
-          "hub_digest_redacted": true,
+          "algorithm": "sha256",
+          "digest": "6f10ff60898a1d185fa22e1d11e0bfa8a92efec811f11bca48cb8cafebefd929",
           "size_bytes": 26646242
         },
         "plda/README.md": {
@@ -487,15 +488,18 @@
           "size_bytes": 220
         },
         "plda/plda.npz": {
-          "hub_digest_redacted": true,
+          "algorithm": "sha256",
+          "digest": "9b77bcd840692710dd3496f62ecfeed8d8e5f002fd991b785079b244eab7d255",
           "size_bytes": 133852
         },
         "plda/xvec_transform.npz": {
-          "hub_digest_redacted": true,
+          "algorithm": "sha256",
+          "digest": "325f1ce8e48f7e55e9c8aa47e05d2766b7c48c4b25b8de8dd751e7a4cc5fbe8f",
           "size_bytes": 134376
         },
         "segmentation/pytorch_model.bin": {
-          "hub_digest_redacted": true,
+          "algorithm": "sha256",
+          "digest": "7ad24338d844fb95985486eb1a464e32d229f6d7a03c9abe60f978bacf3f816e",
           "size_bytes": 5906507
         }
       },

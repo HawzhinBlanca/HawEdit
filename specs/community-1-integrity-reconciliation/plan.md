@@ -1,6 +1,6 @@
 # Pinned Community-1 Reconciliation Plan
 
-Approved-by: pending
+Approved-by: Wareen, 2026-10-14, "approved the scoped reconciliation plan, including the integrity row exception. download Community-1 and continue fixing the protected GPU/ASR pipeline"
 
 The already approved download is retained. This additional plan requests an
 explicit exception for only the Community-1 row of models/integrity.json, which
@@ -38,5 +38,6 @@ No installation is needed for this candidate downloader. It does not authorize
 the protected integrity-row exception, actual model execution or ASR readiness.
 Candidate exact command after approval and manifest reconciliation:
 `.venv-gpu/Scripts/python.exe -m hawedit.model_fetch pyannote/speaker-diarization-community-1`.
-The current approved download attempt did not bypass the blocked manifest or fetch
-any weight bytes. This plan's Approved-by line remains pending.
+The earlier approved download attempt did not bypass the blocked manifest or fetch
+any weight bytes. The owner subsequently approved this scoped reconciliation,
+including the single integrity-row exception and strict historical test transition.
