@@ -16237,3 +16237,21 @@ licences, permit installation, increase the US$5 transcript-only cloud cap or
 authorize publication. Qualified security/model/resource and actual media
 acceptance remain separate from engineering and diagnostic results.
 
+### Controller Combined-Policy Proof, 2026-10-14
+
+Approved protected-ASR PA1 first unit, WIP. Snapshot installs and records its
+original trusted controller's non-GPU filter directly; Launch uses that method
+after the original joined-worker handshake. No caller-supplied True flag or
+arbitrary denial-code union constitutes filter evidence. Final default Snapshot
+fence remains stacked and verified before result release.
+
+For this internal profile, separately require EACCES from the exact broker-shaped
+O_WRONLY|O_NOFOLLOW|O_CLOEXEC entropy open (it passes seccomp and reaches mandatory
+Landlock), and EPERM from direct and original-description alias O_RDWR opens.
+The ordinary GPU profile still requires exact EACCES for both original probes.
+Replay, unregistered filters and a boolean standing in for filter identity refuse.
+This fixes proof composition without permitting GPU worker launch yet. Actual
+GPU broker servicing before final controller Landlock, complete copied CUDA,
+resource guards, ASR transport and protected pipeline admission remain required.
+No wider proc grant, new dependency, security waiver or model release.
+

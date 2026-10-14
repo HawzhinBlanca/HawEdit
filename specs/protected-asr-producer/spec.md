@@ -14,3 +14,14 @@
 
 Names are proposed, not passing tests. Real media and native-Sorani review are
 required for speech/meaning/caption accuracy; synthetic tests cannot prove them.
+
+## First PA1 Kernel Profile Unit
+
+| Criterion | Implemented Regression |
+| --- | --- |
+| WHEN an original trusted controller fence is installed, THE Snapshot SHALL record the genuine installed filter count and verify its final stacked fence. | test_rooted_gpu_owned_controller_fence_preserves_final_verification; test_rooted_controller_final_filter_binds_original_installed_profile |
+| WHEN the controller and GPU Landlock policies are combined, THE Snapshot SHALL prove exact Landlock and seccomp denials separately without changing the default profile. | test_rooted_gpu_controller_proves_landlock_and_seccomp_separately |
+| WHEN an unregistered filter, replay or boolean profile is supplied, THE Snapshot SHALL refuse it as policy evidence. | test_rooted_gpu_unregistered_filter_cannot_change_default_policy_proof; test_rooted_gpu_controller_fence_cannot_be_installed_twice; test_rooted_gpu_controller_filter_identity_cannot_be_supplied_as_boolean |
+
+These tests are diagnostic kernel-policy coverage, not full PA1 GPU servicing or
+any production ASR/media acceptance claim. No ledger row is promoted here.

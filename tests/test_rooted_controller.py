@@ -74,6 +74,8 @@ else:
  result=launch.result;assert result is not None
  assert result.exit_code==(42 if TEST_CASE=='elf' else 0)
  assert result.exec_count==1 and result.observed_tids==result.reaped_tids==(2,)
+ assert type(snapshot._controller_filters) is int
+ assert snapshot._filters>snapshot._controller_filters>0
  if TEST_CASE=='python':
   assert json.loads(result.output)=={'version':'3.12.0','nnP':'1','caps_zero':True}
  snapshot.verify();snapshot.close()
@@ -122,6 +124,10 @@ def test_rooted_controller_actual_elf_returns_fenced(tmp_path: Path) -> None:
 
 def test_rooted_controller_actual_python_returns_bounded_output(tmp_path: Path) -> None:
     _controller_run(tmp_path, "python")
+
+
+def test_rooted_controller_final_filter_binds_original_installed_profile(tmp_path: Path) -> None:
+    _controller_run(tmp_path, "elf")
 
 
 def test_rooted_controller_output_overflow_drains_and_refuses(tmp_path: Path) -> None:

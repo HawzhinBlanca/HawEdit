@@ -13,19 +13,17 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
 
 from hawedit.linux_rooted_worker import RootedCommand, execute_original_worker
 from hawedit.linux_scope import _pid_info
 from hawedit.linux_snapshot import (
+    LinuxSnapshot,
     LinuxSnapshotError,
     SnapshotFile,
     SnapshotMode,
     _api,
     _apply_landlock,
-    _FenceRole,
     _flags,
-    _install_namespace_fence,
 )
 from hawedit.linux_thread_name import LinuxThreadNameBroker
 from hawedit.linux_thread_registry import LinuxThreadRegistry, _Description
@@ -269,10 +267,16 @@ class RootedLaunch:
                         os.close(fd)
             raise LinuxSnapshotError("Rooted controller original owner token refused")
 
-    def _run(self, root: int, native: Any, preparation_end: float) -> None:
+    def _run(self, snapshot: LinuxSnapshot, preparation_end: float) -> None:
         self._context()
-        if not self._started or self._nonce is None or self._closed:
+        if (
+            type(snapshot) is not LinuxSnapshot
+            or not self._started
+            or self._nonce is None
+            or self._closed
+        ):
             raise LinuxSnapshotError("Rooted controller was not bound before preparation")
+        root, native = snapshot._anchor, snapshot._native
         rights: list[int] = []
         listener = task = -1
         registry = None
@@ -300,7 +304,7 @@ class RootedLaunch:
             if pid != 2 or not _api(os, "WIFSTOPPED")(status):
                 raise LinuxSnapshotError("Rooted controller joined worker stop refused")
             self._view_token(b"R", preparation_end)
-            _install_namespace_fence(native, entropy=True, gpu=False, role=_FenceRole.CONTROLLER)
+            snapshot._controller_fence()
             task = os.open(
                 "/proc/2/task", _flags("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
             )

@@ -376,6 +376,7 @@ class LinuxSnapshot:
     _wsl_gpu: bool
     _gpu: tuple[int, int] | None
     _gpu_policy: tuple[int, tuple[int, int, int], tuple[int, int, int]] | None
+    _controller_filters: int | None
     _controls: dict[int, tuple[int, tuple[int, int, int]]]
     _control_fds: frozenset[int]
     _retained: dict[int, tuple[int, tuple[int, int, int], SnapshotFile]]
@@ -422,6 +423,7 @@ class LinuxSnapshot:
         self._wsl_gpu = wsl_gpu
         self._gpu = None
         self._gpu_policy = None
+        self._controller_filters = None
         self._controls = {}
         self._control_fds = frozenset(control_fds)
         self._names = frozenset(names)
@@ -498,7 +500,7 @@ class LinuxSnapshot:
             if wsl_gpu:
                 self._enforce_gpu_policy()
             if launch is not None:
-                launch._run(self._anchor, self._native, end)
+                launch._run(self, end)
             self._fence()
             for label in ("user", "mnt", "pid"):
                 fd = os.open(f"/proc/self/ns/{label}", _flags("O_RDONLY", "O_CLOEXEC"))
@@ -890,15 +892,35 @@ class LinuxSnapshot:
             or self._gpu_policy[1:] != (_identity(self._anchor), _identity(self._gpu[0]))
         ):
             raise LinuxSnapshotError("Snapshot enforced GPU policy custody unavailable")
-        # Kernel denial is checked, not inferred from the saved policy declaration.
-        for path in (
-            "/dev/urandom",
-            "/proc/self/fd/" + str(self._entropy[0] if self._entropy else -1),
-        ):
+        alias = "/proc/self/fd/" + str(self._entropy[0] if self._entropy else -1)
+        proofs: tuple[tuple[str, int, int], ...] = (
+            ("/dev/urandom", _flags("O_RDWR", "O_CLOEXEC"), errno.EACCES),
+            (alias, _flags("O_RDWR", "O_CLOEXEC"), errno.EACCES),
+        )
+        if self._controller_filters is not None:
+            if (
+                type(self._controller_filters) is not int
+                or not 0 < self._controller_filters <= self._filters
+                or int(_status()["Seccomp_filters"].strip()) != self._filters
+            ):
+                raise LinuxSnapshotError("GPU original controller fence custody unavailable")
+            # This exact broker open passes seccomp, so EACCES proves Landlock.
+            # RDWR and descriptor aliases instead prove the stronger stacked fence.
+            proofs = (
+                (
+                    "/dev/urandom",
+                    _flags("O_WRONLY", "O_NOFOLLOW", "O_CLOEXEC"),
+                    errno.EACCES,
+                ),
+                ("/dev/urandom", _flags("O_RDWR", "O_CLOEXEC"), errno.EPERM),
+                (alias, _flags("O_RDWR", "O_CLOEXEC"), errno.EPERM),
+            )
+        # Each mechanism has an exact denial, never an EACCES-or-EPERM fallback.
+        for path, flags, expected_errno in proofs:
             try:
-                opened = os.open(path, _flags("O_RDWR", "O_CLOEXEC"))
+                opened = os.open(path, flags)
             except OSError as exc:
-                if exc.errno != errno.EACCES:
+                if exc.errno != expected_errno:
                     raise LinuxSnapshotError(
                         "GPU readonly entropy policy enforcement uncertain"
                     ) from exc
@@ -1041,6 +1063,26 @@ class LinuxSnapshot:
 
     def _drop_caps(self) -> None:
         _drop_capabilities(self._native)
+
+    def _controller_fence(self) -> None:
+        self._owner()
+        if (
+            self._closed
+            or self._failed
+            or self._controller_filters is not None
+            or self._mode is not SnapshotMode.ROOTED_IMAGE
+            or not self._kernel_entropy
+        ):
+            raise LinuxSnapshotError("Snapshot original controller fence declaration refused")
+        filters, listener = _install_namespace_fence(
+            self._native, entropy=True, gpu=False, role=_FenceRole.CONTROLLER
+        )
+        if listener is not None or int(_status()["Seccomp_filters"].strip()) != filters:
+            self._failed = True
+            raise LinuxSnapshotError("Snapshot original controller filter installation uncertain")
+        self._filters = self._controller_filters = filters
+        if self._gpu_policy is not None:
+            self._check_gpu_policy()
 
     def _fence(self) -> None:
         if self._kernel_entropy and self._wsl_gpu:
