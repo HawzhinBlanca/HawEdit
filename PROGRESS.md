@@ -37,6 +37,13 @@ Evidence: evidence/original-prepared-view-20261013.md.
 
 ## Fenced Original Worker Execution (WIP)
 
+Actual423case affected cohort passes,142.89s/0failures/errors/skips, including
+28worker and67claims cases. Existing copied base Python3.12.0 starts under the
+original fenced worker with zero caps/NNP/seccomp/readonly root; no SDK/model.
+Code5723617, measured host/versions/source hashes/failures in
+evidence/fenced-original-worker-20261014.md. Exact committed full gate/current
+CI and qualified security review remain required; no new ZAR deliverable.
+
 | Task | Deliverable | Status | Evidence |
 | --- | --- | --- | --- |
 | M9.104 | Execute copied bytes only after original worker namespace/root/capability/FD/policy checks | WIP | `src/hawedit/linux_rooted_worker.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_worker.py`; D-329, approved `specs/rooted-thread-name/launch-plan.md`. Initial module accounting, not a promotion. Actual copied ELF and existing base Python diagnostics, kernel broker notification ordering and refusal tests. Complete production typed Snapshot controller, copied Torch/SDK/model/input/resources, protected producer, new ZAR output, full gate/current CI/security review remain required. |
