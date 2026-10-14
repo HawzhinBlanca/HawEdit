@@ -15,6 +15,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,36 @@ def _integer(value: object, field: str, index: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"ASR worker segment {index} {field} must be an integer")
     return value
+
+
+MIN_FREE_GPU_GIB_ENV = "HAWEDIT_ASR_MIN_FREE_GPU_GIB"
+# Judgment, not a measurement (D-331): an idle 24 GiB card passes, a card the omniasr :8000
+# server holds (~14.6 GB) does not. The T0 hardware run must replace it with the measured peak.
+_DEFAULT_MIN_FREE_GPU_GIB = 20.0
+
+
+def assert_gpu_headroom(
+    devices: Iterable[str],
+    mem_get_info: Callable[[int], tuple[int, int]],
+    environ: Mapping[str, str] = os.environ,
+) -> None:
+    """Halt before loading anything when another process holds a Stage 1 GPU (D-260)."""
+    try:
+        need_gib = float(environ.get(MIN_FREE_GPU_GIB_ENV, _DEFAULT_MIN_FREE_GPU_GIB))
+    except ValueError as exc:
+        raise ValueError(f"{MIN_FREE_GPU_GIB_ENV} must be a number of GiB") from exc
+    for device in sorted(set(devices)):
+        if not device.startswith("cuda:"):
+            continue
+        index = int(device.removeprefix("cuda:"))
+        free, total = mem_get_info(index)
+        if free < need_gib * 1024**3:
+            raise RuntimeError(
+                f"GPU {index} has {free / 1024**3:.1f} of {total / 1024**3:.1f} GiB free; Stage 1 "
+                f"needs {need_gib:.1f} GiB ({MIN_FREE_GPU_GIB_ENV}). Another process is using it "
+                "(e.g. the omniasr :8000 server: run through scripts/run-with-omniasr-paused.sh). "
+                "Refusing rather than drafting on another device or model."
+            )
 
 
 def run_request(
@@ -198,6 +229,10 @@ def _infer_request(
     expected_identity = getattr(model, "adapter_name", None)
     if claimed_identity != expected_identity:
         raise ValueError("ASR worker adapter identity differs from the host request")
+    if backend is None and isinstance(model, OmniAsrBackend):
+        import torch
+
+        assert_gpu_headroom((model.llm_device, model.ctc_device), torch.cuda.mem_get_info)
     with ExitStack() as leases:
         journal = (
             leases.enter_context(

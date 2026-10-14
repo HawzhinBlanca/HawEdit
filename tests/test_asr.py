@@ -56,7 +56,7 @@ from hawedit.asr import (
     transcribe_prepared_segments,
     validate_adapter,
 )
-from hawedit.asr_worker import run_request
+from hawedit.asr_worker import assert_gpu_headroom, run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
 from hawedit.omni_assets import (
@@ -1706,3 +1706,45 @@ def test_producer_refuses_identity_drift_during_inference(tmp_path: Path, route:
         with pytest.raises(ValueError, match="identity changed"):
             run_request(request, output, backend=backend)
     assert not output.exists()
+
+
+def test_gpu_headroom_halts_naming_the_busy_gpu() -> None:
+    """D-331: the :8000 server's ~14.6 GB on GPU 1 is an honest halt, never a divert."""
+    gib = 1024**3
+    seen: list[int] = []
+
+    def busy(index: int) -> tuple[int, int]:
+        seen.append(index)
+        return (9 * gib, 24 * gib)
+
+    with pytest.raises(RuntimeError, match=r"GPU 1 has 9\.0 of 24\.0 GiB free.*:8000"):
+        assert_gpu_headroom(("cuda:1", "cuda:1"), busy, environ={})
+    assert seen == [1], "each distinct device is checked once"
+    assert_gpu_headroom(("cuda:1",), lambda index: (23 * gib, 24 * gib), environ={})
+    assert_gpu_headroom(("cuda:1",), busy, environ={"HAWEDIT_ASR_MIN_FREE_GPU_GIB": "8"})
+    assert_gpu_headroom(("cpu",), lambda index: pytest.fail("cpu has no GPU budget"), environ={})
+
+
+def test_worker_checks_gpu_headroom_before_loading_the_real_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment, 1.0)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-before-inference",
+                "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    busy = SimpleNamespace(cuda=SimpleNamespace(mem_get_info=lambda index: (0, 24 * 1024**3)))
+    monkeypatch.setitem(sys.modules, "torch", busy)
+    monkeypatch.setattr(OmniAsrBackend, "_load", lambda self: pytest.fail("loaded on a busy GPU"))
+    with pytest.raises(RuntimeError, match="GPU 1 has 0.0"):
+        run_request(request, tmp_path / "output.json")
+    assert not (tmp_path / "output.json").exists()
