@@ -83,3 +83,27 @@ Authenticated-handoff, original death and reopened descriptor refusals are also
 covered by test_rooted_launch_joined_observation_requires_authenticated_handoff,
 test_rooted_launch_joined_observation_refuses_dead_original_scope and
 test_rooted_launch_joined_observation_preserves_substituted_description.
+# RT2B Worker Component Criteria
+
+- WHEN a typed command is malformed, THE declaration SHALL refuse before any
+  process or filesystem effect. Test: test_rooted_worker_command_refusals.
+- WHEN original PID2 receives its prepared view, THE worker SHALL authenticate
+  original PID1 credentials/nonce/exact rights/EOF and actual namespace/root
+  binding. Test: test_rooted_worker_prepared_handoff_refuses.
+- WHEN copied bytes differ from the declared manifest, THE worker SHALL refuse
+  without executing. Test: test_rooted_worker_changed_copied_command_refuses.
+- WHEN the original worker executes, THE worker SHALL drop all capabilities,
+  close outside handles and establish mandatory Landlock plus the shared
+  notification fence before original registry startup and actual copied exec.
+  Test: test_rooted_worker_actual_copied_elf_is_fenced_and_drained.
+- WHEN the shared worker fence is used, THE broker SHALL inject only genuine
+  original-thread comm descriptors and SHALL refuse unsupported open shapes.
+  Test: test_rooted_worker_shared_notification_precedes_write_refusal.
+
+Production typed Snapshot controller adoption and final fence/drain remain
+unachieved by these component tests; no model/runtime/video acceptance follows.
+WHEN the exact existing base Python is copied, THE diagnostic SHALL actually
+start it under the fenced original worker and confirm current kernel caps/NNP,
+without a fallback interpreter or model/SDK import.
+Test: test_rooted_worker_existing_copied_python_starts_without_outside_handles.
+This is base-interpreter startup only, not complete Cortex SDK closure or Torch.

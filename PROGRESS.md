@@ -35,6 +35,12 @@ Evidence: evidence/original-prepared-view-20261013.md.
 | --- | --- | --- | --- |
 | M9.103 | Service genuine original-thread comm notifications through the production broker | WIP | `src/hawedit/linux_thread_name.py`, `tests/test_linux_thread_name.py`, `tests/thread_name_broker_probe.py`; D-328, `specs/rooted-thread-name/broker-research.md`, `evidence/thread-name-broker-20261013.md`. Initial accounting, not promotion. Actual libc injection, foreign/shape/listener/custody/deadline and watchdog refusals; real NVIDIA private readback with source registry and broker, original2-6 all reaped. Source preparation failures retained. Typed stopped-worker command, fresh copied Python/Torch/model/resources/original owner, producer/ZAR output, exact full gate and same-SHA CI still required. |
 
+## Fenced Original Worker Execution (WIP)
+
+| Task | Deliverable | Status | Evidence |
+| --- | --- | --- | --- |
+| M9.104 | Execute copied bytes only after original worker namespace/root/capability/FD/policy checks | WIP | `src/hawedit/linux_rooted_worker.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_worker.py`; D-329, approved `specs/rooted-thread-name/launch-plan.md`. Initial module accounting, not a promotion. Actual copied ELF and existing base Python diagnostics, kernel broker notification ordering and refusal tests. Complete production typed Snapshot controller, copied Torch/SDK/model/input/resources, protected producer, new ZAR output, full gate/current CI/security review remain required. |
+
 ## Ingest Mutation Readiness (WIP)
 
 specs/ingest-mutation-readiness T1: deliberate copied-FFmpeg byte drift now waits

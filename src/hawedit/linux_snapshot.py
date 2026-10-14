@@ -179,6 +179,173 @@ def _directory(path: Path) -> int:
         raise
 
 
+class _FenceRole(Enum):
+    SNAPSHOT = "snapshot"
+    WORKER = "worker"
+    CONTROLLER = "controller"
+
+
+def _drop_capabilities(native: Any) -> None:
+    last = int(Path("/proc/sys/kernel/cap_last_cap").read_text(encoding="ascii"))
+    if not 0 <= last <= 63:
+        raise LinuxSnapshotError("Snapshot capability ABI exceeds supported bound")
+    for number in range(last + 1):
+        if native.prctl(24, number, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "Snapshot bounding capability drop")
+    if native.capset(ctypes.byref(_CapHeader(0x20080522, 0)), (_CapData * 2)()) != 0:
+        raise OSError(ctypes.get_errno(), "Snapshot effective/permitted capability drop")
+    if not _zero_caps(_status()):
+        raise LinuxSnapshotError("Snapshot capabilities remain after drop")
+
+
+def _apply_landlock(native: Any, root: int, gpu: int | None = None) -> int:
+    if len(tuple(Path("/proc/self/task").iterdir())) != 1 or not _zero_caps(_status()):
+        raise LinuxSnapshotError("GPU policy requires single thread and dropped capabilities")
+    call = native.syscall
+    call.restype = ctypes.c_long
+    abi = int(call(444, 0, 0, 1))
+    if abi < 0:
+        raise OSError(ctypes.get_errno(), "Required GPU Landlock ABI query refused")
+    if abi < 6:
+        raise LinuxSnapshotError("GPU requires Landlock ABI >= 6; no compatibility fallback")
+    rules = _LandlockRuleset((1 << 16) - 1, 3, 3)
+    fd = int(call(444, ctypes.byref(rules), ctypes.sizeof(rules), 0))
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "Required GPU Landlock ruleset refused")
+    try:
+        leaves = [(root, 1 | 4 | 8)]
+        if gpu is not None:
+            leaves.append((gpu, 2 | 4 | (1 << 15)))
+        for parent, access in leaves:
+            rule = _LandlockPath(access, parent)
+            if call(445, fd, 1, ctypes.byref(rule), 0) != 0:
+                raise OSError(ctypes.get_errno(), "Required GPU Landlock leaf rule refused")
+        if call(446, fd, 0) != 0:
+            raise OSError(ctypes.get_errno(), "Required GPU Landlock enforcement refused")
+        return abi
+    finally:
+        os.close(fd)
+
+
+def _install_namespace_fence(
+    native: Any,
+    *,
+    entropy: bool,
+    gpu: bool,
+    role: _FenceRole = _FenceRole.SNAPSHOT,
+) -> tuple[int, int | None]:
+    if type(role) is not _FenceRole:
+        raise LinuxSnapshotError("Rooted fence requires an exact internal role")
+    if role is not _FenceRole.SNAPSHOT:
+        fields = _status()
+        if (
+            os.getpid() != (2 if role is _FenceRole.WORKER else 1)
+            or len(tuple(Path("/proc/self/task").iterdir())) != 1
+            or not _zero_caps(fields)
+            or fields.get("NoNewPrivs", "").strip() != "1"
+            or not int(_api(os, "statvfs")("/").f_flag) & int(_api(os, "ST_RDONLY"))
+            or not int(_api(os, "statvfs")("/proc").f_flag) & int(_api(os, "ST_RDONLY"))
+        ):
+            raise LinuxSnapshotError("Rooted role requires original readonly zero-cap member")
+    instructions = [
+        (0x20, 0, 0, 4),
+        (0x15, 1, 0, 0xC000003E),
+        (0x06, 0, 0, 0x80000000),
+        (0x20, 0, 0, 0),
+        (0x35, 0, 1, 0x40000000),
+        (0x06, 0, 0, 0x50000 | errno.ENOSYS),
+    ]
+    if entropy:
+        write_flags = _flags("O_CREAT", "O_TRUNC", "O_APPEND")
+        if not gpu:
+            write_flags |= _flags("O_ACCMODE")
+        for number, offset in ((2, 24), (257, 32)):
+            if role is _FenceRole.SNAPSHOT:
+                instructions.extend(
+                    [
+                        (0x15, 0, 3, number),
+                        (0x20, 0, 0, offset),
+                        (0x45, 0, 1, write_flags),
+                        (0x06, 0, 0, 0x50000 | errno.EPERM),
+                        (0x20, 0, 0, 0),
+                    ]
+                )
+            else:
+                # Worker fopen is notified; the trusted broker opens an anchored leaf.
+                verdict = 0x7FC00000 if role is _FenceRole.WORKER else 0x7FFF0000
+                first, second = (
+                    (0x241, 0x80241)
+                    if role is _FenceRole.WORKER
+                    else (_flags("O_WRONLY", "O_NOFOLLOW", "O_CLOEXEC"),) * 2
+                )
+                instructions.extend(
+                    [
+                        (0x15, 0, 6, number),
+                        (0x20, 0, 0, offset),
+                        (0x15, 1, 0, first),
+                        (0x15, 0, 1, second),
+                        (0x06, 0, 0, verdict),
+                        (0x45, 0, 1, write_flags),
+                        (0x06, 0, 0, 0x50000 | errno.EPERM),
+                        (0x20, 0, 0, 0),
+                    ]
+                )
+        for number, code in (
+            (85, errno.EPERM),
+            (437, errno.ENOSYS),
+            (425, errno.ENOSYS),
+            (426, errno.ENOSYS),
+            (427, errno.ENOSYS),
+        ):
+            instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | code)])
+    if gpu or role is not _FenceRole.SNAPSHOT:
+        for number in (41, 53):
+            instructions.extend(
+                [
+                    (0x15, 0, 3, number),
+                    (0x20, 0, 0, 16),
+                    (0x15, 1, 0, int(_api(socket, "AF_UNIX"))),
+                    (0x06, 0, 0, 0x50000 | errno.EPERM),
+                    (0x20, 0, 0, 0),
+                ]
+            )
+        for number in (47, 299, 438):
+            instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | errno.EPERM)])
+    for number in (272, 308, 165, 166, 155, 161, 428, 429, 430, 431, 432, 433, 442, 435):
+        instructions.extend(
+            [
+                (0x15, 0, 1, number),
+                (0x06, 0, 0, 0x50000 | (errno.ENOSYS if number == 435 else errno.EPERM)),
+            ]
+        )
+    instructions.extend(
+        [
+            (0x15, 0, 3, 56),
+            (0x20, 0, 0, 16),
+            (0x45, 0, 1, 0x7E020000),
+            (0x06, 0, 0, 0x50000 | errno.EPERM),
+            (0x06, 0, 0, 0x7FFF0000),
+        ]
+    )
+    array = (_Filter * len(instructions))(*(_Filter(*item) for item in instructions))
+    program = _Program(len(instructions), array)
+    prior = int(_status()["Seccomp_filters"].strip())
+    if role is _FenceRole.WORKER:
+        native.syscall.restype = ctypes.c_long
+        listener = int(native.syscall(317, 1, 8, ctypes.byref(program)))
+        if listener < 0:
+            raise OSError(ctypes.get_errno(), "Original worker notification fence refused")
+        if os.get_inheritable(listener):
+            os.close(listener)
+            raise LinuxSnapshotError("Original worker listener is inheritable")
+        return prior + 1, listener
+    native.prctl.argtypes = [ctypes.c_int, *([ctypes.c_ulong] * 4)]
+    native.prctl.restype = ctypes.c_int
+    if native.prctl(22, 2, ctypes.addressof(program), 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "Snapshot namespace reentry fence refused")
+    return prior + 1, None
+
+
 class LinuxSnapshot:
     """One irreversible preparation in a dedicated PID1, before model release.
 
@@ -687,31 +854,9 @@ class LinuxSnapshot:
     def _enforce_gpu_policy(self) -> None:
         self._gpu_custody()
         assert self._gpu is not None
-        if len(tuple(Path("/proc/self/task").iterdir())) != 1 or not _zero_caps(_status()):
-            raise LinuxSnapshotError("GPU policy requires single thread and dropped capabilities")
-        call = self._native.syscall
-        call.restype = ctypes.c_long
-        abi = int(call(444, 0, 0, 1))
-        if abi < 0:
-            raise OSError(ctypes.get_errno(), "Required GPU Landlock ABI query refused")
-        if abi < 6:
-            raise LinuxSnapshotError("GPU requires Landlock ABI >= 6; no compatibility fallback")
-        # ABI 6 handles all write/creation/truncation/device-ioctl rights plus scopes.
-        rules = _LandlockRuleset((1 << 16) - 1, 3, 3)
-        fd = int(call(444, ctypes.byref(rules), ctypes.sizeof(rules), 0))
-        if fd < 0:
-            raise OSError(ctypes.get_errno(), "Required GPU Landlock ruleset refused")
-        try:
-            for parent, access in ((self._anchor, 1 | 4 | 8), (self._gpu[0], 2 | 4 | (1 << 15))):
-                rule = _LandlockPath(access, parent)
-                if call(445, fd, 1, ctypes.byref(rule), 0) != 0:
-                    raise OSError(ctypes.get_errno(), "Required GPU Landlock leaf rule refused")
-            if call(446, fd, 0) != 0:
-                raise OSError(ctypes.get_errno(), "Required GPU Landlock enforcement refused")
-            self._gpu_policy = (abi, _identity(self._anchor), _identity(self._gpu[0]))
-            self._check_gpu_policy()
-        finally:
-            os.close(fd)
+        abi = _apply_landlock(self._native, self._anchor, self._gpu[0])
+        self._gpu_policy = (abi, _identity(self._anchor), _identity(self._gpu[0]))
+        self._check_gpu_policy()
 
     def _check_gpu_policy(self) -> None:
         self._gpu_custody()
@@ -872,90 +1017,15 @@ class LinuxSnapshot:
                     os.close(fd)
 
     def _drop_caps(self) -> None:
-        last = int(Path("/proc/sys/kernel/cap_last_cap").read_text(encoding="ascii"))
-        if not 0 <= last <= 63:
-            raise LinuxSnapshotError("Snapshot capability ABI exceeds supported bound")
-        for number in range(last + 1):
-            if self._native.prctl(24, number, 0, 0, 0) != 0:
-                raise OSError(ctypes.get_errno(), "Snapshot bounding capability drop")
-
-        capset = self._native.capset
-        if capset(ctypes.byref(_CapHeader(0x20080522, 0)), (_CapData * 2)()) != 0:
-            raise OSError(ctypes.get_errno(), "Snapshot effective/permitted capability drop")
-        if not _zero_caps(_status()):
-            raise LinuxSnapshotError("Snapshot capabilities remain after drop")
+        _drop_capabilities(self._native)
 
     def _fence(self) -> None:
-        # x86_64 only; deny x32, namespace/mount entry, and namespace clone flags.
-        instructions = [
-            (0x20, 0, 0, 4),
-            (0x15, 1, 0, 0xC000003E),
-            (0x06, 0, 0, 0x80000000),
-            (0x20, 0, 0, 0),
-            (0x35, 0, 1, 0x40000000),
-            (0x06, 0, 0, 0x50000 | errno.ENOSYS),
-        ]
-        if self._kernel_entropy:
-            # Readonly mounts do not prohibit character-device writes/reopens.
-            if self._wsl_gpu:
-                self._check_gpu_policy()
-            write_flags = _flags("O_CREAT", "O_TRUNC", "O_APPEND")
-            if not self._wsl_gpu:
-                write_flags |= _flags("O_ACCMODE")
-            for number, offset in ((2, 24), (257, 32)):
-                instructions.extend(
-                    [
-                        (0x15, 0, 3, number),
-                        (0x20, 0, 0, offset),
-                        (0x45, 0, 1, write_flags),
-                        (0x06, 0, 0, 0x50000 | errno.EPERM),
-                        (0x20, 0, 0, 0),
-                    ]
-                )
-            for number, code in (
-                (85, errno.EPERM),
-                (437, errno.ENOSYS),
-                (425, errno.ENOSYS),
-                (426, errno.ENOSYS),
-                (427, errno.ENOSYS),
-            ):
-                instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | code)])
-        if self._wsl_gpu:
-            # No new external socket domains or incoming SCM_RIGHTS after admission.
-            for number in (41, 53):
-                instructions.extend(
-                    [
-                        (0x15, 0, 3, number),
-                        (0x20, 0, 0, 16),
-                        (0x15, 1, 0, int(_api(socket, "AF_UNIX"))),
-                        (0x06, 0, 0, 0x50000 | errno.EPERM),
-                        (0x20, 0, 0, 0),
-                    ]
-                )
-            for number in (47, 299, 438):
-                instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x50000 | errno.EPERM)])
-        for number in (272, 308, 165, 166, 155, 161, 428, 429, 430, 431, 432, 433, 442, 435):
-            instructions.extend(
-                [
-                    (0x15, 0, 1, number),
-                    (0x06, 0, 0, 0x50000 | (errno.ENOSYS if number == 435 else errno.EPERM)),
-                ]
-            )
-        instructions.extend(
-            [
-                (0x15, 0, 3, 56),
-                (0x20, 0, 0, 16),
-                (0x45, 0, 1, 0x7E020000),
-                (0x06, 0, 0, 0x50000 | errno.EPERM),
-                (0x06, 0, 0, 0x7FFF0000),
-            ]
+        if self._kernel_entropy and self._wsl_gpu:
+            self._check_gpu_policy()
+        self._filters, listener = _install_namespace_fence(
+            self._native, entropy=self._kernel_entropy, gpu=self._wsl_gpu
         )
-        array = (_Filter * len(instructions))(*(_Filter(*item) for item in instructions))
-        program = _Program(len(instructions), array)
-        prior = int(_status()["Seccomp_filters"].strip())
-        if self._native.prctl(22, 2, ctypes.addressof(program), 0, 0) != 0:
-            raise OSError(ctypes.get_errno(), "Snapshot namespace reentry fence refused")
-        self._filters = prior + 1
+        assert listener is None
 
     def _owner(self) -> None:
         if (

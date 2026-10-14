@@ -77,3 +77,25 @@ not a passed readiness flag. Existing _drive_view and all 45 prepared-view cases
 remain unchanged; new native tests reuse their actual program transport.
 Whole Scope/preparation/view/Bootstrap/Registry/Snapshot/rooted/entropy/GPU
 cohorts and exact full gate required. RT2B/RT3 and all video claims remain open.
+# RT2B Shared Worker Policy Before Edits, 2026-10-14
+
+Current actual nine-pair map in launch-research.md precedes edits. Snapshot
+_drop_caps/_enforce_gpu_policy/_fence are constructor-only; _check_gpu_policy
+also serves _inspect_gpu and _fence. _inspect serves constructor/verify. All
+Snapshot signatures/defaults stay unchanged; wrappers delegate shared private
+primitives. _libc also has native helper callers. Whole default/rooted/entropy/
+GPU/Scope/View/Registry/Broker cohorts are required. trace_original_worker and
+Scope/View observations are reused unchanged; no new signal/grant method.
+New RootedCommand/NoReturn worker have no production caller. Their native
+diagnostic uses real original Scope before copy, prepared/joined View, actual
+Snapshot image, kernel registry and copied ELF. No studio/ASR caller changes.
+
+Actual introduced-symbol WIP maps before corrections:
+C:/Users/Wareen/HawEditWorkerControlsMap-b0ca689-WIP-20261014/serena-map.json,
+SHA5e6c6222215ec525b5bc4d1e44c7f9ca57534cf260d42d2932c2584304b2f8ed;
+C:/Users/Wareen/HawEditWorkerControlsMap-b0ca689-WIP2-20261014/serena-map.json,
+SHAd8867fd3aed25e71245062187b3da729a8621f87b68c83f71cd7e4b6735d5aaf.
+Both report unchanged inspected source. Shared primitives serve Snapshot and
+the worker; pure command validation serves the new native initializer. The
+public worker entry now rejects host/controller callers without terminating
+them. Internal original-PID2 failures still exit and require Scope drain.

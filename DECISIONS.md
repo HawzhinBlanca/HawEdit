@@ -16174,3 +16174,40 @@ outside handles nor Landlock/seccomp policy. Typed Snapshot integration, final
 worker/controller fences and copied runtime remain mandatory before any model
 release. No new architecture authority, dependency, rights, spending or bypass.
 
+### D-329 Implementation: Non-Returning Fenced Worker Component
+
+2026-10-14. Approved launch-plan steps6--7, WIP, not full RT2B adoption. Extract
+existing cap-drop/Landlock/namespace-fence primitives for shared trusted use;
+Snapshot defaults, its ordinary BPF rules and final inspection remain intact.
+RootedCommand contains only an exact manifest-listed ELF, bounded direct argv
+and explicit bounded environment. No shell dispatcher, callback or generic FD
+allowlist. Original PID2's entry authenticates PID1 nonce/credentials/exact three
+rights/sealed EOF, direct user/mount relationships and actual PID1 root/cwd/
+proc, enters only that root and verifies every declared copied file hash/size/
+mode before selecting the copied executable. Close all outside/bootstrap/query
+handles, drop all caps, require actual Landlock ABI6+, check genuine entropy
+write refusal, then install the shared genuine notification fence before exec.
+
+Worker canonical fopen opens are notified before general write denials; the
+trusted controller permits only the registry's distinct anchored-leaf open
+shape. Both retain namespace/network/foreign-FD refusals. Controller is trusted
+code only, not a model process; final controller Landlock/default fence/drain
+and production typed Snapshot ownership still need integration. Roles are
+private primitives, not constructor options or a returned unfenced Snapshot.
+Original registry TRACEME/start/birth/exec handling is reused unchanged.
+
+Real source failures exposed a lazy ASCII codec after root entry, unbound
+ctypes prctl pointer truncation and mismatched worker/controller open flags.
+Fix with trusted pre-entry codec materialization, explicit native ABI binding
+and the genuine registry open shape, not syscall rewriting or wider writes.
+Host/controller misuse raises before process termination; genuine private
+worker failures exit74. Execution lifetime/result bounds remain the original
+owner/controller's obligation, not claimed by this standalone component.
+
+Actual copied ELF and existing base Python3.12.0 start under original Scope/View/
+Registry in diagnostic fixtures. Kernel observation sees only three null streams,
+original channel and copied executable before SDK startup; zero capabilities/
+NNP/seccomp/readonly root are checked. Native brokers inject/refuse real FDs.
+This does not copy/admit the complete Cortex SDK, Torch/model/resources/input,
+protected producer or a new ZAR reel; no qualified review/CI/10 claim follows.
+

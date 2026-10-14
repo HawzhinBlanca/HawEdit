@@ -160,3 +160,22 @@ No SDK, model, cloud call, Snapshot return change or release-authority claim.
 
 Actual seven-pair Serena map at unchanged a530ab2:
 C:/Users/Wareen/HawEditJoinedViewMap-a530ab2-20261013/serena-map.json.
+# RT2B Worker Execution Component, 2026-10-14
+
+Continue approved steps6--7 from b0ca689. Extract existing cap-drop, Landlock
+and namespace-fence implementation without changing Snapshot defaults. Add a
+typed manifest/argv/environment declaration and a NoReturn original-PID2 worker
+entry. It authenticates only original PID1's three prepared rights, verifies
+kernel ancestry/root/proc and copied manifest bytes, closes inherited outside
+descriptions, applies mandatory Landlock, installs a genuine notification fence,
+then holds for owner re-observation and original registry before copied exec.
+No callback, shell dispatch, generic FD allowlist or unfenced returned object.
+
+This component's native controller is a test fixture using original Scope/View
+and Snapshot, not production controller/ASR adoption. Actual copied ELF and
+shared-fence broker tests are required; Python/Torch/model/ZAR still separate.
+Do not claim full RT2B from a worker component. GPU controller final fencing,
+typed Snapshot controller adoption and all-member/result drain remain required.
+Actual nine-pair current Serena map, unchanged b0ca689:
+C:/Users/Wareen/HawEditWorkerLaunchMap-b0ca689-20261014/serena-map.json,
+SHA bfbabb8ff8727aab1db45141e017129b4d8325e639fd7aea09b0094349e0d31d.
