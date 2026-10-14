@@ -1,5 +1,14 @@
 # Protected ASR EARS
 
+PA1 service: WHEN an original registered worker thread requests a comm write,
+THE controller SHALL use only its genuine anchored leaf, retain worker readonly
+proc/GPU policy and release no result before drain/final policy inspection.
+WHEN the request targets a foreign thread, THE broker SHALL refuse exact EPERM
+without descriptor injection. Named regressions:
+test_rooted_controller_actual_cpu_comm_service_returns_fenced;
+test_rooted_controller_actual_gpu_comm_service_returns_fenced;
+test_rooted_controller_actual_gpu_elf_returns_fenced.
+
 | Criterion | Proposed Named Test |
 | --- | --- |
 | WHEN the diagnostic controller runs, THE system SHALL retain its existing30s/64KiB/64birth/32request ceilings. | test_protected_asr_preserves_diagnostic_limits |

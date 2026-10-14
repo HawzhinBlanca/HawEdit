@@ -28,3 +28,13 @@ studio deployment capture. Fetch-plan callers: CLI and planning tests; fetch
 callers: CLI and model-fetch tests. Both changed test definitions have no static
 callers. Cover models, model_fetch, registry, environment, diarization, ASR resume,
 studio host and evidence claims, then the complete canonical gate.
+
+Full gate exposed the separate strict missing-checkpoint adapter test assuming
+global weights were absent. Preserve its exact BLOCKED.md #4 assertion using an
+explicitly absent directory and real16kHz mono PCM instead of RIFFdummy. No
+production adapter/validator change. Actual three Serena pairs map the dataclass
+(its generated __init__ is not a source symbol), diarize and that caller:
+C:/Users/Wareen/HawEditCommunity1AbsenceMap-corrected-86f9c12-20261014/serena-map.json,
+SHA256171d0f6888a28cc0215be18ac0b7835973ec37c493f1a955231a11c32ee00e5b.
+Earlier nonexistent-symbol and already-existing-output mapping refusals retained.
+Whole pyannote adapter/checkpoint modules24pass9.00s after strict input correction.

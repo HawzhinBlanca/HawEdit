@@ -497,7 +497,7 @@ class LinuxSnapshot:
                 before = -1
                 self._enter_root()
             self._drop_caps()
-            if wsl_gpu:
+            if wsl_gpu and launch is None:
                 self._enforce_gpu_policy()
             if launch is not None:
                 launch._run(self, end)

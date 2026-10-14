@@ -48,3 +48,11 @@ production caller of the changed Launch._run signature. Actual ELF/Python tests
 add final stacked-filter binding assertions; GPU tests separately exercise
 owned installation, exact Landlock/seccomp denials, unregistered filters,
 replay and caller boolean refusal. The private profile does not grant GPU launch.
+
+PA1 servicing map at86f9c12: nine actual pairs, file/hash in research.md.
+Snapshot.__init__ remains sole production caller of Launch._before_copy/_run;
+_run remains sole caller of _controller_fence. _enforce_gpu_policy gains the
+typed service completion caller. Run complete original CPU/default/GPU/entropy,
+Scope/View, registry/broker and rooted worker/controller modules. Only original
+private worker-task descriptions join typed custody; generic outside rules and
+worker's closed outside handles remain unchanged.

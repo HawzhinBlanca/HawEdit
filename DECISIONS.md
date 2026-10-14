@@ -16266,3 +16266,24 @@ GPU broker servicing before final controller Landlock, complete copied CUDA,
 resource guards, ASR transport and protected pipeline admission remain required.
 No wider proc grant, new dependency, security waiver or model release.
 
+### Original Task-Root Service And Final GPU Policy, 2026-10-14
+
+Approved protected-ASR PA1 follow-up. Genuine copied Python comm service first
+fails EROFS because the controller opened its task root through readonly proc.
+Hold only the stopped original PID2's private proc-task directory before image
+preparation, with original-description anchors alongside the pidfd/channels.
+Worker receives no task root and retains mandatory readonly proc/root, zero
+capabilities, GPU Landlock and restricted notification/trace fences. No host
+directory or broader outside-FD exception is admitted.
+
+Trusted controller services existing original Registry/Broker under non-GPU
+fence. Verify the registry's one actual filter increment against the kernel,
+then drain/close services, enforce final controller GPU Landlock, stack final
+Snapshot fence and inspect before releasing a pending result. Default no-launch
+GPU ordering, exact original EACCES assertions and diagnostic ceilings remain.
+Mismatch and same-inode task-root reopening refuse before copy, preserving
+foreign slots. Genuine CPU/GPU comm writes and foreign-thread refusals pass;
+actual dxg open is not proof of CUDA computation. Complete SDK/model/resource
+closure, protected canonical inference/host checkpoints, qualified current VEX,
+native Sorani review and a real ZAR reel remain separate requirements.
+

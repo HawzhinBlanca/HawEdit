@@ -54,3 +54,31 @@ Existing US$5 transcript-only Gemini scope remains the sole paid-test ceiling.
 BLUEPRINT §§2-5,§7,§§8.1-8.3; D-263 delivery, D-274 episode state, D-329 private
 lifecycle. This research does not grant broader resources, GPU policy, model
 release, installation, cloud video sharing, publication or acceptance.
+
+## PA1 Service Follow-Up At 86f9c12
+
+Actual nine Serena pairs, unchanged source:
+C:/Users/Wareen/HawEditGPUServiceMap-86f9c12-20261014/serena-map.json,
+SHA25600c51d6fabd236ad5f49df206f52bb438af54004d1a0a7956613db539de4c304.
+Current _run opens its task root through readonly proc. Successful original
+registry fixture instead holds the original private /proc/2/task before that
+transition. Anchor only that stopped original worker's task root inside typed
+launch custody; worker receives no task directory, writable proc or host paths.
+Prove genuine CPU/GPU comm service and exact foreign-target refusals, then full
+drain/final controller GPU Landlock/fence/inspection before result publication.
+External detailed research: C:/Users/Wareen/HawEditGPUServiceResearch-86f9c12-20261014.md.
+
+Community-1 is now really provisioned under the approved row exception; see
+evidence/community1-provisioning-20261014.md. Full86f9c12 gate6408pass/2fail:
+strict absent-checkpoint test assumed global absence, plus independent VEX.
+
+Actual WSL cgroup metadata shows no active delegated writable limits, not an
+exhaustive impossibility proof. Dedicated existing Python3.12.0 children really
+refuse256MiB allocation under RLIMIT_AS128MiB and hit kernel SIGKILL under
+RLIMIT_CPU1s hard ceiling. Raw C:/Users/Wareen/HawEditResourceLimits-research-86f9c12-20261014.json,
+SHA256882e81e663b0f1f156875f6e2f748367902b4b9db8fc56b615e6a2d9aa9c03c9.
+These are process-local research proofs, not full-worker RSS/VRAM/effect limits
+or admission. No privileged configuration. References consulted2026-10-14:
+https://docs.kernel.org/admin-guide/cgroup-v2.html and
+https://man7.org/linux/man-pages/man2/getrlimit.2.html. Do not claim RLIMIT_RSS
+is effective isolation or assume cgroup delegation is the only possible guard.

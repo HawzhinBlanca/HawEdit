@@ -24,6 +24,7 @@ from hawedit.linux_snapshot import (
     _api,
     _apply_landlock,
     _flags,
+    _status,
 )
 from hawedit.linux_thread_name import LinuxThreadNameBroker
 from hawedit.linux_thread_registry import LinuxThreadRegistry, _Description
@@ -46,13 +47,13 @@ class RootedLaunch:
     """Borrow only original held capabilities; external Scope must own preparation.
 
     Creates only original PID2; no namespace discovery or generic FD allowlist.
-    This first controller
-    refuses GPU rather than broadening proc writes under GPU Landlock. Runtime
+    Holds only its original task root for bounded comm service before final policy. Runtime
     and output ceilings are diagnostic only; no permission for model release.
     """
 
     _command: RootedCommand
     _pidfd: int
+    _task: int
     _worker: socket.socket
     _view: socket.socket
     _limit: int
@@ -71,7 +72,6 @@ class RootedLaunch:
     ) -> None:
         if (
             type(command) is not RootedCommand
-            or command.wsl_gpu
             or type(view_channel) is not socket.socket
             or type(output_limit_bytes) is not int
             or not 0 < output_limit_bytes <= 65536
@@ -79,9 +79,11 @@ class RootedLaunch:
             or not math.isfinite(timeout_seconds)
             or not 0 < timeout_seconds <= 30
         ):
-            raise LinuxSnapshotError("Rooted controller declaration refused; GPU not yet admitted")
+            raise LinuxSnapshotError("Rooted controller declaration refused")
         if sys.platform != "linux" or os.getpid() != 1 or threading.get_native_id() != 1:
-            raise LinuxSnapshotError("Rooted controller requires original private PID1")
+            raise LinuxSnapshotError(
+                "Rooted controller including GPU requires original private PID1"
+            )
         self._command = command
         self._view = view_channel
         self._limit = output_limit_bytes
@@ -102,6 +104,7 @@ class RootedLaunch:
             self._socket(channel)
         self._worker = parent
         self._pidfd = -1
+        self._task = -1
         worker = os.fork()
         if worker == 0:
             parent.close()
@@ -117,7 +120,10 @@ class RootedLaunch:
             if worker != 2:
                 raise LinuxSnapshotError("Rooted controller fork was not original PID2")
             self._pidfd = os.pidfd_open(worker)
-            for fd in (self._pidfd, parent.fileno(), view_channel.fileno()):
+            self._task = os.open(
+                "/proc/2/task", _flags("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
+            )
+            for fd in (self._pidfd, parent.fileno(), view_channel.fileno(), self._task):
                 self._held.append(_Description.hold(fd))
             packet, rights = self._worker_packet(5, 64, 0)
             if rights or len(packet) != 36 or packet[:4] != b"HEW1":
@@ -151,6 +157,8 @@ class RootedLaunch:
             parent.close()
             if self._pidfd >= 0:
                 os.close(self._pidfd)
+            if self._task >= 0:
+                os.close(self._task)
             raise
 
     @property
@@ -190,7 +198,7 @@ class RootedLaunch:
             or files != self._command.files
             or mode is not SnapshotMode.ROOTED_IMAGE
             or not entropy
-            or gpu
+            or gpu is not self._command.wsl_gpu
         ):
             raise LinuxSnapshotError("Rooted controller manifest/mode binding refused")
         if _pid_info(self._pidfd) != (2,) or select.select([self._pidfd], [], [], 0)[0]:
@@ -205,7 +213,7 @@ class RootedLaunch:
             children = stream.read(257).strip()
         if children != b"2":
             raise LinuxSnapshotError("Rooted controller requires only original PID2")
-        if len({self._pidfd, self._worker.fileno(), self._view.fileno()}) != 3:
+        if len({self._pidfd, self._worker.fileno(), self._view.fileno(), self._task}) != 4:
             raise LinuxSnapshotError("Rooted controller capabilities alias")
         if self._nonce is None or self._closed:
             raise LinuxSnapshotError("Rooted controller original preparation unavailable")
@@ -278,7 +286,8 @@ class RootedLaunch:
             raise LinuxSnapshotError("Rooted controller was not bound before preparation")
         root, native = snapshot._anchor, snapshot._native
         rights: list[int] = []
-        listener = task = -1
+        listener = -1
+        task = self._task
         registry = None
         broker = None
         output = bytearray()
@@ -305,10 +314,10 @@ class RootedLaunch:
                 raise LinuxSnapshotError("Rooted controller joined worker stop refused")
             self._view_token(b"R", preparation_end)
             snapshot._controller_fence()
-            task = os.open(
-                "/proc/2/task", _flags("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
-            )
             registry = LinuxThreadRegistry(self._pidfd, task, timeout_seconds=self._timeout)
+            if int(_status()["Seccomp_filters"].strip()) != snapshot._filters + 1:
+                raise LinuxSnapshotError("Rooted controller original registry filter uncertain")
+            snapshot._filters += 1
             broker = LinuxThreadNameBroker(registry, listener, timeout_seconds=self._timeout)
             notifications = _api(select, "poll")()
             notifications.register(listener, int(_api(select, "POLLIN")))
@@ -345,7 +354,10 @@ class RootedLaunch:
             broker.close()
             registry.close()
             broker = registry = None
-            _apply_landlock(native, root)
+            if self._command.wsl_gpu:
+                snapshot._enforce_gpu_policy()
+            else:
+                _apply_landlock(native, root)
             self._pending = candidate
         except BaseException:
             self._result = None
@@ -361,10 +373,12 @@ class RootedLaunch:
                 os.waitpid(2, 0)
             raise
         finally:
-            for fd in (*rights, listener, task):
+            for fd in (*rights, listener):
                 if fd >= 0:
                     os.close(fd)
             self._close_anchors()
+            os.close(task)
+            self._task = -1
 
     def _complete(self) -> None:
         if not self._closed or self._pending is None or self._result is not None:

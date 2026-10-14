@@ -113,12 +113,16 @@ def test_the_adapter_never_imports_the_pyannote_cloud_sdk() -> None:
 
 def test_absent_weights_are_refused_by_naming_blocker_four(tmp_path: Path) -> None:
     """AC-3: When weights are unprovisioned, refuse by naming BLOCKED.md #4."""
-    fake_audio = tmp_path / "test.wav"
-    fake_audio.write_bytes(b"RIFFdummy")
+    audio = tmp_path / "test.wav"
+    with wave.open(str(audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\0" * 32000)
 
-    diarizer = PyannoteDiarizer()
+    diarizer = PyannoteDiarizer(model_dir=tmp_path / "absent-community1")
     with pytest.raises(DiarizationUnavailable, match=r"BLOCKED\.md #4"):
-        diarizer.diarize(fake_audio)
+        diarizer.diarize(audio)
 
 
 def test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused() -> None:
