@@ -31,8 +31,21 @@ occurred during that run. Therefore current-source two transition cases were
 rerun:2pass/0fail/errors/skips,8.91s; XML
 fd967cb700eff2379b595b5b76dc517feac1df7b86e64460fa8b7b14d69ce394.
 Use the following exact committed canonical run for full source-bound evidence,
-not this intermediate cohort as a gate/CI claim. Strict fast409files and changed
-two-file formatting pass. These elapsed observations are not performance benchmarks.
+not this intermediate cohort as a gate/CI claim. Strict fast409files pass.
+These elapsed observations are not performance benchmarks.
+
+> [!WARNING] Correction
+> The earlier two-file formatting check preceded the annotation correction and
+> did not establish formatting at24c825f. The exact25bdb21 gate stopped at
+> formatting with exit1 before pytest. No fresh JUnit was produced and the old
+> report must not be attributed to that attempt. Actual formatter then collapsed
+> only the observer signature; no assertions, scheduler or source behavior changed.
+
+Format-refusal log C:/Users/Wareen/HawEditGate-25bdb21-20261014.log,
+SHA6c91b9ba3cc0e2690600347a2924e89501d638fc3caf654e88336ac48de692e2.
+Post-formatter test-file SHA067e41feb8373734e87d13f6b834516efa945d17b76763b95dedfed8259d4e9b.
+Both changed files now pass the actual formatting check; a new frozen canonical
+run is mandatory and not yet reported here.
 
 Source hashes:
 - studio_private.py: ba5a1f41661ff8653b1c699d4902d980df75c88f9acf0f489f7e77a58a2ffbf6

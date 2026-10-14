@@ -41,9 +41,7 @@ def _sidecar_transition(tmp_path: Path, *, replace: bool) -> None:
 
     # The observer only schedules the other thread after the real exception.
     # No function, stat result, return value, frame local or kernel result is replaced.
-    def observe(
-        frame: FrameType, event: str, argument: object
-    ) -> TraceFunction:
+    def observe(frame: FrameType, event: str, argument: object) -> TraceFunction:
         if (
             event == "exception"
             and frame.f_code.co_name == "_plain"
