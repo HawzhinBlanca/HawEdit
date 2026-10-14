@@ -62,7 +62,7 @@ from hawedit.captions import (
 from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
 from hawedit.measure import AudioMeasurement
-from hawedit.silence import SilencePlan, silence_trim_filter
+from hawedit.silence import SilencePlan, remap_timestamp, silence_trim_filter
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -1618,6 +1618,16 @@ def render_clip(
             unsharp=deliverable,
         )
     else:
+        eff_per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = per_shot_boxes
+        if per_shot_boxes and silence_plan is not None and silence_plan.total_removed_ms > 0:
+            remapped_boxes: list[tuple[int, int, int | None, int | None]] = []
+            for sin, sout, sy, sh in per_shot_boxes:
+                rin = remap_timestamp(sin, silence_plan) + clip.in_ms
+                rout = remap_timestamp(sout, silence_plan) + clip.in_ms
+                if rout > rin:
+                    remapped_boxes.append((rin, rout, sy, sh))
+            eff_per_shot_boxes = remapped_boxes
+
         video_filter = crop_filter(
             source_width,
             source_height,
@@ -1626,7 +1636,7 @@ def render_clip(
             face_center_y=face_center_y,
             face_height=face_height,
             punch_ins=punch_ins,
-            per_shot_boxes=per_shot_boxes,
+            per_shot_boxes=eff_per_shot_boxes,
             clip_in_ms=clip.in_ms,
             lanczos=deliverable,
             unsharp=deliverable,
@@ -1719,9 +1729,15 @@ def render_clip(
             v_in = "[v_concat]"
             a_in = "[a_concat]"
         elif has_silence and silence_plan is not None:
-            trim_prefix = f"{silence_trim_filter(silence_plan.retained_intervals_ms)};"
-            v_in = "[v_tightened]"
-            a_in = "[a_tightened]"
+            stf = silence_trim_filter(silence_plan.retained_intervals_ms)
+            if stf:
+                trim_prefix = f"{stf};[v_tightened]fps={clip_fps}[v_cfr];"
+                v_in = "[v_cfr]"
+                a_in = "[a_tightened]"
+            else:
+                trim_prefix = ""
+                v_in = "[0:v]"
+                a_in = "[0:a]"
         else:
             trim_prefix = ""
             v_in = "[0:v]"

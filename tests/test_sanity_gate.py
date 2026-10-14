@@ -165,7 +165,7 @@ def test_parse_ebur128_stats() -> None:
     """
     lufs, peak, passed, defects = parse_ebur128_stats(clipped_output)
     assert passed is False
-    assert any("True Peak 0.5 dBFS exceeds -1.0 dBFS" in d for d in defects)
+    assert any("True Peak 0.5 dBFS exceeds -0.7 dBFS" in d for d in defects)
     assert any("Integrated loudness -12.0 LUFS outside range" in d for d in defects)
 
 

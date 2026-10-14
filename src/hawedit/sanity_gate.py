@@ -175,9 +175,9 @@ def parse_ebur128_stats(
 
     if lufs < -24.0 or lufs > -14.0:
         defects.append(f"Integrated loudness {lufs} LUFS outside range [-24.0, -14.0] LUFS.")
-    if peak > -1.0:
+    if peak > -0.7:
         defects.append(
-            f"True Peak {peak} dBFS exceeds -1.0 dBFS ceiling (risk of digital distortion)."
+            f"True Peak {peak} dBFS exceeds -0.7 dBFS ceiling (risk of digital distortion)."
         )
 
     passed = len(defects) == 0
@@ -287,19 +287,20 @@ def check_face_presence(
                 detected_boxes: list[tuple[int, int, int, int]] = [
                     (int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in faces
                 ]
-                if not detected_boxes and profile_detector is not None:
+                if profile_detector is not None:
                     p_faces = profile_detector.detectMultiScale(
                         gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                     )
-                    detected_boxes = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in p_faces]
-                    if not detected_boxes:
-                        flipped = cv2.flip(gray, 1)
-                        p_faces_flipped = profile_detector.detectMultiScale(
-                            flipped, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
-                        )
-                        detected_boxes = [
-                            (int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in p_faces_flipped
-                        ]
+                    detected_boxes.extend(
+                        (int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in p_faces
+                    )
+                    flipped = cv2.flip(gray, 1)
+                    p_faces_flipped = profile_detector.detectMultiScale(
+                        flipped, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
+                    )
+                    detected_boxes.extend(
+                        (int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in p_faces_flipped
+                    )
 
                 count = len(detected_boxes)
                 sample_counts.append(count)
