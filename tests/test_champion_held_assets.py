@@ -224,7 +224,7 @@ def _exercise_champion_consumers(
     def pipeline(**kwargs: object) -> object:
         assert kwargs["model_card"] is None
         assert kwargs["model"] is adapted_model
-        assert kwargs["device"] == "cuda:0"
+        assert kwargs["device"] == "cuda:1"
         assert kwargs["dtype"] == "bf16"
         events.append("pipeline")
         if failure_stage == "pipeline":

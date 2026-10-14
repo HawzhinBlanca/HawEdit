@@ -972,6 +972,19 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     assert "transcribe" not in loaded
 
 
+def test_stage_1_defaults_to_gpu_1_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-331: LLM, CTC and validator all default to GPU 1; GPU 0 is never chosen silently."""
+    for name in ("LLM", "CTC", "VALIDATOR"):
+        monkeypatch.delenv(f"HAWEDIT_ASR_{name}_DEVICE", raising=False)
+    backend = OmniAsrBackend()
+    assert (backend.llm_device, backend.ctc_device) == ("cuda:1", "cuda:1")
+    (tmp_path / "validator").mkdir()
+    assert QwenSoraniValidator(tmp_path / "validator").device == "cuda:1"
+    # An explicit operator choice is still honoured.
+    monkeypatch.setenv("HAWEDIT_ASR_LLM_DEVICE", "cuda:0")
+    assert OmniAsrBackend().llm_device == "cuda:0"
+
+
 def test_qwen_validator_device_env_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

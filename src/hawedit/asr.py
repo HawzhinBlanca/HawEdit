@@ -115,6 +115,9 @@ __all__ = [
 # stay under it, so anything past this is by definition outside the designed operating range
 # and its failure rate is a property worth measuring rather than an accident.
 LONG_AUDIO_THRESHOLD_S: Final = 40.0
+# Owner rule (D-331): Stage 1 drafts, aligns and validates on GPU 1 only by default. GPU 0 stays
+# visible (gpu_runtime refuses CUDA_VISIBLE_DEVICES) but unused; HAWEDIT_ASR_*_DEVICE override.
+DEFAULT_ASR_DEVICE: Final = "cuda:1"
 VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 _CONTEXT_MAX_GAP_MS: Final = 1_000
 _CONTEXT_MAX_SPAN_MS: Final = 18_000
@@ -552,7 +555,7 @@ class QwenSoraniValidator:
         self,
         model_dir: Path,
         *,
-        device: str = "cuda:1",
+        device: str = DEFAULT_ASR_DEVICE,
         model_id: str = VALIDATOR_MODEL_ID,
     ) -> None:
         resolve_role(model_id, frozenset({"asr_validator"}), "the ASR validator")
@@ -637,8 +640,8 @@ class OmniAsrBackend:
     def __init__(
         self,
         *,
-        llm_device: str = "cuda:0",
-        ctc_device: str = "cuda:1",
+        llm_device: str = DEFAULT_ASR_DEVICE,
+        ctc_device: str = DEFAULT_ASR_DEVICE,
         language: str = "ckb_Arab",
         llm_card: str = CANONICAL_LLM_CARD,
         ctc_card: str = CANONICAL_CTC_CARD,

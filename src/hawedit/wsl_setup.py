@@ -1065,7 +1065,9 @@ del run_request, ASRInferencePipeline, Qwen3ASRModel, provision_omni_assets, tor
 if not torch.cuda.is_available():
     raise SystemExit("OmniASR installed, but CUDA is not visible inside WSL2")
 if torch.cuda.device_count() < 2:
-    raise SystemExit("HawEdit OmniASR needs two visible GPUs (LLM cuda:0, CTC cuda:1)")
+    raise SystemExit(
+        "HawEdit OmniASR needs two visible GPUs (Stage 1 runs on cuda:1; cuda:0 stays visible)"
+    )
 packages = {}
 for distribution in importlib.metadata.distributions():
     raw_name = distribution.metadata.get("Name")
