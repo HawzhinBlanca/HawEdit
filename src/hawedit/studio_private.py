@@ -272,7 +272,7 @@ class PrivateSqlitePath:
                     _private(sidecar, directory=False)
                 except FileNotFoundError:
                     continue
-                except (OSError, WindowsSecurityError):
+                except (OSError, WindowsSecurityError, StudioStorageError):
                     # SQLite may remove a sidecar when its last connection closes.
                     try:
                         sidecar.lstat()

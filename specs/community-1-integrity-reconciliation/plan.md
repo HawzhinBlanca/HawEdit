@@ -24,3 +24,10 @@ licence, secret, VEX date/binding, golden/fixture or gate changes are authorized
 
 No model execution, unseen terms acceptance, paid inference, publication or
 production readiness claim follows from successful provisioning.
+
+Read-only follow-up2026-10-14: existing .venv-gpu on WindowsCPython3.11.15
+actually passes audit_installed_profile('models'), with huggingface_hub0.36.2.
+Log C:/Users/Wareen/HawEditCommunity1-existing-gpu-models-audit-20261014.log,
+SHA25614b8ac3efe2e1e37de34e20047f5fe68361c13cf41cb3082c44760a2b2480be1.
+No installation is needed for this candidate downloader. It does not authorize
+the protected integrity-row exception, actual model execution or ASR readiness.

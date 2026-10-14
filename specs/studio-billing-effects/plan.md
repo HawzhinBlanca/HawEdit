@@ -21,3 +21,15 @@ actual full gate: restore previous host-result note's missing required header
 using its measured code/host/command and n/a media; leave the validator untouched.
 Run complete claims module, then commit and repeat the exact frozen full gate.
 Preserve the initial two-failure report and all raw evidence; no ledger promotion.
+
+## Existing T3 Storage-Validation Follow-Up
+
+After the7f2f5ad full gate, investigate and repair the discovered sidecar error-family
+gap within the approved whole-journal/private-storage scope. Capture current Serena
+callers, then test actual filesystem disappearance and replacement first. Extend
+only the existing absence recheck to StudioStorageError; present unsafe/replaced
+paths must still refuse, and root/main identities must be rechecked. Do not infer
+that an error is benign or retry provider calls. Preserve the original concurrent
+budget regression, all native private-storage controls, schema and spending caps;
+run complete caller modules and the exact frozen canonical gate again. No new
+authority, dependency, optional downgrade, ledger promotion or VEX rebinding.

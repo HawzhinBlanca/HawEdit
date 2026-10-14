@@ -15328,6 +15328,17 @@ Research/EARS/actual caller maps/approved plan: specs/studio-billing-effects.
 Required local gate and current CI remain unproved; worker/lifetime and HTTP/
 review/revision/export adoption and independent sustained acceptance remain.
 
+2026-10-14 existing T3/private-storage follow-up: canonical7f2f5ad gate exposed
+an actual concurrent billing refusal from a disappearing -shm sidecar, alongside
+the preserved VEX failure. The existing disappearance recheck omitted the
+library's own storage-validation exception. Apply the same actual-absence recheck
+to that exception, not a generic acceptance or provider retry: present unsafe
+or replaced paths still refuse; original root/main identities remain checked.
+Deterministic observers schedule real filesystem changes at actual exceptions,
+without replacing stat/function/kernel results. Preserve native concurrency,
+crash recovery and all stable unsafe-path controls. No schema, cap, authority,
+dependency, installation, model release or security disposition changes.
+
 ## D-307 - Caption ink widths must be decoded, not estimated
 
 2026-10-08, approved evidence-based-studio phases3/5; BLUEPRINT4.3/8.3.
