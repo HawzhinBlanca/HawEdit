@@ -8,6 +8,13 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Original Thread Registry (WIP)
 
+Typed Snapshot diagnostic controller, D-329: code b9acc71ee36cba8d11e92a6c13410ce4094ff38a,
+424affected tests pass/0errors/skips,151.97s, recorded Windows/WSL hardware.
+Actual copied ELF/Python, output/deadline/owner-loss/manifest refusals and original
+drain are covered. Fast407files and formatting pass; exact full gate/current CI
+remain required. Evidence: evidence/typed-rooted-controller-20261014.md.
+GPU/SDK/model/protected ASR and real captioned ZAR remain open; no promotion.
+
 | Task | Work | Status | Evidence / Remaining |
 | --- | --- | --- | --- |
 | M9.105 | Adopt bounded original copied worker into the typed Snapshot controller | WIP | `src/hawedit/linux_rooted_launch.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_controller.py`; approved D-329 launch plan. Initial module accounting, not promotion. GPU/SDK/model/resource/producer/real ZAR editorial output and current independent security/CI acceptance remain open. |
