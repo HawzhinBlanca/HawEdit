@@ -41,6 +41,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
+from hawedit import omni_assets as _omni_assets
 from hawedit.asr_completion import COMPLETION_POLICY_ID, transcribe_completed
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
@@ -50,6 +51,10 @@ from hawedit.models import ModelStore, assert_transformers_config_safe, verified
 from hawedit.omni_assets import (
     CANONICAL_CTC_CARD,
     CANONICAL_LLM_CARD,
+    OMNI_ASSETS,
+    FusedCheckpointAsset,
+    _hash_open_stream,
+    _open_regular_nofollow,
     assert_canonical_omni_cards,
     assert_effective_omni_cards,
     assert_omni_card_integrity,
@@ -274,6 +279,80 @@ def resolve_champion_adapter(
         "model hallucinates words the champion does not emit, and a transcript drafted by the "
         "wrong engine poisons every measurement taken from it."
     )
+
+
+# A fused trainer checkpoint replaces the stock LLM weights, so only CTC-3B and the canonical
+# tokenizer are held from the stock asset set. D-331.
+_FUSED_HELD_ASSETS: Final = tuple(
+    asset for asset in OMNI_ASSETS if asset.filename != "omniASR-LLM-7B-v2.pt"
+)
+# The fused v12 checkpoint was trained with the canonical written-v2 tokenizer (10288 ids).
+FUSED_VOCAB_SIZE: Final = 10288
+# Stat identity -> measured SHA-256: a 15.6 GB checkpoint is hashed once per process, not per load.
+_FUSED_DIGESTS: dict[tuple[int, ...], str] = {}
+
+
+def fused_checkpoint_asset(checkpoint: Path) -> FusedCheckpointAsset:
+    """The code-allowlisted entry this path names, or an honest halt. Cheap: no hashing.
+
+    Admission is by ``FUSED_CHECKPOINT_ASSETS`` only (filename and exact size here; the worker
+    checks the SHA-256 of the held bytes before any loader). Files beside the checkpoint, such
+    as ``SHA256SUMS``, are never an authority: whoever writes the ``.pt`` can write them too.
+    """
+    try:
+        info = checkpoint.lstat()
+    except OSError as exc:
+        raise ChampionUnavailable(f"fused champion checkpoint is missing: {checkpoint}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise ChampionUnavailable(f"fused champion checkpoint is not a regular file: {checkpoint}")
+    allowlist = _omni_assets.FUSED_CHECKPOINT_ASSETS  # read at call time; tests patch it
+    matches = [asset for asset in allowlist if asset.filename == checkpoint.name]
+    if len(matches) != 1 or matches[0].size != info.st_size:
+        raise ChampionUnavailable(
+            f"{checkpoint} ({info.st_size} bytes) is not on HawEdit's fused checkpoint "
+            "allowlist (exact filename, size and SHA-256); refusing to load it"
+        )
+    return matches[0]
+
+
+@contextmanager
+def _held_fused_checkpoint(checkpoint: Path, asset: FusedCheckpointAsset) -> Iterator[str]:
+    """Verify the allowlisted size and SHA-256 of the held bytes, then load only through them."""
+    stream, before = _open_regular_nofollow(checkpoint, require_single_link=True)
+    with stream:
+        if before.st_size != asset.size:
+            raise ChampionUnavailable(
+                f"fused champion {checkpoint} is {before.st_size} bytes, not the allowlisted "
+                f"{asset.size}; refusing to load it"
+            )
+        key = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        digest = _FUSED_DIGESTS.get(key)
+        if digest is None:
+            _, digest = _hash_open_stream(stream, before, checkpoint)
+            _FUSED_DIGESTS[key] = digest
+        if digest != asset.sha256:
+            raise ChampionUnavailable(
+                f"fused champion {checkpoint} hashes to {digest}, not the allowlisted "
+                f"{asset.sha256}; refusing to load it"
+            )
+        fd_root = next((Path(p) for p in ("/proc/self/fd", "/dev/fd") if Path(p).is_dir()), None)
+        if fd_root is None:
+            raise RuntimeError(
+                "Verified fused checkpoint descriptors need Linux; use the WSL ASR runtime"
+            )
+        aliases = Path(tempfile.mkdtemp(prefix="hawedit-fused-"))
+        try:
+            aliases.chmod(0o700)
+            alias = aliases / checkpoint.name
+            alias.symlink_to(fd_root / str(stream.fileno()))
+            aliases.chmod(0o500)
+            yield alias.as_uri()
+        finally:
+            aliases.chmod(0o700)
+            shutil.rmtree(aliases)
+        after = os.fstat(stream.fileno())
+        if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != key:
+            raise RuntimeError("Fused champion checkpoint changed during verified access")
 
 
 def adapter_fingerprint(adapter_dir: Path) -> str:
@@ -545,14 +624,21 @@ class OmniAsrBackend:
         llm_card: str = CANONICAL_LLM_CARD,
         ctc_card: str = CANONICAL_CTC_CARD,
         lora_adapter: Path | None = None,
+        fused_checkpoint: Path | None = None,
     ) -> None:
         assert_canonical_omni_cards(llm_card, ctc_card)
+        if lora_adapter is not None and fused_checkpoint is not None:
+            raise ValueError(
+                "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, "
+                "not both"
+            )
         self.llm_device = os.environ.get("HAWEDIT_ASR_LLM_DEVICE", llm_device)
         self.ctc_device = os.environ.get("HAWEDIT_ASR_CTC_DEVICE", ctc_device)
         self.language = language
         self.llm_card = llm_card
         self.ctc_card = ctc_card
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
+        self.fused_checkpoint = Path(fused_checkpoint) if fused_checkpoint is not None else None
         self._pipelines: tuple[Any, Any] | None = None
         self._ctc_pipeline: Any | None = None
         self._loaded_adapter_identity: str | None = None
@@ -568,9 +654,12 @@ class OmniAsrBackend:
         does not make. `asr.py`'s rule is that a measurement carries the adapter that produced
         it; this is where it carries it.
         """
-        current = (
-            None if self.lora_adapter is None else f"lora:{adapter_fingerprint(self.lora_adapter)}"
-        )
+        if self.fused_checkpoint is not None:
+            current: str | None = f"fused:{fused_checkpoint_asset(self.fused_checkpoint).sha256}"
+        elif self.lora_adapter is not None:
+            current = f"lora:{adapter_fingerprint(self.lora_adapter)}"
+        else:
+            current = None
         if (
             self._pipelines is not None or self._ctc_pipeline is not None
         ) and current != self._loaded_adapter_identity:
@@ -583,8 +672,16 @@ class OmniAsrBackend:
             # Both default champion and explicit stock routes consume held canonical files,
             # never a freshly reopened URL-cache pathname or environment-overridden card.
             with ExitStack() as stack:
-                opened_assets = stack.enter_context(open_verified_omni_assets())
+                opened_assets = stack.enter_context(self._open_held_assets())
                 adapter_aliases = None
+                fused_uri = None
+                if self.fused_checkpoint is not None:
+                    allowed = fused_checkpoint_asset(self.fused_checkpoint)
+                    if f"fused:{allowed.sha256}" != expected_identity:
+                        raise RuntimeError("ASR fused identity changed before model construction")
+                    fused_uri = stack.enter_context(
+                        _held_fused_checkpoint(self.fused_checkpoint, allowed)
+                    )
                 if self.lora_adapter is not None:
                     adapter_aliases, fingerprint = stack.enter_context(
                         _verified_adapter_aliases(self.lora_adapter)
@@ -614,7 +711,12 @@ class OmniAsrBackend:
                 )
                 tokenizer = load_tokenizer(tokenizer_card)
                 llm_pipeline = None
-                if adapter_aliases is not None:
+                if fused_uri is not None:
+                    llm_pipeline = self._load_fused_llm(
+                        by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                        checkpoint_uri=fused_uri,
+                    )
+                elif adapter_aliases is not None:
                     llm_pipeline = self._load_adapted_llm(
                         adapter_aliases,
                         checkpoint_uri=by_name["omniASR-LLM-7B-v2.pt"].file_uri,
@@ -653,6 +755,12 @@ class OmniAsrBackend:
             self._ctc_pipeline = ctc_pipeline
         return self._pipelines
 
+    def _open_held_assets(self) -> Any:
+        # A fused run never reads the stock LLM weights, so it does not hold or hash them.
+        if self.fused_checkpoint is not None:
+            return open_verified_omni_assets(assets=_FUSED_HELD_ASSETS)
+        return open_verified_omni_assets()
+
     def _make_ctc_pipeline(self, tokenizer: Any, checkpoint_uri: str) -> Any:
         import torch
         from fairseq2.assets import AssetCard
@@ -680,7 +788,7 @@ class OmniAsrBackend:
         if self._pipelines is not None:
             return self._pipelines[1]
         if self._ctc_pipeline is None:
-            with open_verified_omni_assets() as opened_assets:
+            with self._open_held_assets() as opened_assets:
                 assert_omni_card_integrity()
                 freeze_fairseq2_asset_overrides()
                 try:
@@ -743,17 +851,9 @@ class OmniAsrBackend:
         for `in_features`/`out_features`, fairseq2's projection names them `input_dim`/
         `output_dim`, and without the mapping PEFT cannot see a layer to attach to.
         """
-        import copy
-
         import torch
-        from fairseq2.assets import AssetCard
-        from fairseq2.data.tokenizers import load_tokenizer
-        from fairseq2.models.hub import load_model
         from fairseq2.nn.projection import Linear as Fairseq2Linear
-        from fairseq2.runtime.config_registry import get_config
-        from fairseq2.runtime.dependency import get_dependency_resolver
         from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
-        from omnilingual_asr.models.wav2vec2_llama import Wav2Vec2LlamaConfig
 
         try:
             from peft import LoraConfig, PeftModel
@@ -776,16 +876,50 @@ class OmniAsrBackend:
         Fairseq2Linear.in_features = property(lambda self: self.input_dim)
         Fairseq2Linear.out_features = property(lambda self: self.output_dim)
 
+        base, tokenizer = self._load_trainer_7b(
+            "adapted", checkpoint_uri, tokenizers[0].absolute().as_uri()
+        )
+        device = torch.device(self.llm_device)
+        adapter_config = LoraConfig.from_pretrained(str(adapter_dir))
+        adapter_config._register_custom_module({Fairseq2Linear: LoraLinear})
+        adapted = PeftModel.from_pretrained(base, str(adapter_dir), config=adapter_config)
+        return ASRInferencePipeline(
+            model_card=None,
+            model=adapted.base_model.model,
+            tokenizer=tokenizer,
+            device=device,
+            dtype=torch.bfloat16,
+        )
+
+    def _load_trainer_7b(
+        self,
+        kind: str,
+        checkpoint_uri: str,
+        tokenizer_uri: str,
+        *,
+        expected_vocab: int | None = None,
+    ) -> tuple[Any, Any]:
+        """The trainer's ``7b`` LLM with tokenizer-derived vocabulary (D-181, D-285).
+
+        Shared by the LoRA base and the fused checkpoint (D-331); no PEFT here.
+        """
+        import copy
+
+        import torch
+        from fairseq2.assets import AssetCard
+        from fairseq2.data.tokenizers import load_tokenizer
+        from fairseq2.models.hub import load_model
+        from fairseq2.runtime.config_registry import get_config
+        from fairseq2.runtime.dependency import get_dependency_resolver
+        from omnilingual_asr.models.wav2vec2_llama import Wav2Vec2LlamaConfig
+
         # Direct cards bypass existing metadata/environment providers. Keep derived names free
         # of the canonical trailing @, which previously produced a self-referencing tokenizer.
         base_name = self.llm_card.split("@", 1)[0]
-        card_name = f"hawedit_adapted_{base_name}"
+        card_name = f"hawedit_{kind}_{base_name}"
         tokenizer_card = AssetCard(
             f"{card_name}_tokenizer",
-            {
-                "tokenizer_family": "char_tokenizer",
-                "tokenizer": tokenizers[0].absolute().as_uri(),
-            },
+            {"tokenizer_family": "char_tokenizer", "tokenizer": tokenizer_uri},
         )
         card = AssetCard(
             card_name,
@@ -800,20 +934,32 @@ class OmniAsrBackend:
         # The tokenizer card has no tokenizer_ref, so it cannot recurse through the model card.
         tokenizer = load_tokenizer(tokenizer_card)
         vocab_size = int(tokenizer.vocab_info.size)
+        if expected_vocab is not None and vocab_size != expected_vocab:
+            raise RuntimeError(
+                f"the held tokenizer reports {vocab_size} ids but the fused checkpoint was "
+                f"trained with {expected_vocab}; refusing to load mismatched weights"
+            )
         config = copy.deepcopy(get_config(get_dependency_resolver(), Wav2Vec2LlamaConfig, "7b"))
         config.llama_config.vocab_size = vocab_size
         config.wav2vec2_asr_config.target_vocab_size = vocab_size
+        model = load_model(
+            card, device=torch.device(self.llm_device), dtype=torch.bfloat16, config=config
+        )
+        return model, tokenizer
 
-        device = torch.device(self.llm_device)
-        base = load_model(card, device=device, dtype=torch.bfloat16, config=config)
-        adapter_config = LoraConfig.from_pretrained(str(adapter_dir))
-        adapter_config._register_custom_module({Fairseq2Linear: LoraLinear})
-        adapted = PeftModel.from_pretrained(base, str(adapter_dir), config=adapter_config)
+    def _load_fused_llm(self, tokenizer_uri: str, *, checkpoint_uri: str) -> Any:
+        """A fused trainer checkpoint: the LoRA path's ``7b`` load without PEFT (D-331)."""
+        import torch
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+        model, tokenizer = self._load_trainer_7b(
+            "fused", checkpoint_uri, tokenizer_uri, expected_vocab=FUSED_VOCAB_SIZE
+        )
         return ASRInferencePipeline(
             model_card=None,
-            model=adapted.base_model.model,
+            model=model,
             tokenizer=tokenizer,
-            device=device,
+            device=torch.device(self.llm_device),
             dtype=torch.bfloat16,
         )
 

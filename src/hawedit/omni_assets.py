@@ -116,6 +116,41 @@ OMNI_ASSETS: Final = (
 
 
 @dataclass(frozen=True)
+class FusedCheckpointAsset:
+    """An owner-reviewed fused champion checkpoint, bound like ``OMNI_ASSETS`` (D-331).
+
+    No URL: it is supplied by the operator, never downloaded. Its exact size and SHA-256 are
+    the only authority; nothing beside the file on disk can admit it.
+    """
+
+    name: str
+    filename: str
+    size: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("fused checkpoint name must not be empty")
+        if Path(self.filename).name != self.filename or not self.filename:
+            raise ValueError(f"fused checkpoint filename must be one plain name: {self.filename!r}")
+        if self.size <= 0:
+            raise ValueError("fused checkpoint size must be positive")
+        if len(self.sha256) != 64 or any(char not in "0123456789abcdef" for char in self.sha256):
+            raise ValueError("fused checkpoint SHA-256 must be 64 lowercase hexadecimal characters")
+
+
+# The code allowlist for fused champion checkpoints. Adding an entry is an owner decision.
+FUSED_CHECKPOINT_ASSETS: Final = (
+    FusedCheckpointAsset(
+        name="Kurdish OmniASR-7B v12 fused checkpoint (c750)",
+        filename="kurdish_omniasr_7b_v12_c750.pt",
+        size=15_610_646_560,
+        sha256="f7b3a5e272e52d6c0677f78fd44c22cf6196a79a3a3057a85b7d72f759ff5fb2",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class OmniAssetReport:
     name: str
     path: Path

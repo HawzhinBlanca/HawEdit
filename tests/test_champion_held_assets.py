@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -11,7 +12,8 @@ from typing import Any
 import pytest
 
 import hawedit.asr as asr
-from hawedit.omni_assets import OmniAssetError
+from hawedit import omni_assets
+from hawedit.omni_assets import FUSED_CHECKPOINT_ASSETS, FusedCheckpointAsset, OmniAssetError
 
 
 def _bundle(path: Path) -> Path:
@@ -269,3 +271,256 @@ def _exercise_champion_consumers(
         assert LoraConfig.__post_init__ is original_post_init
         assert LoraConfig().mapping == {}, "a later unrelated configuration must stay untouched"
     assert config.llama_config.vocab_size == 1, "trainer config registry must stay unchanged"
+
+
+# --- D-331: fused trainer checkpoint (v12). Fakes only; no weights load here. ---------------
+
+
+def _fused(
+    path: Path,
+    monkeypatch: pytest.MonkeyPatch | None = None,
+    data: bytes = b"synthetic-fused-weights",
+    *,
+    size: int | None = None,
+    sha256: str | None = None,
+) -> Path:
+    """A synthetic fused file; with ``monkeypatch`` it is put on the code allowlist."""
+    path.mkdir()
+    checkpoint = path / "kurdish_omniasr_7b_v12_c750.pt"
+    checkpoint.write_bytes(data)
+    if monkeypatch is not None:
+        monkeypatch.setattr(
+            omni_assets,
+            "FUSED_CHECKPOINT_ASSETS",
+            (
+                FusedCheckpointAsset(
+                    "synthetic fused checkpoint",
+                    checkpoint.name,
+                    len(data) if size is None else size,
+                    hashlib.sha256(data).hexdigest() if sha256 is None else sha256,
+                ),
+            ),
+        )
+    return checkpoint
+
+
+def _fused_modules(
+    monkeypatch: pytest.MonkeyPatch, events: list[str], *, vocab: int = 10288
+) -> object:
+    tokenizer = SimpleNamespace(vocab_info=SimpleNamespace(size=vocab))
+    model = object()
+    config = SimpleNamespace(
+        llama_config=SimpleNamespace(vocab_size=1),
+        wav2vec2_asr_config=SimpleNamespace(target_vocab_size=1),
+    )
+
+    class DirectCard:
+        def __init__(self, name: str, row: dict[str, Any]) -> None:
+            self.name = name
+            self.metadata = row
+
+    def load_tokenizer(card: DirectCard) -> object:
+        assert card.metadata == {
+            "tokenizer_family": "char_tokenizer",
+            "tokenizer": "file:///held/omniASR_tokenizer_written_v2.model",
+        }
+        events.append("tokenizer")
+        return tokenizer
+
+    def load_model(card: DirectCard, **kwargs: Any) -> object:
+        assert card.name == "hawedit_fused_omniASR_LLM_7B_v2"
+        assert card.metadata == {
+            "model_family": "wav2vec2_llama",
+            "model_arch": "7b",
+            "checkpoint": "file:///held/fused.pt",
+            "tokenizer_ref": "hawedit_fused_omniASR_LLM_7B_v2_tokenizer",
+        }
+        assert kwargs["config"].llama_config.vocab_size == 10288
+        assert kwargs["config"].wav2vec2_asr_config.target_vocab_size == 10288
+        assert kwargs["dtype"] == "bf16"
+        events.append("weights")
+        return model
+
+    def pipeline(**kwargs: object) -> object:
+        assert kwargs["model"] is model and kwargs["tokenizer"] is tokenizer
+        assert kwargs["model_card"] is None and kwargs["dtype"] == "bf16"
+        events.append("pipeline")
+        return kwargs
+
+    modules = {
+        "torch": SimpleNamespace(device=lambda value: value, bfloat16="bf16"),
+        "fairseq2.assets": SimpleNamespace(AssetCard=DirectCard),
+        "fairseq2.data.tokenizers": SimpleNamespace(load_tokenizer=load_tokenizer),
+        "fairseq2.models.hub": SimpleNamespace(load_model=load_model),
+        "fairseq2.runtime.config_registry": SimpleNamespace(
+            get_config=lambda _resolver, _cls, arch: config if arch == "7b" else pytest.fail(arch)
+        ),
+        "fairseq2.runtime.dependency": SimpleNamespace(get_dependency_resolver=lambda: object()),
+        "omnilingual_asr.models.inference.pipeline": SimpleNamespace(ASRInferencePipeline=pipeline),
+        "omnilingual_asr.models.wav2vec2_llama": SimpleNamespace(Wav2Vec2LlamaConfig=object),
+        # A fused checkpoint is not an adapter: importing PEFT at all would be a wrong route.
+        "peft": None,
+        "peft.tuners.lora": None,
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    return model
+
+
+def test_fused_checkpoint_loads_trainer_7b_without_peft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    model = _fused_modules(monkeypatch, events)
+    backend = asr.OmniAsrBackend(fused_checkpoint=_fused(tmp_path / "v12"))
+    result = backend._load_fused_llm(
+        "file:///held/omniASR_tokenizer_written_v2.model", checkpoint_uri="file:///held/fused.pt"
+    )
+    assert result["model"] is model
+    assert result["device"] == backend.llm_device
+    assert events == ["tokenizer", "weights", "pipeline"]
+
+
+def test_fused_checkpoint_vocab_mismatch_halts_before_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    _fused_modules(monkeypatch, events, vocab=10287)
+    backend = asr.OmniAsrBackend(fused_checkpoint=_fused(tmp_path / "v12"))
+    with pytest.raises(RuntimeError, match=r"10287 ids.*trained with 10288"):
+        backend._load_fused_llm(
+            "file:///held/omniASR_tokenizer_written_v2.model",
+            checkpoint_uri="file:///held/fused.pt",
+        )
+    assert events == ["tokenizer"], "no weights may load under a mismatched vocabulary"
+
+
+def test_fused_checkpoint_and_lora_adapter_are_mutually_exclusive(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not both"):
+        asr.OmniAsrBackend(
+            lora_adapter=_bundle(tmp_path / "adapter"),
+            fused_checkpoint=_fused(tmp_path / "v12"),
+        )
+
+
+def test_fused_load_holds_only_ctc_and_tokenizer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = asr.OmniAsrBackend(fused_checkpoint=_fused(tmp_path / "v12", monkeypatch))
+    held: list[tuple[str, ...]] = []
+
+    def refuse(**kwargs: Any) -> None:
+        held.append(tuple(asset.filename for asset in kwargs["assets"]))
+        raise OmniAssetError("fused held-asset sentinel")
+
+    monkeypatch.setattr(asr, "open_verified_omni_assets", refuse)
+    for load in (backend._load, backend._load_ctc):
+        with pytest.raises(OmniAssetError, match="sentinel"):
+            load()
+    assert held == [("omniASR-CTC-3B-v2.pt", "omniASR_tokenizer_written_v2.model")] * 2
+    assert backend._pipelines is None and backend._ctc_pipeline is None
+
+
+def test_the_code_allowlist_names_exactly_the_reviewed_v12_checkpoint() -> None:
+    assert (
+        FusedCheckpointAsset(
+            name="Kurdish OmniASR-7B v12 fused checkpoint (c750)",
+            filename="kurdish_omniasr_7b_v12_c750.pt",
+            size=15_610_646_560,
+            sha256="f7b3a5e272e52d6c0677f78fd44c22cf6196a79a3a3057a85b7d72f759ff5fb2",
+        ),
+    ) == FUSED_CHECKPOINT_ASSETS
+
+
+def test_fused_identity_is_derived_from_the_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _fused(tmp_path / "v12", monkeypatch)
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    assert asr.fused_checkpoint_asset(checkpoint) == omni_assets.FUSED_CHECKPOINT_ASSETS[0]
+    assert asr.OmniAsrBackend(fused_checkpoint=checkpoint).adapter_name == f"fused:{digest}"
+    # The identity is the allowlisted value, not something read from the file's neighbours.
+    (checkpoint.parent / "SHA256SUMS").write_text(f"{'0' * 64}  {checkpoint.name}\n", "utf-8")
+    assert asr.OmniAsrBackend(fused_checkpoint=checkpoint).adapter_name == f"fused:{digest}"
+
+
+def test_sha256sums_alone_does_not_authorise_a_fused_checkpoint(tmp_path: Path) -> None:
+    """A writer of the .pt can write its SHA256SUMS too; only the code allowlist admits."""
+    checkpoint = _fused(tmp_path / "v12")
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    (checkpoint.parent / "SHA256SUMS").write_text(f"{digest}  {checkpoint.name}\n", "utf-8")
+    with pytest.raises(asr.ChampionUnavailable, match="allowlist"):
+        asr.fused_checkpoint_asset(checkpoint)
+    with pytest.raises(asr.ChampionUnavailable, match="allowlist"):
+        _ = asr.OmniAsrBackend(fused_checkpoint=checkpoint).adapter_name
+
+
+@pytest.mark.parametrize("damage", ["missing", "renamed", "wrong_size", "directory"])
+def test_fused_admission_refuses_unlisted_or_unsafe_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    checkpoint = _fused(tmp_path / "v12", monkeypatch)
+    selected = checkpoint
+    if damage == "missing":
+        checkpoint.unlink()
+    elif damage == "renamed":
+        selected = checkpoint.rename(checkpoint.with_name("other.pt"))
+    elif damage == "wrong_size":
+        checkpoint.write_bytes(checkpoint.read_bytes() + b"x")
+    else:
+        checkpoint.unlink()
+        checkpoint.mkdir()
+    with pytest.raises(asr.ChampionUnavailable):
+        asr.fused_checkpoint_asset(selected)
+
+
+@pytest.mark.parametrize("damage", ["size", "sha256"])
+def test_held_fused_checkpoint_refuses_bytes_off_the_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    data = b"synthetic-fused-weights"
+    size = len(data) + 1 if damage == "size" else None
+    checkpoint = _fused(tmp_path / "v12", monkeypatch, data, size=size)
+    hashed: list[Path] = []
+
+    def other_bytes(stream: Any, before: os.stat_result, path: Path) -> tuple[Any, str]:
+        hashed.append(path)
+        return before, "1" * 64
+
+    monkeypatch.setattr(asr, "_hash_open_stream", other_bytes)
+    monkeypatch.setattr(asr, "_FUSED_DIGESTS", {})
+    with (
+        pytest.raises(asr.ChampionUnavailable, match="allowlist"),
+        asr._held_fused_checkpoint(checkpoint, omni_assets.FUSED_CHECKPOINT_ASSETS[0]),
+    ):
+        pytest.fail("bytes off the allowlist reached the loader")
+    # An exact-size mismatch refuses before 15.6 GB would be hashed.
+    assert hashed == ([] if damage == "size" else [checkpoint])
+
+
+def test_held_fused_checkpoint_hashes_once_per_stat_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _fused(tmp_path / "v12", monkeypatch)
+    allowed = omni_assets.FUSED_CHECKPOINT_ASSETS[0]
+    real = omni_assets._hash_open_stream
+    hashed: list[Path] = []
+
+    def counted(stream: Any, before: os.stat_result, path: Path) -> tuple[os.stat_result, str]:
+        hashed.append(path)
+        return real(stream, before, path)
+
+    monkeypatch.setattr(asr, "_hash_open_stream", counted)
+    monkeypatch.setattr(asr, "_FUSED_DIGESTS", {})
+    linux = any(Path(p).is_dir() for p in ("/proc/self/fd", "/dev/fd"))
+    for _ in range(2):
+        if linux:
+            with asr._held_fused_checkpoint(checkpoint, allowed) as uri:
+                assert Path(uri.removeprefix("file://")).read_bytes() == checkpoint.read_bytes()
+        else:
+            with (
+                pytest.raises(RuntimeError, match="descriptors need Linux"),
+                asr._held_fused_checkpoint(checkpoint, allowed),
+            ):
+                pytest.fail("unsupported runtime admitted original-path loading")
+    assert hashed == [checkpoint]
