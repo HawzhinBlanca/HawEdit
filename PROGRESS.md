@@ -18,6 +18,7 @@ GPU/SDK/model/protected ASR and real captioned ZAR remain open; no promotion.
 | Task | Work | Status | Evidence / Remaining |
 | --- | --- | --- | --- |
 | M9.105 | Adopt bounded original copied worker into the typed Snapshot controller | WIP | `src/hawedit/linux_rooted_launch.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_controller.py`; approved D-329 launch plan. Initial module accounting, not promotion. GPU/SDK/model/resource/producer/real ZAR editorial output and current independent security/CI acceptance remain open. |
+| M9.106 | Enforce original copied-worker diagnostic kernel resource limits | WIP | `src/hawedit/linux_worker_resources.py`, `src/hawedit/linux_rooted_worker.py`, `tests/test_worker_resources.py`, `tests/test_rooted_controller.py`; approved protected-ASR PA2/D-329. Initial module accounting, not promotion. Actual334 affected tests pass; full0346500 gate6431pass/5fail/3errors includes three documentation omissions being corrected, dirty-checkout builds and stale independent VEX. Production CUDA/RSS/VRAM/effect admission, protected ASR/checkpoints, ZAR reel and exact gate/current CI remain open. |
 
 Approved private-view handoff, D-329: initial RT2A preparation precondition is
 implemented in LinuxScope, not the complete prepared-view transition or launch.

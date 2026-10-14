@@ -1,3 +1,11 @@
+---
+commit: 03465001cd01af6012e0c9ad720e584ef2a74295
+media_sha256: n/a (original copied-worker kernel resource tests)
+host: HawaPC01 Threadripper3990X Windows26300 CPython3.12.10; copied CPython3.12.0 WSL6.18.54.1
+command: .venv/Scripts/python.exe -m pytest tests/test_worker_resources.py tests/test_rooted_controller.py tests/test_rooted_worker.py tests/test_linux_scope.py tests/test_linux_prepared_view.py tests/test_linux_snapshot.py tests/test_rooted_linux_image.py tests/test_rooted_kernel_entropy.py tests/test_rooted_wsl_gpu.py tests/test_rooted_gpu_controller_policy.py tests/test_linux_thread_registry.py tests/test_linux_thread_name.py
+status: WIP; native resource diagnostics only; canonical gate red; no ASR/CI claim
+---
+
 # Original Worker Kernel Limits, WIP
 
 Baseline15915027a9da2857dc8b6cabaa1e827cd8bca4f1. Approved PA2/D-329 unit;
@@ -41,7 +49,7 @@ trusted copy verification is separately bounded, not preparation-memory guarded.
 No controller/shared limits, privileged cgroup change, writable root/proc or new
 dependency. AS is virtual memory, not VRAM or an owned GPU effect guard.
 
-Native Git Bash exact fast command passes lint/strict typecheck410files, not
+Native Git Bash exact fast command passes lint/strict typecheck411files, not
 full gate. Initial unqualified Windows bash selected WSL and refused a CR-suffixed
 Windows lock pathname; retained raw log HawEditWorkerResources-fast-20261014.log
 outside repo. Installed C:/Program Files/Git/bin/bash.exe avoids that shell
@@ -59,3 +67,26 @@ reel/publication proved. Independent VEX remains expired/source-mismatched (#24)
 NVIDIA WSL guide inspected2026-10-14 documents limited NVML queries:
 https://docs.nvidia.com/cuda/wsl-user-guide/index.html#features-not-yet-supported.
 Global GPU memory and allocator settings do not prove owned VRAM/effect drain.
+
+## Full Canonical Attempt At 0346500
+
+Exact native Git Bash scripts/verify.sh exits1. Lint, strict typecheck411files
+and formatting411files pass. Pytest6431pass/5fail/3errors/0skips,2533.27s.
+Four build outcomes refuse the two pre-existing dirty demo scripts; independent
+VEX binding also fails. Three agent documentation omissions (this header,
+README module map and initial WIP accounting) are being corrected. Preserve
+every original failure; no source/test/threshold weakening or VEX renewal.
+Raw C:/Users/Wareen/HawEditWorkerResources-full-gate-0346500-20261014.log,
+SHA2563618f30a81f0d00a74a730973f54eb4e045fd46b2ea2e785593798372c4fbbdc.
+Unchanged external JUnit copy
+C:/Users/Wareen/HawEditWorkerResources-full-gate-0346500-20261014.xml,
+SHA256e8a58789142bf0de3306ce5716c8694aec0d87c01049a9e776b6d3ba0afa4b16.
+No whole-repo frozen-committed-SHA result: unrelated scripts dirty at start,
+unchanged hashes observed during and after run. No gate or CI pass/ledger promotion.
+
+Documentation correction: the complete tests/test_claims.py module passes
+67tests/14.76s, including the three exact failing assertions, without changing
+tests. Raw C:/Users/Wareen/HawEditWorkerResources-claims-correction-20261014.xml,
+SHA2560d0d713ca50d09a4c7a60601b0c8e0037298d42ee85365aa3a7ce4256f146f5f.
+This scoped correction is not a replacement full gate. Updated full gate and
+same-SHA CI remain required for promotion; build/VEX refusals remain unresolved.

@@ -1,0 +1,228 @@
+"""Fixed genuine CUDA-driver probe, not Torch/model/ASR or a gate result."""
+import ast
+import hashlib
+import inspect
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+repo = Path('C:/Users/Wareen/Desktop/HawEdit')
+sys.path.insert(0, str(repo / 'tests'))
+import test_rooted_controller as fixture
+
+source = inspect.getsource(fixture._controller_run)
+before = hashlib.sha256((repo / 'tests/test_rooted_controller.py').read_bytes()).hexdigest()
+
+probe = r'''
+import ctypes,json,resource
+expected=((resource.RLIMIT_AS,8*1024**3),(resource.RLIMIT_CPU,15),
+ (resource.RLIMIT_NOFILE,256),(resource.RLIMIT_CORE,0))
+assert all(resource.getrlimit(k)==(v,v) for k,v in expected)
+result={'schema':1,'status':'refused','stage':'load','code':None,'values':None}
+context=ctypes.c_void_p();memory=ctypes.c_uint64();driver=None
+def call(name,types,*values):
+ print(json.dumps({'entered':name}),flush=True)
+ result['stage']=name
+ fn=getattr(driver,name);fn.argtypes=types;fn.restype=ctypes.c_int
+ code=fn(*values);result['code']=code
+ if code:raise RuntimeError('Genuine CUDA refusal '+name+':'+str(code))
+try:
+ driver=ctypes.CDLL('/usr/lib/wsl/lib/libcuda.so.1')
+ call('cuInit',[ctypes.c_uint],0)
+ device=ctypes.c_int()
+ call('cuDeviceGet',[ctypes.POINTER(ctypes.c_int),ctypes.c_int],ctypes.byref(device),0)
+ call('cuCtxCreate_v2',[ctypes.POINTER(ctypes.c_void_p),ctypes.c_uint,ctypes.c_int],
+  ctypes.byref(context),0,device)
+ call('cuMemAlloc_v2',[ctypes.POINTER(ctypes.c_uint64),ctypes.c_size_t],
+  ctypes.byref(memory),16)
+ call('cuMemsetD32_v2',[ctypes.c_uint64,ctypes.c_uint,ctypes.c_size_t],memory,23,4)
+ actual=(ctypes.c_uint32*4)()
+ call('cuMemcpyDtoH_v2',[ctypes.c_void_p,ctypes.c_uint64,ctypes.c_size_t],actual,memory,16)
+ assert list(actual)==[23,23,23,23]
+ result['values']=list(actual);result['status']='driver_memory_roundtrip'
+except Exception as exc:
+ result['error']=str(exc)[:400]
+finally:
+ if memory.value:
+  try:call('cuMemFree_v2',[ctypes.c_uint64],memory)
+  except Exception as exc:result['status']='drain_uncertain';result['error']=str(exc)[:400]
+ if context.value:
+  try:call('cuCtxDestroy_v2',[ctypes.c_void_p],context)
+  except Exception as exc:result['status']='drain_uncertain';result['error']=str(exc)[:400]
+ print(json.dumps(result),flush=True)
+'''
+
+extension = r'''
+from hawedit.linux_worker_resources import WorkerResourceLimits
+import tempfile
+driver_root=Path('/usr/lib/wsl/drivers/nv_dispig.inf_amd64_cc526ccc3287f5cd')
+assert driver_root.is_dir(),'Recorded actual driver directory changed; no discovery fallback'
+driver_paths=[Path('/usr/lib/wsl/lib')/name for name in
+ ('libcuda.so','libcuda.so.1','libcuda.so.1.1','libdxcore.so')]
+driver_paths.extend(driver_root/name for name in
+ ('libcuda.so.1.1','libcuda_loader.so','libnvdxgdmal.so.1',
+  'libnvvamanager.so.1','libnvwgf2umx.so','libnvidia-gpucomp.so',
+  'libnvidia-nvvm.so.4','libnvidia-nvvm70.so.4','libnvidia-ptxjitcompiler.so.1'))
+driver_paths.extend(Path('/usr/lib/x86_64-linux-gnu')/name for name in
+ ('libgcc_s.so.1','libstdc++.so.6'))
+assert all(p.is_file() for p in driver_paths),'Declared real driver closure member absent'
+assert sum(p.stat().st_size for p in driver_paths)<512*1024**2,'Driver closure byte bound'
+copied=list(files)
+stage=Path('/tmp/hawedit-cuda-driver-input-gciygoqz')
+assert stage.is_dir() and stage.stat().st_uid==os.getuid()
+assert stat.S_IMODE(stage.stat().st_mode)==0o700
+assert {p.name for p in stage.iterdir()}=={'driver-'+str(i) for i in range(15)}
+for index,path in enumerate(driver_paths):
+ actual=path.resolve(strict=True);before=actual.stat();data=actual.read_bytes()
+ digest=hashlib.sha256(data).hexdigest()
+ staged=stage/('driver-'+str(index))
+ info=staged.lstat()
+ assert stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid()
+ assert stat.S_IMODE(info.st_mode)==0o400 and info.st_nlink==1
+ assert hashlib.sha256(staged.read_bytes()).hexdigest()==digest
+ after=actual.stat()
+ assert (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)==(
+  after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns)
+ assert hashlib.sha256(actual.read_bytes()).hexdigest()==digest
+ assert staged.stat().st_nlink==1 and hashlib.sha256(staged.read_bytes()).hexdigest()==digest
+ copied.append(SnapshotFile(staged,str(path).lstrip('/'),digest,
+  len(data),data.startswith(b'\x7fELF')))
+path=driver_root/'nvcubins.bin';data=path.read_bytes()
+assert path.stat().st_nlink==1 and path.stat().st_size==93590996
+copied.append(SnapshotFile(path,str(path).lstrip('/'),hashlib.sha256(data).hexdigest(),len(data)))
+files=tuple(copied);maximum=2*1024**3
+environment=(('LD_LIBRARY_PATH',str(base/'lib')+':/usr/lib/wsl/lib:'+str(driver_root)+
+ ':/usr/lib/x86_64-linux-gnu'),('CUDA_CACHE_DISABLE','1'))
+command=RootedCommand(files,executable,arguments,environment,wsl_gpu=True,
+ resources=WorkerResourceLimits(8*1024**3,15,256))
+wait_recorded=False
+def observe_actual_wait(frame,event,arg):
+ global wait_recorded
+ if os.getpid()!=1:return None
+ if (not wait_recorded and event=='exception' and frame.f_code.co_name=='poll'
+  and frame.f_code.co_filename.endswith('linux_thread_registry.py')
+  and {'tid','status','stopped','event'}<=set(frame.f_locals)):
+  wait_recorded=True
+  record={key:frame.f_locals[key] for key in ('tid','status','stopped','event')}
+  registry=frame.f_locals['self'];held=registry._tasks[record['tid']];held.inspect()
+  kernel_status=frame.f_globals['_status'](held.fd)
+  record['kernel_signal_fields']={key:kernel_status[key] for key in
+   ('SigCgt','SigIgn','SigBlk','SigPnd','ShdPnd','Pid','Tgid','PPid','TracerPid')}
+  try:
+   fd=os.open('syscall',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=held.fd)
+   try:record['kernel_syscall']=os.read(fd,4096).decode('ascii').strip()
+   finally:os.close(fd)
+   fd=os.open('maps',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=held.fd)
+   try:maps=os.read(fd,262145).decode('ascii');assert len(maps)<=262144
+   finally:os.close(fd)
+   instruction=int(record['kernel_syscall'].split()[-1],16)
+   record['instruction_mapping']=[line for line in maps.splitlines()
+    if int(line.split()[0].split('-')[0],16)<=instruction<
+     int(line.split()[0].split('-')[1],16)]
+   record['loaded_cuda_libraries']=[line.split()[-1] for line in maps.splitlines()
+    if '/usr/lib/wsl/' in line]
+  except Exception as exc:record['kernel_read_refusal']=str(exc)[:300]
+  held.inspect()
+  caller=frame.f_back
+  if caller is not None and caller.f_code.co_name=='_run' and 'output' in caller.f_locals:
+   record['collected_output']=bytes(caller.f_locals['output']).decode('utf-8','replace')[-12000:]
+  completion.send(b'HEWAIT-v1:'+json.dumps(record).encode('ascii'))
+ return observe_actual_wait
+sys.settrace(observe_actual_wait)
+'''
+
+# Generate a distinct research client while keeping every original policy/ACK/drain check.
+init = fixture.INIT
+init=init.replace('signal.alarm(12)','signal.alarm(60)')
+include_cubins='--omit-cubins' not in sys.argv
+if not include_cubins:
+ cubin="path=driver_root/'nvcubins.bin';data=path.read_bytes()\n"+\
+  "assert path.stat().st_nlink==1 and path.stat().st_size==93590996\n"+\
+  "copied.append(SnapshotFile(path,str(path).lstrip('/'),hashlib.sha256(data).hexdigest(),len(data)))\n"
+ assert extension.count(cubin)==1
+ extension=extension.replace(cubin,'')
+needle = 'command=RootedCommand(files,executable,arguments,environment)'
+assert init.count(needle)==1
+init = init.replace(needle,extension)
+source = source.replace('prefix = INIT.split(', 'prefix = CUDA_INIT.split(')
+source = source.replace('output_limit_bytes=1024','output_limit_bytes=65536')
+source = source.replace('assert select.select([scope._anchors[3]],[],[],5)[0]',
+ 'assert select.select([scope._anchors[3]],[],[],30)[0]')
+assert source.count('COMM_PROBE.replace("GPU", repr(gpu))')==1
+source = source.replace('COMM_PROBE.replace("GPU", repr(gpu))','CUDA_PROBE')
+source = source.replace(
+ "expected_tids=(2,3) if TEST_CASE in threaded else (2,)",
+ "expected_tids=result.observed_tids;assert expected_tids[0]==2 and len(expected_tids)<=64",
+)
+needle = """  assert json.loads(result.output)=={'comm':'HawEditOriginal','tid':3,
+   'entropy_errno':13 if GPU_ENABLED else 1,'device':[10,258] if GPU_ENABLED else None}"""
+assert source.count(needle)==1
+source=source.replace(needle,"  decoded=[json.loads(line) for line in result.output.splitlines()]\n"
+ "  assert decoded[-1]['schema']==1 and len(decoded)<=10\n"
+ "  assert all(set(row)=={'entered'} for row in decoded[:-1])")
+source=source.replace(' if TEST_CASE not in refusals:raise',
+ " if TEST_CASE not in refusals:\n"
+ "  completion.send(b'HEERROR-v1:'+repr((exc,exc.__cause__)).encode('utf-8','replace')[:4000])\n"
+ "  raise")
+needle=' snapshot.verify();snapshot.close()'
+assert source.count(needle)==1
+source=source.replace(needle,needle+"\n completion.send(b'HECUDA-v1:'+json.dumps({\n"
+ "  'worker':decoded[-1],'events':decoded[:-1],'exit_code':result.exit_code,\n"
+ "  'observed_tids':result.observed_tids,'reaped_tids':result.reaped_tids,\n"
+ "  'exec_count':result.exec_count}).encode('ascii'))")
+needle="assert select.select([cl],[],[],5)[0],'completion acknowledgment refused: timeout'"
+assert source.count(needle)==1
+source=source.replace(needle,"""assert select.select([cl],[],[],5)[0],'CUDA measurement timeout'
+measurement,ancillary,flags,_=cl.recvmsg(65536,socket.CMSG_SPACE(12),socket.MSG_CMSG_CLOEXEC)
+assert ancillary==[(socket.SOL_SOCKET,socket.SCM_CREDENTIALS,
+ struct.pack('3i',scope._sender_pid,scope._uid,scope._gid))]
+assert flags&~socket.MSG_CMSG_CLOEXEC==0
+print(json.dumps({'first_frame':measurement.decode('utf-8','replace'),'flags':flags,
+ 'sender_verified':True,'sender_pid':scope._sender_pid}),flush=True)
+assert measurement.startswith(b'HECUDA-v1:')
+cuda_result=json.loads(measurement[10:])
+"""+needle)
+source=source.replace('driver = DRIVER.replace(', 'driver = CUDA_DRIVER.replace(')
+source=source.replace('assert json.loads(result.stdout) == {"observed": True}',
+ 'records=[json.loads(line) for line in result.stdout.splitlines()];'
+ 'assert len(records)==2;record=records[-1];'
+ 'assert record["observed"] is True and records[0]["sender_verified"] is True;return record')
+source=source.replace('    assert getattr(result,',
+ '    print(json.dumps({"native_exit":result.exit_code,"stdout":result.stdout.decode("utf-8","replace"),"stderr":result.stderr.decode("utf-8","replace")}))\n    assert getattr(result,')
+driver=fixture.DRIVER
+driver=driver.replace('signal.alarm(12)','signal.alarm(60)')
+driver=driver.replace('  os.close(original_manager);left.close();pl.close()',
+ "  if select.select([cl],[],[],0)[0]:\n"
+ "   error,ancillary,flags,_=cl.recvmsg(4096,socket.CMSG_SPACE(12),socket.MSG_CMSG_CLOEXEC)\n"
+ "   if error:\n"
+ "    assert ancillary==[(socket.SOL_SOCKET,socket.SCM_CREDENTIALS,\n"
+ "     struct.pack('3i',scope._sender_pid,scope._uid,scope._gid))]\n"
+ "    print(json.dumps({'original_init':error.decode('utf-8','replace')}),flush=True)\n"
+ "  os.close(original_manager);left.close();pl.close()")
+assert driver.count("print(json.dumps({'observed':True}),flush=True)")==1
+driver=driver.replace("print(json.dumps({'observed':True}),flush=True)",
+ "print(json.dumps({'observed':True,'cuda':cuda_result}),flush=True)")
+namespace=dict(vars(fixture),CUDA_INIT=init,CUDA_PROBE=probe,CUDA_DRIVER=driver)
+from hawedit.native_io import run_native
+from hawedit.studio_private import PrivateDirectory
+import os
+def bounded_research_execute(root,code):
+ print(json.dumps({'driver_lines':[(i,line) for i,line in enumerate(code.splitlines(),1)
+  if 48<=i<=58 or 74<=i<=79]}),flush=True)
+ executable=Path('C:/Program Files/WSL/wsl.exe')
+ return run_native((str(executable),'--exec','/usr/bin/python3','-I','-B','-'),
+  cwd=PrivateDirectory(root/'execution',exclusive=True).path,
+  environment={'SystemRoot':os.environ.get('SYSTEMROOT','C:/Windows'),
+   'USERPROFILE':os.environ['USERPROFILE']},
+  expected_executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
+  input_bytes=code.encode('utf-8'),timeout_seconds=60,output_limit_bytes=262144)
+namespace['_execute']=bounded_research_execute
+exec(compile(ast.parse(source),__file__,'exec'),namespace)
+try:
+ with tempfile.TemporaryDirectory(prefix='HawEditCuda034-') as temporary:
+  record=namespace['_controller_run'](Path(temporary),'gpu_comm')
+ print(json.dumps({'record':record,'claim':'fixed bounded CUDA-driver research only; '
+  'not Torch/model/ASR admission or a captioned reel'},indent=2))
+finally:
+ assert hashlib.sha256((repo / 'tests/test_rooted_controller.py').read_bytes()).hexdigest()==before
