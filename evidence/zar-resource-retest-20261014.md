@@ -30,3 +30,14 @@ see copied-cuda-required-kernel-data-20261014.md. PA2 full closure/resources,
 PA3 host checkpoints and PA4 protected builder/ID-only integration still open.
 Current qualified independent VEX remains required before model release (#24).
 Do not show a historical source-only technical preview as this result.
+
+After the corrected CUDA probe and evidence-only commit
+413fae0e319a81e7a6898e3bf8faed8b1219bd09, repeat the same real-source command:
+both streams fully decode again,57845frames/no errors/drops/duplicates. Observed
+decode4.55441109999083s, not ASR performance. Package remainsab8b4c0b...;
+current-source receipt still refuses. Raw
+C:/Users/Wareen/HawEditZAR-after-CUDA-fix-413fae0-20261014.json,
+SHA256beb87653c1f38fea8abd567e246ce0f19722f53dd77452d1a3adc5ecfc488eac.
+CUDA fix did not produce or authorize a transcript/captioned reel. No model,
+cloud, spending or publication calls; full protected producer/checkpoints still
+unimplemented. A driver-memory diagnostic is not a replacement pipeline.
