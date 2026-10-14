@@ -7,7 +7,15 @@ environment/model asset digests and independent VEX. Run existing model-fetch,
 model-store, registry, environment, diarization and claims regressions and the
 canonical gate. Preserve actual gated metadata/invalid-hash refusal cases.
 
-No source edits are approved or performed. Any required source change requires
-actual Serena symbol/reference mapping, caller coverage and a separate approved
-extension before implementation. Existing verified fetcher cannot be bypassed
+The legacy negative test currently reads the checked-in blocked row. Preserve
+its strict assertion using the same historical blocked data in a real temporary
+metadata root, and separately cover newly measured verified metadata. Existing
+test_tracked_integrity_manifest_covers_every_weight_repository already validates
+either blocked or verified schemas. Map both actual test definitions/references
+and the model-store consumers with Serena before edits under the approved plan.
+
+No production source edits are proposed or performed; the pending plan includes
+only the strict test-input transition above. Any additional production source
+change requires actual Serena symbol/reference mapping, caller coverage and a
+separate approved extension before implementation. Existing fetcher cannot be bypassed
 by an ad hoc external manifest, SDK environment override or guessed digest.

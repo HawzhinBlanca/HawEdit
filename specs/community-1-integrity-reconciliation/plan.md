@@ -13,6 +13,11 @@ licence, secret, VEX date/binding, golden/fixture or gate changes are authorized
 2. Under the explicit exception, replace only the five unavailable hash fields
    with measured SHA256 identities and replace the row's blocked status/reason
    using the existing integrity schema. Preserve all other model rows verbatim.
+   Preserve test_gated_checkpoint_with_redacted_digests_is_refused_not_approximated
+   with the same strict blocked/redacted assertion, selecting a real temporary
+   manifest containing the historical blocked row instead of assuming current
+   remote access remains denied. Add a separate measured verified-row regression.
+   No mocked validator, assertion weakening, golden/fixture or harness change.
 3. Verify an existing audited environment with the exact download client and
    required models profile. Reuse it only through secure original host transport
    and the existing pinned staged fetcher. If its profile fails, retain refusal;
@@ -31,3 +36,7 @@ Log C:/Users/Wareen/HawEditCommunity1-existing-gpu-models-audit-20261014.log,
 SHA25614b8ac3efe2e1e37de34e20047f5fe68361c13cf41cb3082c44760a2b2480be1.
 No installation is needed for this candidate downloader. It does not authorize
 the protected integrity-row exception, actual model execution or ASR readiness.
+Candidate exact command after approval and manifest reconciliation:
+`.venv-gpu/Scripts/python.exe -m hawedit.model_fetch pyannote/speaker-diarization-community-1`.
+The current approved download attempt did not bypass the blocked manifest or fetch
+any weight bytes. This plan's Approved-by line remains pending.

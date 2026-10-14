@@ -15,6 +15,7 @@ test_download_client_refuses_transitive_profile_drift_before_import;
 test_happy_download_verifies_then_publishes_without_a_partial_final;
 test_final_published_path_is_reverified_and_invalid_bytes_are_preserved.
 These are existing automated controls, not evidence of current real provisioning.
-Any regression relying on the old checked-in blocked state needs an approved
-strict test-contract extension, preserving redacted-metadata refusal and adding
-actual pinned verified-provisioning coverage. Do not weaken or silently change it.
+The pending plan explicitly includes a strict test-input transition for the
+legacy negative case, preserving its redacted-metadata refusal assertion while
+adding measured verified-row coverage. Map symbols before editing after approval;
+do not weaken the assertion, modify a golden/fixture or bypass the validator.
