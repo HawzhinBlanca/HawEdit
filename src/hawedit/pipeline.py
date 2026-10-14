@@ -182,6 +182,7 @@ from hawedit.reframe import (
     detect_rapid_speaker_exchange,
     layout_policy,
     median_face_box,
+    per_shot_face_boxes,
     probe_first_frame_face,
     stabilize,
     validate_speaker_focus_points,
@@ -1743,6 +1744,7 @@ class _CameraResolution:
     face_center_y: int | None = None
     face_height: int | None = None
     speaker_turns: tuple[Segment, ...] = ()
+    per_shot_boxes: tuple[tuple[int, int, int | None, int | None], ...] = ()
 
 
 def _accepts_shot_cuts(method: Callable[..., object]) -> bool:
@@ -1908,6 +1910,12 @@ def _resolve_camera(
                 )
             if raw_focus:
                 face_center_y, face_height = median_face_box(raw_focus)
+                per_shot = per_shot_face_boxes(
+                    raw_focus,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    clip_in_ms=boundary.final_in_ms,
+                    clip_out_ms=boundary.final_out_ms,
+                )
                 dimensions = proxy_dimensions(source, ffmpeg)
                 return _CameraResolution(
                     mode=Reframe.FACE_TRACKED,
@@ -1921,6 +1929,7 @@ def _resolve_camera(
                     source_dimensions=dimensions,
                     face_center_y=face_center_y,
                     face_height=face_height,
+                    per_shot_boxes=per_shot,
                     speaker_turns=turns,
                 )
             if profile in ("production", "deliverable"):
@@ -2420,7 +2429,12 @@ def _render_episode_single_clip(
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
                 keyword_emphasis=keyword_emphasis,
-                margin_v=(440 if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO else None),
+                margin_v=(
+                    480
+                    if resolved_caption_style
+                    in (CaptionStyle.BROADCAST_STUDIO, CaptionStyle.KINETIC_POP)
+                    else None
+                ),
             ),
         )
         expected_caption_text = " ".join(s.text for s in render_selected)
@@ -2455,6 +2469,7 @@ def _render_episode_single_clip(
             for_review=is_review_render,
             assembly_spans=assembly_spans,
             plan=visual_edit_plan,
+            per_shot_boxes=camera.per_shot_boxes,
         )
 
         if rendered.loudness_pass1 is not None:
@@ -4485,6 +4500,7 @@ def run_pipeline(
             for_review=is_review_render,
             assembly_spans=assembly_spans,
             plan=visual_edit_plan,
+            per_shot_boxes=camera.per_shot_boxes,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
         if current_render_request() != render_request_sha256:

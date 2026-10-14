@@ -16336,3 +16336,18 @@ EOF handoff, add generic callback/executable admission or switch to the legacy
 unprotected subprocess. Controlled backend tests establish protocol parity,
 not Sorani accuracy. No new dependency, licence or spending authority.
 
+---
+
+## D-330 · Per-shot adaptive vertical framing across camera cuts
+
+**Date:** 2026-10-14 · **Blueprint ref:** §3 Stage 6, §4.3.6 · **Type:** deviation from one-placement rule (reframe.median_face_box)
+
+`reframe.median_face_box` originally enforced a strict "one placement for the whole clip" rule to prevent vertical camera shimmer during continuous podcast table dialogue. However, real multi-camera footage (e.g., episode 29) cuts between intimate close-ups (speaker face ~320px) and wide studio shots (speaker face ~140px, showing extensive empty table and chair legs). A single global median causes close-up dimensions to dominate, leaving wide shots without zoom and visually awkward in a 9:16 vertical crop.
+
+D-330 introduces per-shot adaptive framing:
+1. `reframe.per_shot_face_boxes` computes median `(center_y, face_height)` per camera cut interval defined by `shot_cuts_ms`.
+2. Within each camera shot, vertical position and zoom remain strictly stable (no intra-shot shimmer).
+3. At camera cuts, `render.crop_filter` switches crop dimensions via ffmpeg `sendcmd` (using the same proven mechanism as dynamic punch-ins) and steps the target eye line to the new shot's composition line, respecting `MAX_VERTICAL_ZOOM = 1.5`.
+
+**Measurement:** Tested in `tests/test_render.py` and `tests/test_reframe.py`. Backward compatibility verified for single-shot clips without camera cuts.
+

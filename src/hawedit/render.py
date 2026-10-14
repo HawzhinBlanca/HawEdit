@@ -984,6 +984,7 @@ def crop_filter(
     face_center_y: int | None = None,
     face_height: int | None = None,
     punch_ins: Sequence[tuple[int, float]] = (),
+    per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = (),
     lanczos: bool = False,
     unsharp: bool = False,
     target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
@@ -1003,58 +1004,56 @@ def crop_filter(
         unsharp: apply light luma unsharp sharpening post-scaling (Task T2.10).
         target_face_height_share: target face proportion for vertical framing composition.
         max_vertical_zoom: maximum upscale zoom allowed when tightening crop.
+        per_shot_boxes: (start_ms, end_ms, center_y, face_height) per camera shot interval (D-330).
 
     Raises:
         ValueError: the source is smaller than the crop it would need.
     """
-    crop_w, crop_h = vertical_crop_size(source_width, source_height, target_width, target_height)
-    # Before the horizontal expression is built, because every clamp in it is against `crop_w`
-    # and a tightened crop has a different one.
+    base_crop_w, base_crop_h = vertical_crop_size(
+        source_width, source_height, target_width, target_height
+    )
+
+    init_face_y = (
+        per_shot_boxes[0][2]
+        if (per_shot_boxes and per_shot_boxes[0][2] is not None)
+        else face_center_y
+    )
+    init_face_h = (
+        per_shot_boxes[0][3]
+        if (per_shot_boxes and per_shot_boxes[0][3] is not None)
+        else face_height
+    )
     crop_w, crop_h, y = vertical_framing(
         source_height,
-        crop_w,
-        crop_h,
-        face_center_y,
-        face_height,
+        base_crop_w,
+        base_crop_h,
+        init_face_y,
+        init_face_h,
         target_face_height_share=target_face_height_share,
         max_vertical_zoom=max_vertical_zoom,
     )
 
-    if focus_points:
-        ordered = sorted(focus_points)
-        positions = [
-            max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
-        ]
-        times = [(at_ms - clip_in_ms) / 1000 for at_ms, _ in ordered]
-        # Interpolated, not stepped. A straight line between neighbouring keyframes is a pan;
-        # a step between them is a glitch. `reframe.stabilize` supplies equal-valued neighbours
-        # for the holds, so this sits still wherever the camera is meant to sit still.
-        x: int | str = _interpolated(
-            list(zip(times, positions, strict=True)),
-            (source_width - crop_w) // 2,
-        )
-    elif focus_x is None:
-        x = (source_width - crop_w) // 2
-    else:
-        # Clamp rather than raise: a face detector reporting a centre near the frame edge is
-        # correct about the face and merely asking for a crop that does not fit. Sliding it
-        # into frame keeps the subject; refusing would drop the clip.
-        x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
-
     scale_flags = ":flags=lanczos" if lanczos else ""
     unsharp_filter = ",unsharp=5:5:0.5:5:5:0.0" if unsharp else ""
+    scale_part = f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
 
-    if not punch_ins:
-        scale_part = f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
+    if not punch_ins and len(per_shot_boxes) <= 1:
+        if focus_points:
+            ordered = sorted(focus_points)
+            positions = [
+                max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
+            ]
+            times = [(at_ms - clip_in_ms) / 1000 for at_ms, _ in ordered]
+            x: int | str = _interpolated(
+                list(zip(times, positions, strict=True)),
+                (source_width - crop_w) // 2,
+            )
+        elif focus_x is None:
+            x = (source_width - crop_w) // 2
+        else:
+            x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
         return f"crop={crop_w}:{crop_h}:{x}:{y},{scale_part}"
 
-    # A punch-in changes the crop *size*, and ffmpeg evaluates `w`/`h` once at configuration —
-    # only `x`/`y` are per-frame. So the size changes by command rather than by expression: all
-    # four of crop's options carry the `T` flag, and that was proven on real footage before being
-    # designed around, the way D-249 learned to with `-crf`.
-    #
-    # `x` and `y` are rewritten in terms of ffmpeg's own `out_w`/`out_h` so the crop re-centres
-    # itself the instant its size changes.
     centre_x: int | str = (
         _interpolated(
             [((at_ms - clip_in_ms) / 1000, centre) for at_ms, centre in focus_points],
@@ -1064,22 +1063,71 @@ def crop_filter(
         else (source_width // 2 if focus_x is None else focus_x)
     )
     x_expr = f"min(max({centre_x}-out_w/2\\,0)\\,in_w-out_w)"
-    if face_center_y is not None:
-        y_expr = f"min(max({face_center_y}-{FACE_COMPOSITION_LINE}*out_h\\,0)\\,in_h-out_h)"
+
+    shot_dims: list[tuple[int, int, int]] = []
+    if per_shot_boxes:
+        for _s_in, _s_out, s_y, s_h in per_shot_boxes:
+            eff_y = s_y if s_y is not None else face_center_y
+            eff_h = s_h if s_h is not None else face_height
+            sw, sh, _ = vertical_framing(
+                source_height,
+                base_crop_w,
+                base_crop_h,
+                eff_y,
+                eff_h,
+                target_face_height_share=target_face_height_share,
+                max_vertical_zoom=max_vertical_zoom,
+            )
+            shot_dims.append((sw, sh, eff_y if eff_y is not None else source_height // 2))
+    else:
+        shot_dims.append(
+            (crop_w, crop_h, face_center_y if face_center_y is not None else source_height // 2)
+        )
+
+    if len(shot_dims) > 1 and len({d[2] for d in shot_dims}) > 1:
+        expr = str(shot_dims[-1][2])
+        for idx in range(len(shot_dims) - 2, -1, -1):
+            cut_t = max(0.0, (per_shot_boxes[idx + 1][0] - clip_in_ms) / 1000.0)
+            expr = f"if(lt(t\\,{cut_t:.3f})\\,{shot_dims[idx][2]}\\,{expr})"
+        y_center_expr = expr
+    else:
+        y_center_expr = str(shot_dims[0][2])
+
+    if face_center_y is not None or (per_shot_boxes and per_shot_boxes[0][2] is not None):
+        y_expr = f"min(max({y_center_expr}-{FACE_COMPOSITION_LINE}*out_h\\,0)\\,in_h-out_h)"
     else:
         centre_y = source_height // 2
         y_expr = f"min(max({centre_y}-out_h/2\\,0)\\,in_h-out_h)"
 
+    commands_dict: dict[int, tuple[int, int]] = {}
+
+    if len(per_shot_boxes) > 1:
+        for idx in range(1, len(per_shot_boxes)):
+            cut_ms = max(0, per_shot_boxes[idx][0] - clip_in_ms)
+            commands_dict[cut_ms] = (shot_dims[idx][0], shot_dims[idx][1])
+
+    for at_ms, factor in punch_ins:
+        covering_idx = 0
+        if per_shot_boxes:
+            for s_idx, (s_in, s_out, _, _) in enumerate(per_shot_boxes):
+                if s_in - clip_in_ms <= at_ms < s_out - clip_in_ms:
+                    covering_idx = s_idx
+                    break
+                covering_idx = s_idx
+        base_w, base_h, _ = shot_dims[covering_idx]
+        pw = max(2, int(base_w / factor)) // 2 * 2
+        ph = max(2, int(base_h / factor)) // 2 * 2
+        commands_dict[at_ms] = (pw, ph)
+
+    sorted_cmds = sorted(commands_dict.items(), key=lambda item: item[0])
     commands = ";".join(
-        f"{at_ms / 1000:.3f} crop w {max(2, int(crop_w / factor)) // 2 * 2};"
-        f"{at_ms / 1000:.3f} crop h {max(2, int(crop_h / factor)) // 2 * 2}"
-        for at_ms, factor in punch_ins
+        f"{at_ms / 1000:.3f} crop w {w};{at_ms / 1000:.3f} crop h {h}"
+        for at_ms, (w, h) in sorted_cmds
+        if at_ms > 0
     )
-    return (
-        f"sendcmd=c='{commands}',"
-        f"crop={crop_w}:{crop_h}:{x_expr}:{y_expr},"
-        f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
-    )
+
+    sendcmd_part = f"sendcmd=c='{commands}'," if commands else ""
+    return f"{sendcmd_part}crop={crop_w}:{crop_h}:{x_expr}:{y_expr},{scale_part}"
 
 
 def blurred_fill_filter(
@@ -1415,6 +1463,7 @@ def render_clip(
     for_review: bool = False,
     assembly_spans: Sequence[AssemblySpan] | None = None,
     plan: VisualEditPlan | None = None,
+    per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = (),
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1577,6 +1626,7 @@ def render_clip(
             face_center_y=face_center_y,
             face_height=face_height,
             punch_ins=punch_ins,
+            per_shot_boxes=per_shot_boxes,
             clip_in_ms=clip.in_ms,
             lanczos=deliverable,
             unsharp=deliverable,

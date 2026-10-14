@@ -30,6 +30,8 @@ __all__ = [
     "compute_two_person_split_crops",
     "detect_rapid_speaker_exchange",
     "layout_policy",
+    "median_face_box",
+    "per_shot_face_boxes",
     "probe_first_frame_face",
     "stabilize",
     "validate_speaker_focus_points",
@@ -890,6 +892,48 @@ def median_face_box(points: Sequence[FocusPoint]) -> tuple[int | None, int | Non
     if not verticals or not heights:
         return None, None
     return verticals[len(verticals) // 2], heights[len(heights) // 2]
+
+
+def per_shot_face_boxes(
+    points: Sequence[FocusPoint],
+    shot_cuts_ms: Sequence[int] = (),
+    clip_in_ms: int = 0,
+    clip_out_ms: int | None = None,
+) -> tuple[tuple[int, int, int | None, int | None], ...]:
+    """Compute (start_ms, end_ms, center_y, face_height) per camera shot interval.
+
+    When shot_cuts_ms is empty, returns a single interval for the whole clip.
+    When camera cuts exist within the clip, each shot gets its own median face box,
+    enabling adaptive zoom on wide shots without vertical shimmer within shots. D-281.
+    """
+    if not points:
+        end_ms = clip_out_ms if clip_out_ms is not None else clip_in_ms
+        return ((clip_in_ms, end_ms, None, None),)
+
+    end_ms = clip_out_ms if clip_out_ms is not None else max(p.at_ms for p in points)
+    global_y, global_h = median_face_box(points)
+
+    cuts_in_range = sorted(c for c in shot_cuts_ms if clip_in_ms < c < end_ms)
+    if not cuts_in_range:
+        return ((clip_in_ms, end_ms, global_y, global_h),)
+
+    boundaries = [clip_in_ms, *cuts_in_range, end_ms]
+    results: list[tuple[int, int, int | None, int | None]] = []
+    for s_in, s_out in pairwise(boundaries):
+        shot_pts = [p for p in points if s_in <= p.at_ms < s_out]
+        if shot_pts:
+            s_y, s_h = median_face_box(shot_pts)
+            results.append(
+                (
+                    s_in,
+                    s_out,
+                    s_y if s_y is not None else global_y,
+                    s_h if s_h is not None else global_h,
+                )
+            )
+        else:
+            results.append((s_in, s_out, global_y, global_h))
+    return tuple(results)
 
 
 def stabilize(

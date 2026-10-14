@@ -18,6 +18,7 @@ from hawedit.reframe import (
     choose_face,
     layout_policy,
     median_face_box,
+    per_shot_face_boxes,
     probe_first_frame_face,
     stabilize,
     validate_speaker_focus_points,
@@ -426,6 +427,37 @@ def test_a_focus_point_cannot_claim_a_face_of_no_height() -> None:
     that reported it would zoom straight to the cap instead of being refused at the door."""
     with pytest.raises(ValueError, match="face height cannot be zero"):
         FocusPoint(0, 500, 360, 0)
+
+
+def test_per_shot_face_boxes_without_cuts() -> None:
+    """When shot_cuts_ms is empty, returns single span matching median_face_box."""
+    track = (
+        FocusPoint(0, 500, 360, 300),
+        FocusPoint(500, 510, 370, 310),
+    )
+    boxes = per_shot_face_boxes(track, shot_cuts_ms=(), clip_in_ms=0, clip_out_ms=1000)
+    assert len(boxes) == 1
+    assert boxes[0] == (0, 1000, 370, 310)
+
+
+def test_per_shot_face_boxes_with_camera_cuts() -> None:
+    """Computes distinct median face boxes per camera cut for adaptive framing."""
+    track = (
+        FocusPoint(0, 500, 360, 300),  # Shot 0 (close-up)
+        FocusPoint(2000, 500, 365, 305),
+        FocusPoint(4000, 500, 360, 295),
+        FocusPoint(6000, 500, 480, 150),  # Shot 1 (wide shot)
+        FocusPoint(8000, 500, 485, 155),
+    )
+    boxes = per_shot_face_boxes(track, shot_cuts_ms=(5000,), clip_in_ms=0, clip_out_ms=10000)
+    assert len(boxes) == 2
+    assert boxes[0] == (0, 5000, 360, 300)  # close-up median
+    assert boxes[1] == (5000, 10000, 485, 155)  # wide shot median (smaller face)
+
+
+def test_per_shot_face_boxes_empty_track() -> None:
+    """Empty points track returns (None, None)."""
+    assert per_shot_face_boxes((), clip_in_ms=0, clip_out_ms=2000) == ((0, 2000, None, None),)
 
 
 def test_stabilize_steps_instantaneously_at_shot_cuts_without_panning() -> None:

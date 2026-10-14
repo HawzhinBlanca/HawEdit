@@ -254,24 +254,54 @@ class GeminiStoryEvaluator:
             .get("text", "{}")
         )
         parsed = json.loads(text_content)
+        if not isinstance(parsed, dict):
+            raise StoryCondensationError("Gemini evaluation response must be a JSON object")
+
+        req_keys = (
+            "headline_kurdish",
+            "summary_kurdish",
+            "virality_score",
+            "core_topic",
+            "sentences",
+        )
+        for req_key in req_keys:
+            if req_key not in parsed or parsed[req_key] is None:
+                raise StoryCondensationError(
+                    f"Gemini evaluation response missing required field: {req_key}"
+                )
+
+        raw_sentences = parsed["sentences"]
+        if not isinstance(raw_sentences, list) or not raw_sentences:
+            raise StoryCondensationError(
+                "Gemini evaluation response missing non-empty sentences list"
+            )
 
         evals: list[SentenceEvaluation] = []
-        for s_data in parsed.get("sentences", []):
+        for s_data in raw_sentences:
+            if not isinstance(s_data, dict):
+                raise StoryCondensationError(
+                    "Each sentence item in evaluation must be a JSON object"
+                )
+            for s_key in ("index", "narrative_role", "importance_score", "keep"):
+                if s_key not in s_data or s_data[s_key] is None:
+                    raise StoryCondensationError(
+                        f"Sentence evaluation missing required field: {s_key}"
+                    )
             evals.append(
                 SentenceEvaluation(
-                    index=int(s_data.get("index", 0)),
-                    narrative_role=str(s_data.get("narrative_role", "setup")),
-                    importance_score=float(s_data.get("importance_score", 0.5)),
-                    keep=bool(s_data.get("keep", True)),
+                    index=int(s_data["index"]),
+                    narrative_role=str(s_data["narrative_role"]),
+                    importance_score=float(s_data["importance_score"]),
+                    keep=bool(s_data["keep"]),
                     reason=str(s_data.get("reason", "")),
                 )
             )
 
         return StoryEvaluationResult(
-            headline_kurdish=str(parsed.get("headline_kurdish", "پوختەی چیڕۆکەکە")),
-            summary_kurdish=str(parsed.get("summary_kurdish", "کورتەی بەسەرهاتی هەڵبژێردراو.")),
-            virality_score=float(parsed.get("virality_score", 85.0)),
-            core_topic=str(parsed.get("core_topic", "بەسەرهاتی سەرەکی")),
+            headline_kurdish=str(parsed["headline_kurdish"]),
+            summary_kurdish=str(parsed["summary_kurdish"]),
+            virality_score=float(parsed["virality_score"]),
+            core_topic=str(parsed["core_topic"]),
             sentence_evaluations=tuple(evals),
             evaluator_name=self.name,
         )
@@ -568,8 +598,11 @@ def _condense_story_with_evaluator(
     for i, s in enumerate(sentences):
         dur = s.end_ms - s.start_ms
         ev = eval_by_idx.get(i)
-        imp = ev.importance_score if ev else _calculate_sentence_importance(s, i, total_sentences)
-        scored_sentences.append((i, imp, dur))
+        if ev is None:
+            raise StoryCondensationError(
+                f"Story evaluator {evaluator.name} missing evaluation for sentence index {i}"
+            )
+        scored_sentences.append((i, ev.importance_score, dur))
 
     # Initial keep set: start with recommended sentences
     initial_keep = {

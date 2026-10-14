@@ -182,6 +182,12 @@ def test_check_narrative_integrity() -> None:
     assert passed is False
     assert any("duration 10.0s is below 25s" in d for d in defects)
 
+    # CRIT-3: 24.79s unrounded floor stops false-pass rounding
+    borderline_plan = _make_dummy_story_plan(duration_ms=24_790)
+    passed_b, defects_b = check_narrative_integrity(borderline_plan)
+    assert passed_b is False
+    assert any("duration 24.8s is below 25s" in d for d in defects_b)
+
 
 def test_check_face_presence_missing_and_corrupt_file(tmp_path: Path) -> None:
     """Missing or unopenable video file fails immediately reporting explicit failure."""

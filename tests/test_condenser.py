@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from collections.abc import Sequence
 
 import pytest
 
@@ -522,6 +523,112 @@ def test_gemini_story_evaluator_success() -> None:
     assert res.sentence_evaluations[0].keep is True
     assert res.sentence_evaluations[1].keep is False
     assert res.sentence_evaluations[2].keep is True
+
+
+def test_gemini_story_evaluator_missing_fields_raises_fail_stop() -> None:
+    """GeminiStoryEvaluator raises StoryCondensationError on missing fields (zero defaults)."""
+    s0 = _make_sentence([_make_word("تست", 0, 1000)])
+
+    # Missing virality_score
+    resp_no_virality = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {
+                                    "headline_kurdish": "سەردێڕ",
+                                    "summary_kurdish": "پوختە",
+                                    "core_topic": "تەوەر",
+                                    "sentences": [
+                                        {
+                                            "index": 0,
+                                            "narrative_role": "hook",
+                                            "importance_score": 0.9,
+                                            "keep": True,
+                                        }
+                                    ],
+                                }
+                            )
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    evaluator = GeminiStoryEvaluator(
+        api_key="mock-key",
+        transport=lambda req: json.dumps(resp_no_virality).encode("utf-8"),
+    )
+    with pytest.raises(StoryCondensationError, match="virality_score"):
+        evaluator.evaluate_story((s0,))
+
+    # Missing sentences
+    resp_no_sentences = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {
+                                    "headline_kurdish": "سەردێڕ",
+                                    "summary_kurdish": "پوختە",
+                                    "virality_score": 85.0,
+                                    "core_topic": "تەوەر",
+                                }
+                            )
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    evaluator2 = GeminiStoryEvaluator(
+        api_key="mock-key",
+        transport=lambda req: json.dumps(resp_no_sentences).encode("utf-8"),
+    )
+    with pytest.raises(StoryCondensationError, match="sentences"):
+        evaluator2.evaluate_story((s0,))
+
+
+def test_condense_story_evaluator_incomplete_sentences_raises() -> None:
+    """condense_story raises StoryCondensationError if evaluator omits any sentence."""
+    s0 = _make_sentence([_make_word("یەک", 0, 5000)])
+    s1 = _make_sentence([_make_word("دوو", 5100, 10000)])
+
+    # Evaluator only evaluated sentence 0, omitted sentence 1
+    incomplete_resp = StoryEvaluationResult(
+        headline_kurdish="سەردێڕ",
+        summary_kurdish="پوختە",
+        virality_score=80.0,
+        core_topic="تەوەر",
+        sentence_evaluations=(
+            SentenceEvaluation(index=0, narrative_role="hook", importance_score=0.9, keep=True),
+        ),
+        evaluator_name="test",
+    )
+
+    class IncompleteEvaluator:
+        name = "incomplete"
+
+        def evaluate_story(
+            self,
+            sentences: Sequence[Sentence],
+            *,
+            target_duration_ms: int = 50_000,
+        ) -> StoryEvaluationResult:
+            return incomplete_resp
+
+    with pytest.raises(StoryCondensationError, match="missing evaluation for sentence index 1"):
+        condense_story(
+            (s0, s1),
+            target_duration_ms=8000,
+            min_duration_ms=4000,
+            max_duration_ms=10000,
+            evaluator=IncompleteEvaluator(),
+        )
 
 
 def test_jev_story_evaluator_missing_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

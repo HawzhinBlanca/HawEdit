@@ -72,7 +72,7 @@ class QualityAuditReport:
 
 
 def check_subtitles(
-    ass_path: Path | str, video_duration_ms: int = 0
+    ass_path: Path | str, video_duration_ms: int = 0, min_margin_v: int = 240
 ) -> tuple[bool, int, int, int, tuple[str, ...]]:
     """Inspect ASS subtitle file for font size, character length, and safe margin.
 
@@ -106,8 +106,10 @@ def check_subtitles(
 
     if font_size < 100:
         defects.append(f"Font size {font_size}pt is below minimum 100pt legibility standard.")
-    if margin_v < 240:
-        defects.append(f"MarginV {margin_v}px is below safe margin 240px (at risk of UI overlap).")
+    if margin_v < min_margin_v:
+        defects.append(
+            f"MarginV {margin_v}px is below safe margin {min_margin_v}px (at risk of UI overlap)."
+        )
     if border_style != 3 and outline < 3.0:
         defects.append(
             f"Subtitle outline {outline:g}px with border_style {border_style} is below the "
@@ -219,11 +221,10 @@ def check_face_presence(
     video_path: Path | str,
     shot_timestamps_s: Sequence[tuple[float, float]],
     broll_intervals_s: Sequence[tuple[float, float]] = (),
+    min_face_height_share: float = 0.08,
 ) -> tuple[bool, dict[str, int], tuple[str, ...]]:
-    """Sample frames from each shot cut to verify speaker presence (zero dead frames).
-
-    Samples multiple timestamps (20%, 50%, 80%) per shot to account for momentary head turns,
-    skipping intentional B-roll / archival document cutaways.
+    """Sample frames from each shot cut to verify speaker presence (zero dead frames)
+    and composition quality (face height share and eye line headroom). D-330, CRIT-3.
     """
     import cv2
 
@@ -268,34 +269,49 @@ def check_face_presence(
                 valid_sample_times = sample_times  # Fallback if entirely covered
 
             sample_counts: list[int] = []
+            sample_face_shares: list[float] = []
             for sample_t in valid_sample_times:
                 frame_num = int(sample_t * fps)
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
                 ret, frame = cap.read()
                 if not ret or frame is None:
                     sample_counts.append(0)
+                    sample_face_shares.append(0.0)
                     continue
 
+                frame_h = frame.shape[0]
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 faces = detector.detectMultiScale(
                     gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                 )
-                count = len(faces)
-                if count == 0 and profile_detector is not None:
+                detected_boxes: list[tuple[int, int, int, int]] = [
+                    (int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in faces
+                ]
+                if not detected_boxes and profile_detector is not None:
                     p_faces = profile_detector.detectMultiScale(
                         gray, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                     )
-                    count = len(p_faces)
-                    if count == 0:
+                    detected_boxes = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in p_faces]
+                    if not detected_boxes:
                         flipped = cv2.flip(gray, 1)
                         p_faces_flipped = profile_detector.detectMultiScale(
                             flipped, scaleFactor=1.1, minNeighbors=3, minSize=(50, 50)
                         )
-                        count = len(p_faces_flipped)
+                        detected_boxes = [
+                            (int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in p_faces_flipped
+                        ]
+
+                count = len(detected_boxes)
                 sample_counts.append(count)
+                if detected_boxes:
+                    max_h = max(h for _, _, _, h in detected_boxes)
+                    sample_face_shares.append(max_h / frame_h)
+                else:
+                    sample_face_shares.append(0.0)
 
             # CD-10: Reject if all samples in shot have 0 faces, or consecutive have 0 faces
             faces_per_shot[shot_key] = max(sample_counts) if sample_counts else 0
+            shot_max_share = max(sample_face_shares) if sample_face_shares else 0.0
             zero_indices = [i for i, c in enumerate(sample_counts) if c == 0]
             has_consecutive_zeros = any(i2 == i1 + 1 for i1, i2 in pairwise(zero_indices))
             if all(c == 0 for c in sample_counts) or (
@@ -306,6 +322,11 @@ def check_face_presence(
                 defects.append(
                     f"Dead Frame Detected: Shot {shot_key} contains 0 detected faces in "
                     f"dialogue crop at {zt_str}."
+                )
+            elif shot_max_share < min_face_height_share:
+                defects.append(
+                    f"Framing Defect: Shot {shot_key} max face height share {shot_max_share:.1%} "
+                    f"is below floor {min_face_height_share:.1%}."
                 )
     finally:
         cap.release()
@@ -325,9 +346,9 @@ def check_narrative_integrity(
         defects.append("Story headline is empty.")
     if not plan.summary.summary_kurdish.strip():
         defects.append("Story narrative summary is empty.")
-    if round(dur_s) < 25:
+    if dur_s < 25.0:
         defects.append(
-            f"Condensed duration {dur_s:.1f}s is below 25s (too brief for complete story)."
+            f"Condensed duration {dur_s:.1f}s is below 25s (25.0s floor, too brief for story)."
         )
     if dur_s > 65.0:
         defects.append(f"Condensed duration {dur_s:.1f}s exceeds 65s (exceeds social reel bounds).")

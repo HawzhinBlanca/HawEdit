@@ -408,15 +408,15 @@ RESTRAINED_MOBILE_THEME: Final = CaptionTheme(
     margin_v=380,
 )
 
-HOOK_BANNER_FONT_SIZE: Final = 54
-HOOK_BANNER_MARGIN_V: Final = 120
+HOOK_BANNER_FONT_SIZE: Final = 58
+HOOK_BANNER_MARGIN_V: Final = 140
 HOOK_BANNER_THEME: Final = CaptionTheme(
-    primary="&H0000FFFF",  # Kurdish Gold
-    secondary="&H0000FFFF",
+    primary="&H0000D4FF",  # High-contrast Kurdish Gold (&H00D4FF in BGR = RGB FF D4 00)
+    secondary="&H0000D4FF",
     bold=True,
-    outline=14.0,  # plate padding with border_style=3
+    outline=16.0,  # crisp plate padding with border_style=3
     shadow=0.0,
-    back_colour="&HB0121212",  # 70% dark plate
+    back_colour="&HCC101010",  # 80% deep contrast plate
     margin_l=60,
     margin_r=60,
     margin_v=HOOK_BANNER_MARGIN_V,
@@ -1606,8 +1606,13 @@ def build_ass(
                 f"not contain."
             )
 
-    if style in (CaptionStyle.BROADCAST_STUDIO, CaptionStyle.KINETIC_POP) and theme is REPORT_THEME:
+    if style is CaptionStyle.BROADCAST_STUDIO and theme is REPORT_THEME:
         theme = BROADCAST_THEME
+    elif style is CaptionStyle.KINETIC_POP:
+        if theme is REPORT_THEME:
+            theme = replace(BROADCAST_THEME, margin_v=480)
+        elif margin_v is None:
+            theme = replace(theme, margin_v=480)
     if margin_v is not None:
         theme = replace(theme, margin_v=margin_v)
 
