@@ -57,7 +57,7 @@ def _integer(value: object, field: str, index: int) -> int:
 MIN_FREE_GPU_GIB_ENV = "HAWEDIT_ASR_MIN_FREE_GPU_GIB"
 # Judgment, not a measurement (D-331): an idle 24 GiB card passes, a card the omniasr :8000
 # server holds (~14.6 GB) does not. The T0 hardware run must replace it with the measured peak.
-_DEFAULT_MIN_FREE_GPU_GIB = 20.0
+DEFAULT_MIN_FREE_GPU_GIB = 20.0
 
 
 def assert_gpu_headroom(
@@ -67,7 +67,7 @@ def assert_gpu_headroom(
 ) -> None:
     """Halt before loading anything when another process holds a Stage 1 GPU (D-260)."""
     try:
-        need_gib = float(environ.get(MIN_FREE_GPU_GIB_ENV, _DEFAULT_MIN_FREE_GPU_GIB))
+        need_gib = float(environ.get(MIN_FREE_GPU_GIB_ENV, DEFAULT_MIN_FREE_GPU_GIB))
     except ValueError as exc:
         raise ValueError(f"{MIN_FREE_GPU_GIB_ENV} must be a number of GiB") from exc
     for device in sorted(set(devices)):

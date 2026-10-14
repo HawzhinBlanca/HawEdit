@@ -517,9 +517,18 @@ class SegmentConfidence:
     # compatibility with artifacts produced before the CTC hypothesis was persisted.
     llm_text: str = ""
     ctc_text: str = ""
+    # D-332: "beam5_retry" when greedy looped and one beam-5 decode replaced it, with why.
+    # Greedy segments omit both keys from JSON, so their artifact bytes are unchanged.
+    decode_mode: str = "greedy"
+    retry_reason: str | None = None
 
     def __post_init__(self) -> None:
         _assert_media_clock_span(self.start_ms, self.end_ms, label="segment confidence")
+        if (self.decode_mode, self.retry_reason is None) not in (
+            ("greedy", True),
+            ("beam5_retry", False),
+        ) or (self.retry_reason is not None and not isinstance(self.retry_reason, str)):
+            raise ValueError("segment decode_mode must be greedy, or beam5_retry with a reason")
         if self.end_ms <= self.start_ms:
             raise ValueError(
                 f"segment confidence spans {self.start_ms}..{self.end_ms} ms, which has no length"
@@ -633,6 +642,7 @@ class SegmentOrigin:
                     required=frozenset(
                         {"start_ms", "end_ms", "mean_logprob", "llm_text", "ctc_text"}
                     ),
+                    optional=frozenset({"decode_mode", "retry_reason"}),
                 )
             )
             for key in ("draft", "selected")
@@ -860,8 +870,15 @@ class RawTranscript:
 
     def to_json(self) -> str:
         data = asdict(self)
+        scored = list(data["segment_confidence"])
         if self.segment_origins is None:
             del data["segment_origins"]
+        else:
+            scored += [o[key] for o in data["segment_origins"] for key in ("draft", "selected")]
+        for item in scored:
+            # D-332: greedy segments omit decode provenance, so their bytes are unchanged.
+            if item["decode_mode"] == "greedy":
+                del item["decode_mode"], item["retry_reason"]
         return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
 
     def sha256(self) -> str:
@@ -937,7 +954,7 @@ class RawTranscript:
                         item,
                         field=f"segment_confidence[{index}]",
                         required=frozenset({"start_ms", "end_ms", "mean_logprob"}),
-                        optional=frozenset({"llm_text", "ctc_text"}),
+                        optional=frozenset({"llm_text", "ctc_text", "decode_mode", "retry_reason"}),
                     )
                 )
                 for index, item in enumerate(confidence_objects)

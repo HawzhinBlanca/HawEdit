@@ -629,6 +629,12 @@ class PipelineRun:
             "speech_without_transcription_ms": (
                 sum(gap.end_ms - gap.start_ms for gap in gaps) if raw is not None else None
             ),
+            # D-332: greedy segments that looped and were re-decoded once with beam 5.
+            "beam5_retries": (
+                sum(1 for item in raw.segment_confidence if item.decode_mode == "beam5_retry")
+                if raw is not None
+                else None
+            ),
             "rejected_validator_corrections": [
                 {
                     "start_ms": item.start_ms,

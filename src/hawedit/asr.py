@@ -42,7 +42,14 @@ from pathlib import Path
 from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
 from hawedit import omni_assets as _omni_assets
-from hawedit.asr_completion import COMPLETION_POLICY_ID, transcribe_completed
+from hawedit.asr_completion import (
+    BEAM_RETRY_NBEST,
+    COMPLETION_POLICY_ID,
+    DecodeIncomplete,
+    NoNaturalEos,
+    loop_suspect,
+    transcribe_completed,
+)
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
 from hawedit.escalation import EscalationDecision, SegmentScore, select_for_validation
@@ -184,10 +191,18 @@ class SegmentTranscript:
     ctc_text: str
     words: tuple[Word, ...]
     mean_logprob: float
+    # D-332: how the draft text was decoded, and why a greedy draft was retried.
+    decode_mode: str = "greedy"
+    retry_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not self.text_raw.strip():
             raise ValueError("OmniASR returned an empty speech segment")
+        if (self.decode_mode, self.retry_reason is None) not in (
+            ("greedy", True),
+            ("beam5_retry", False),
+        ):
+            raise ValueError("segment decode_mode must be greedy, or beam5_retry with a reason")
         if not isinstance(self.ctc_text, str):
             raise ValueError("CTC hypothesis must be a string")
         if not self.words:
@@ -1068,27 +1083,67 @@ class OmniAsrBackend:
     def _transcribe_llm(self, pipeline: Any, audio_path: Path) -> Any:
         return transcribe_completed(pipeline, audio_path, self.language)
 
+    def _transcribe_llm_beam(self, pipeline: Any, audio_path: Path) -> Any:
+        """The same loaded model, tokenizer and device, decoded with upstream beam 5."""
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+        from omnilingual_asr.models.wav2vec2_llama.config import Wav2Vec2LlamaBeamSearchConfig
+
+        beam = ASRInferencePipeline(
+            model_card=None,
+            model=pipeline.model,
+            tokenizer=pipeline.tokenizer,
+            device=pipeline.device,
+            dtype=pipeline.dtype,
+            beam_search_config=Wav2Vec2LlamaBeamSearchConfig(nbest=BEAM_RETRY_NBEST),
+        )
+        return transcribe_completed(beam, audio_path, self.language, nbest=BEAM_RETRY_NBEST)
+
+    def _draft_text(
+        self, pipeline: Any, audio_path: Path, duration_s: float
+    ) -> tuple[str, str | None]:
+        """Greedy as before; a suspect segment gets one beam-5 retry, else halts (D-332).
+
+        Never trims repeats, splices the attempts or falls back to another model.
+        """
+        try:
+            text = _one_draft(self._transcribe_llm(pipeline, audio_path))
+            reason = loop_suspect(text, duration_s)
+        except NoNaturalEos as exc:
+            reason = f"no natural EOS ({exc})"
+        if reason is None:
+            return text, None
+        try:
+            retried = _one_draft(self._transcribe_llm_beam(pipeline, audio_path))
+            problem = loop_suspect(retried, duration_s)
+        except NoNaturalEos as exc:
+            problem = f"no natural EOS ({exc})"
+        if problem is not None:
+            raise DecodeIncomplete(
+                f"segment {audio_path.name}: greedy attempt: {reason}; beam-5 retry: {problem}"
+            )
+        return retried, reason
+
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
         expected_identity = self.adapter_name
         llm, ctc = self._load()
         # The two model forwards are independent and live on different GPUs. CTC does not need
         # the LLM text until the cheap Viterbi projection after both complete.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="omniasr") as executor:
-            text_future = executor.submit(
-                self._transcribe_llm,
-                llm,
-                audio_path,
-            )
+            text_future = executor.submit(self._draft_text, llm, audio_path, duration_s)
             emissions_future = executor.submit(self._ctc_emissions, ctc, audio_path)
-            texts = text_future.result()
+            text, retry_reason = text_future.result()
             log_probs, frame_count, ctc_text = emissions_future.result()
-        if len(texts) != 1 or not str(texts[0]).strip():
-            raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
-        text = str(texts[0])
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
         if self.adapter_name != expected_identity:
             raise RuntimeError("ASR adapter identity changed during segment inference")
-        return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
+        return SegmentTranscript(
+            text,
+            ctc_text,
+            words,
+            _mean_aligned_logprob(words),
+            "greedy" if retry_reason is None else "beam5_retry",
+            retry_reason,
+        )
 
     def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
         """Align a validator correction with a fresh CTC pass on the same bounded audio."""
@@ -1101,6 +1156,12 @@ class OmniAsrBackend:
         if self.adapter_name != expected_identity:
             raise RuntimeError("ASR adapter identity changed during validator realignment")
         return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
+
+
+def _one_draft(texts: Any) -> str:
+    if len(texts) != 1 or not str(texts[0]).strip():
+        raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
+    return str(texts[0])
 
 
 def _mean_aligned_logprob(words: Sequence[Word]) -> float:
@@ -1490,6 +1551,8 @@ def _assemble_canonical_transcript(
                     mean_logprob=item.mean_logprob,
                     llm_text=item.text_raw,
                     ctc_text=item.ctc_text,
+                    decode_mode=item.decode_mode,
+                    retry_reason=item.retry_reason,
                 )
             )
     return RawTranscript(
@@ -1533,7 +1596,13 @@ def _segment_origin(
 ) -> SegmentOrigin:
     def confidence(item: SegmentTranscript) -> SegmentConfidence:
         return SegmentConfidence(
-            segment.start_ms, segment.end_ms, item.mean_logprob, item.text_raw, item.ctc_text
+            segment.start_ms,
+            segment.end_ms,
+            item.mean_logprob,
+            item.text_raw,
+            item.ctc_text,
+            item.decode_mode,
+            item.retry_reason,
         )
 
     return SegmentOrigin(
@@ -1642,12 +1711,14 @@ def _validate_hard_segments(
             )
             continue
         accepted_correction = True
-        routed.append((segment, aligned))
+        # The draft's decode provenance (D-332) survives a validator correction.
+        selected = replace(aligned, decode_mode=item.decode_mode, retry_reason=item.retry_reason)
+        routed.append((segment, selected))
         origins.append(
             _segment_origin(
                 segment,
                 item,
-                aligned,
+                selected,
                 decision,
                 "validator-selected",
                 validator=validator.model_id,
