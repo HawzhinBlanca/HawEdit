@@ -1,5 +1,31 @@
 # Typed Rooted Launch Research
 
+## Current Controller Unit, 2026-10-14
+
+Baseline94d947832b790610b6c36904a2d247247cfabffa. Actual Serena13definition/
+reference pairs before edits: C:/Users/Wareen/HawEditRootedControllerMap-94d9478-20261014/
+serena-map.json, SHA7eb590084ba8ca0f0965e42d2fdaa61aab972cb5b8a14843bd297ac429853cec.
+Inspected sources unchanged. Worker component has no production controller.
+Existing ASR transcribe uses a shared-directory worker; run_request writes
+checkpoints/output. Private-root adoption requires host-owned transport, not scratch.
+Approved RT2B first controller unit: exact manifest parity, original held worker/
+channels before copy, prepared/joined owner observation, bounded registry/listener/
+result servicing and complete drain, then final controller policy before return.
+This first unit explicitly refuses GPU: current GPU Landlock prevents opening
+original comm leaves; a broader proc grant must not be introduced silently.
+Full SDK/model duration/resources/transport/security remain the later separately
+admitted producer unit expressly required by launch-plan.md.
+
+Actual kernel RCA during controller tests: SO_PASSCRED-enabled UNIX socketpairs
+acquire a kernel abstract name after sending. Checking anonymity after the
+handshake is too late, not a basis for relaxing name checks. RootedLaunch now
+creates the original worker/channel, freezes channel custody while still unnamed,
+then receives credentials and waits for actual original PID2 SIGSTOP before
+Scope admission or image copying. A listener hang-up after worker exit is not a
+pending notification: registry events are drained first, and poll checks POLLIN
+instead of select's combined read/hang-up readiness. Raw failure logs retained.
+Result stays private/pending until Snapshot's final fence and inspection pass.
+
 Baseline1fe64a60caa9d6a74357b4d50852c19dfbd75cf3, clean source,
 package5e9b82817aeb9d670e593754f4d94e6e4181aafce25ebbbfdf42194afed7dc55.
 Previous goal turn was progress: production registry/broker and real driver

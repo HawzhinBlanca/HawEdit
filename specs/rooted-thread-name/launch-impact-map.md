@@ -1,5 +1,35 @@
 # Rooted Launch Impact And Caller Coverage
 
+## Current Controller Callers, 2026-10-14
+
+Introduced-symbol correction maps: seven actual pairs in
+C:/Users/Wareen/HawEditRootedControllerMap-WIP-20261014/serena-map.json,
+SHA7fc4f63025ba40826eb9a8c8a3db98f5cfdd874ebb884d3be7e3dc16a27e5a10;
+six creation/socket/servicing pairs in
+C:/Users/Wareen/HawEditRootedControllerCreationMap-WIP-20261014/serena-map.json.
+SHA0cf2da16f1260c017dcb4fa816d03caf60009b8f3411567e0efe05d3b1a09779.
+Both report inspected sources unchanged. _before_copy/_run serve Snapshot;
+packet/view/anchor helpers are internal to the new typed controller. No ASR
+consumer changes occur in this diagnostic unit.
+
+Windows valid-command correction preceded by actual three-pair current map:
+C:/Users/Wareen/HawEditRootedCommandHostMap-WIP-20261014/serena-map.json,
+SHAff892a2f6ac53bb03c171d6f57e2a09938fa0eb7ff1e15a66c285a95b2e0fcac.
+RootedCommand validation serves native worker diagnostics and the new controller;
+Snapshot declarations serve constructor and command validation. Only the pure
+validation placeholder becomes host-absolute; Linux isolation/mount/file/hash
+bounds and all caller signatures remain unchanged.
+
+Actual13pair map at94d9478 in launch-research.md. Snapshot constructor callers:
+dynamic native snapshot/rooted/entropy/GPU/worker fixtures; outside-descriptions,
+fence and inspect are constructor internals (inspect also verify). Defaults stay
+unchanged. Additive typed launch is invoked only inside constructor after sealed
+root entry/cap-drop; it cannot return an unfenced Snapshot. Shared fence and
+registry/broker methods gain a new controller caller without signature changes.
+Worker/view remain unchanged. ASR transcribe/run_request are mapped for subsequent
+adoption only, not modified or released by this unit. Whole existing isolation
+cohort, new actual controller cases and exact full gate are required.
+
 Actual16pair map ef2c09a571dbb0461824a28e6a848ea6f3066668e3838db4e56549012199b85f
 at unchanged1fe64a6 precedes source edits. Artifact location in launch-research.md.
 

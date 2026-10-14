@@ -55,7 +55,7 @@ class RootedCommand:
 
     def __post_init__(self) -> None:
         LinuxSnapshot._declarations(
-            Path("/hawedit-rooted-command"),
+            Path("/hawedit-rooted-command").absolute(),
             self.files,
             128 * 1024**3,
             4096,

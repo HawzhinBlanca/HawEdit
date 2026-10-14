@@ -1,5 +1,34 @@
 # Stopped-Worker Launch EARS
 
+## Initial Shared Controller Criteria
+
+- WHEN a typed launch is selected, THE Snapshot SHALL bind its exact files,
+  rooted/entropy mode and original stopped worker before copying.
+  Test: test_rooted_controller_manifest_refuses_before_copy.
+- WHEN an actual copied command executes, THE controller SHALL authenticate
+  worker packets, bound combined output to64KiB, service only the existing
+  registry/broker, reap every member and apply final policy before returning.
+  Tests: test_rooted_controller_actual_elf_returns_fenced,
+  test_rooted_controller_actual_python_returns_bounded_output.
+- WHEN this initial controller is asked to run GPU or an invalid output/deadline
+  configuration, THE controller SHALL refuse before image preparation.
+  Test: test_rooted_controller_invalid_declarations_refuse.
+- WHEN output exceeds its declared bound, THE controller SHALL cancel and drain
+  before refusing; successful completion SHALL NOT be returned.
+  Test: test_rooted_controller_output_overflow_drains_and_refuses.
+- WHEN execution exceeds its finite diagnostic deadline, THE controller SHALL
+  kill through the original pidfd and reap all members before refusing.
+  Test: test_rooted_controller_timeout_drains_and_refuses.
+- WHEN the owner observation channel ends before execution release, THE controller
+  SHALL refuse, kill and reap the original stopped worker, with no result.
+  Test: test_rooted_controller_owner_eof_refuses_before_exec.
+- WHEN a GPU command is selected for this initial controller, THE controller
+  SHALL refuse explicitly rather than silently run it as CPU work.
+  Test: test_rooted_controller_gpu_is_not_silently_downgraded.
+- WHEN the Windows host declares a valid command, THE command validator SHALL
+  validate the same immutable manifest without attempting to consume source bytes.
+  Test: test_rooted_command_valid_declaration_is_portable_without_consuming_bytes.
+
 Proposed named tests, not existing passes or admission evidence.
 
 | Criterion | Named Regression |

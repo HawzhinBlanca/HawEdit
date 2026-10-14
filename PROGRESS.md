@@ -8,6 +8,10 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 
 ## Original Thread Registry (WIP)
 
+| Task | Work | Status | Evidence / Remaining |
+| --- | --- | --- | --- |
+| M9.105 | Adopt bounded original copied worker into the typed Snapshot controller | WIP | `src/hawedit/linux_rooted_launch.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_controller.py`; approved D-329 launch plan. Initial module accounting, not promotion. GPU/SDK/model/resource/producer/real ZAR editorial output and current independent security/CI acceptance remain open. |
+
 Approved private-view handoff, D-329: initial RT2A preparation precondition is
 implemented in LinuxScope, not the complete prepared-view transition or launch.
 Actual122-case Scope/Bootstrap/Registry/preparation cohort passes, zero failures,

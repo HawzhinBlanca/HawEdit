@@ -18,7 +18,10 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from hawedit.linux_rooted_launch import RootedLaunch
 
 __all__ = ["LinuxSnapshot", "LinuxSnapshotError", "SnapshotFile", "SnapshotMode"]
 
@@ -389,6 +392,7 @@ class LinuxSnapshot:
         kernel_entropy: bool = False,
         wsl_gpu: bool = False,
         control_fds: tuple[int, ...] = (),
+        launch: RootedLaunch | None = None,
     ) -> None:
         global _ATTEMPTED
         end = time.monotonic() + _seconds(timeout_seconds)
@@ -441,7 +445,18 @@ class LinuxSnapshot:
             ):
                 raise LinuxSnapshotError("Snapshot root must be an empty private owned directory")
             if mode is SnapshotMode.ROOTED_IMAGE:
-                self._outside_descriptions(before, files, end)
+                launch_descriptions = frozenset()
+                if launch is not None:
+                    from hawedit.linux_rooted_launch import RootedLaunch
+
+                    if type(launch) is not RootedLaunch:
+                        raise LinuxSnapshotError(
+                            "Snapshot launch requires an original typed controller"
+                        )
+                    launch_descriptions = launch._before_copy(files, mode, kernel_entropy, wsl_gpu)
+                self._outside_descriptions(before, files, end, launch_descriptions)
+            elif launch is not None:
+                raise LinuxSnapshotError("Snapshot typed launch requires explicit rooted mode")
             _ATTEMPTED = True
             self._initialize(end)
             if kernel_entropy:
@@ -482,6 +497,8 @@ class LinuxSnapshot:
             self._drop_caps()
             if wsl_gpu:
                 self._enforce_gpu_policy()
+            if launch is not None:
+                launch._run(self._anchor, self._native, end)
             self._fence()
             for label in ("user", "mnt", "pid"):
                 fd = os.open(f"/proc/self/ns/{label}", _flags("O_RDONLY", "O_CLOEXEC"))
@@ -489,6 +506,8 @@ class LinuxSnapshot:
                 self._namespaces[label] = (fd, os.dup(fd))
                 self._remember(self._namespaces[label][1])
             self._inspect(end)
+            if launch is not None:
+                launch._complete()
         except BaseException as exc:
             self._failed = True
             self._cleanup()
@@ -587,7 +606,11 @@ class LinuxSnapshot:
         return native
 
     def _outside_descriptions(
-        self, allowed: int, files: tuple[SnapshotFile, ...], end: float
+        self,
+        allowed: int,
+        files: tuple[SnapshotFile, ...],
+        end: float,
+        launch_descriptions: frozenset[int] = frozenset(),
     ) -> None:
         entries = os.listdir("/proc/self/fd")
         if len(entries) > 4096:
@@ -597,7 +620,7 @@ class LinuxSnapshot:
         for name in entries:
             self._left(end)
             fd = int(name)
-            if fd == allowed:
+            if fd == allowed or fd in launch_descriptions:
                 continue
             try:
                 original = _identity(fd)

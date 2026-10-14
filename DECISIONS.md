@@ -16211,3 +16211,29 @@ NNP/seccomp/readonly root are checked. Native brokers inject/refuse real FDs.
 This does not copy/admit the complete Cortex SDK, Torch/model/resources/input,
 protected producer or a new ZAR reel; no qualified review/CI/10 claim follows.
 
+### Typed Diagnostic Controller Adoption, 2026-10-14
+
+Approved launch-plan RT2B gains default-off RootedLaunch in the existing Snapshot,
+not a second pipeline or an unfenced returned object. The controller owns only
+original PID2 and pre-communication original channels, binds exact immutable
+files/command before copy, exchanges original prepared/joined View observations,
+services existing Registry/Broker and bounded combined output, drains, then
+requires final Landlock/fence/inspection before releasing a pending result.
+Diagnostic30s/64KiB/64birth/32request ceilings remain; GPU is explicitly refused
+until the distinct controller combined-policy unit, not silently downgraded.
+
+Kernel SO_PASSCRED autobinding requires capturing unnamed channels before send,
+not relaxing name assertions after a handshake. Worker exit can make a listener
+readable through hang-up without a pending notification: drain kernel registry
+events and check POLLIN. A Windows-only placeholder-root declaration defect is
+fixed by making the validation placeholder host-absolute, without touching bytes
+or changing actual Linux roots/hash/capability policy. Native/pure regressions
+cover all these cases. No new dependency, model release or security disposition.
+
+Owner separately approves specs/protected-asr-producer/plan.md on2026-10-14,
+including finite full-source duration and host-owned transport/checkpoints.
+This architecture approval does not renew independent VEX, accept unseen model
+licences, permit installation, increase the US$5 transcript-only cloud cap or
+authorize publication. Qualified security/model/resource and actual media
+acceptance remain separate from engineering and diagnostic results.
+
