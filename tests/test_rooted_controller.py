@@ -46,6 +46,36 @@ finally:
  finish.set();thread.join(2);assert not thread.is_alive()
 """
 
+RESOURCE_PROBE = """
+import errno,json,os,resource,threading
+expected=((resource.RLIMIT_AS,128*1024**2),(resource.RLIMIT_CPU,3),
+ (resource.RLIMIT_NOFILE,64),(resource.RLIMIT_CORE,0))
+def inspect():
+ for kind,value in expected:
+  assert resource.getrlimit(kind)==(value,value),(kind,resource.getrlimit(kind))
+  try:resource.setrlimit(kind,(value+1,value+1))
+  except (ValueError,OSError):pass
+  else:raise AssertionError('Hard resource limit could be raised')
+inspect();thread_results=[]
+def thread_check():
+ inspect();thread_results.append(True)
+thread=threading.Thread(target=thread_check);thread.start();thread.join(2)
+assert not thread.is_alive() and thread_results==[True]
+try:memory=bytearray(256*1024**2)
+except MemoryError:pass
+else:raise AssertionError('Address-space limit not enforced')
+descriptors=[]
+try:
+ while True:descriptors.append(os.open('/dev/urandom',os.O_RDONLY|os.O_CLOEXEC))
+except OSError as exc:assert exc.errno==errno.EMFILE
+finally:
+ for fd in descriptors:os.close(fd)
+print(json.dumps({'limits_verified':True,'memory_refused':True,'fds_refused':True,
+ 'thread_verified':True}),flush=True)
+if CPU_KILL:
+ while True:pass
+"""
+
 
 def _controller_run(tmp_path: Path, case: str) -> None:
     from hawedit.wsl_setup import wsl_path
@@ -73,7 +103,21 @@ def _controller_run(tmp_path: Path, case: str) -> None:
             "command=RootedCommand(files,executable,arguments,environment,wsl_gpu=True)",
         )
         prefix = prefix.replace("original=held[3]", "original=held[3]\nchannel.close()")
-    if case in ("comm", "gpu_comm"):
+    resource_case = case in ("resources", "gpu_resources", "resource_cpu")
+    if resource_case:
+        prefix = prefix.replace(
+            "command=RootedCommand(files,executable,arguments,environment)",
+            "from hawedit.linux_worker_resources import WorkerResourceLimits\n"
+            "command=RootedCommand(files,executable,arguments,environment,"
+            "resources=WorkerResourceLimits(128*1024**2,3,64))",
+        )
+        prefix = prefix.replace(
+            "command=RootedCommand(files,executable,arguments,environment,wsl_gpu=True)",
+            "from hawedit.linux_worker_resources import WorkerResourceLimits\n"
+            "command=RootedCommand(files,executable,arguments,environment,wsl_gpu=True,"
+            "resources=WorkerResourceLimits(128*1024**2,3,64))",
+        )
+    if case in ("comm", "gpu_comm") or resource_case:
         tree = ast.parse(prefix)
         writes = [
             node
@@ -85,9 +129,14 @@ def _controller_run(tmp_path: Path, case: str) -> None:
             and node.func.attr == "write_text"
         ]
         assert len(writes) == 1
-        writes[0].args[0] = ast.Constant(COMM_PROBE.replace("GPU", repr(gpu)))
+        probe = (
+            RESOURCE_PROBE.replace("CPU_KILL", repr(case == "resource_cpu"))
+            if resource_case
+            else COMM_PROBE.replace("GPU", repr(gpu))
+        )
+        writes[0].args[0] = ast.Constant(probe)
         prefix = ast.unparse(ast.fix_missing_locations(tree))
-    if case in ("comm", "gpu_comm"):
+    if case in ("comm", "gpu_comm") or resource_case:
         start = prefix.index("wp, wc = socket.socketpair")
         finish = prefix.index("held = [pidfd(1)")
     else:
@@ -148,8 +197,10 @@ except Exception as exc:
 else:
  assert TEST_CASE not in refusals,'Refusal reported success'
  result=launch.result;assert result is not None
- assert result.exit_code==(42 if TEST_CASE in ('elf','gpu_elf') else 0)
- expected_tids=(2,3) if TEST_CASE in ('comm','gpu_comm') else (2,)
+ assert result.exit_code==(-signal.SIGKILL if TEST_CASE=='resource_cpu' else
+  42 if TEST_CASE in ('elf','gpu_elf') else 0)
+ threaded=('comm','gpu_comm','resources','gpu_resources','resource_cpu')
+ expected_tids=(2,3) if TEST_CASE in threaded else (2,)
  assert result.exec_count==1 and result.observed_tids==result.reaped_tids==expected_tids
  assert type(snapshot._controller_filters) is int
  assert snapshot._filters>snapshot._controller_filters>0
@@ -158,6 +209,9 @@ else:
  if TEST_CASE in ('comm','gpu_comm'):
   assert json.loads(result.output)=={'comm':'HawEditOriginal','tid':3,
    'entropy_errno':13 if GPU_ENABLED else 1,'device':[10,258] if GPU_ENABLED else None}
+ if TEST_CASE in ('resources','gpu_resources','resource_cpu'):
+  assert json.loads(result.output)=={'limits_verified':True,'memory_refused':True,
+   'fds_refused':True,'thread_verified':True}
  snapshot.verify();snapshot.close()
  if TEST_CASE=='gpu_late_failure':os._exit(73)
 completion.send(b'WRONG' if TEST_CASE=='gpu_wrong_ack' else
@@ -233,6 +287,18 @@ assert ancillary==[(socket.SOL_SOCKET,socket.SCM_CREDENTIALS,
 
 def test_rooted_controller_actual_elf_returns_fenced(tmp_path: Path) -> None:
     _controller_run(tmp_path, "elf")
+
+
+def test_rooted_controller_actual_worker_resources_survive_exec(tmp_path: Path) -> None:
+    _controller_run(tmp_path, "resources")
+
+
+def test_rooted_controller_actual_gpu_worker_resources_survive_exec(tmp_path: Path) -> None:
+    _controller_run(tmp_path, "gpu_resources")
+
+
+def test_rooted_controller_actual_worker_cpu_limit_kills_and_drains(tmp_path: Path) -> None:
+    _controller_run(tmp_path, "resource_cpu")
 
 
 def test_rooted_controller_actual_python_returns_bounded_output(tmp_path: Path) -> None:

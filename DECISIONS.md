@@ -16300,3 +16300,16 @@ no completed JUnit/gate result or original GPU acceptance attributed to it.
 No simulation of kernel results, caller ready flags, writable proc, broader
 FD admission, SDK/model release, source policy change or gate bypass.
 
+### Original Worker Diagnostic Resource Proof, 2026-10-14
+
+Approved producer PA2 prerequisites may use irreversible process-local kernel
+limits inside original PID2. Typed optional limits are explicit and never
+silently substituted for defaults. Apply only after capabilities are dropped,
+read back exact AS/CPU/NOFILE/CORE bounds before copied exec and refuse inherited
+hard-policy relaxation. Diagnostic ceilings stay separate from proposed
+producer budgets. Genuine copied Python allocation/FD/CPU/thread tests and
+original authenticated drain are required. RLIMIT_RSS/NPROC, image quotas,
+global free memory and PyTorch allocator settings are not owned VRAM/effect
+guards. No model/security/producer grant follows from this proof. Evidence:
+evidence/original-worker-resources-20261014.md; ledger remains unpromoted.
+

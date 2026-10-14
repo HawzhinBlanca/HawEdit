@@ -64,3 +64,19 @@ SHA25607a809969ed6db8b29ae0727b628b69bc597e068908662d4279dcca4828dc036.
 Only test helper/ordinary tests change. Original GPU control_fds validation is
 used unchanged for a fixed private test-only acknowledgment channel. Never
 interpret parent worker-death observation alone as verified controller success.
+
+## PA2 Worker Limits Unit
+
+Current four actual Serena pairs at1591502, unchanged=True. Full caller list,
+hash, EARS and scope in worker-resource-research.md and
+evidence/original-worker-resources-20261014.md. RootedCommand gains an optional
+exact immutable declaration after existing positional fields; _execute applies
+it only after zero capabilities in original PID2 before copied exec. All default
+diagnostic constructors remain unchanged. Actual12-module caller cohort334pass.
+No production adoption until separate complete resource/security admission.
+
+PA3 current five actual pairs map OperationJournal, ResumableBackend,
+ResumableValidator, worker_journal and run_request. Existing journal is called
+by both resumable adapters; run_request owns lease/inference/exclusive final
+publication. Preserve origins, adapter identity, completion/alignment and CLI
+no-clobber. Do not enable worker filesystem writes.

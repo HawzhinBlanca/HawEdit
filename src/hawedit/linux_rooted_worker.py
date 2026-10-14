@@ -39,6 +39,7 @@ from hawedit.linux_snapshot import (
     _status,
 )
 from hawedit.linux_thread_registry import _Description, trace_original_worker
+from hawedit.linux_worker_resources import WorkerResourceLimits
 
 __all__ = ["RootedCommand", "execute_original_worker"]
 
@@ -52,8 +53,13 @@ class RootedCommand:
     arguments: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
     wsl_gpu: bool = False
+    resources: WorkerResourceLimits | None = None
 
     def __post_init__(self) -> None:
+        if self.resources is not None and type(self.resources) is not WorkerResourceLimits:
+            raise LinuxSnapshotError("Rooted worker resource declaration refused")
+        if self.resources is not None:
+            self.resources.__post_init__()
         LinuxSnapshot._declarations(
             Path("/hawedit-rooted-command").absolute(),
             self.files,
@@ -366,6 +372,8 @@ def _execute(command: RootedCommand, channel: socket.socket) -> NoReturn:
     for fd in temporary:
         os.close(fd)
     _drop_capabilities(native)
+    if command.resources is not None:
+        command.resources.apply()
     _apply_landlock(native, root, gpu)
     try:
         opened = os.open("/dev/urandom", os.O_RDWR | os.O_CLOEXEC)
