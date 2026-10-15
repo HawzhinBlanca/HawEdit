@@ -16534,3 +16534,13 @@ T8 retry's device moves: `src/hawedit/asr.py` (`_greedy_draft`, `_beam_retry`, `
 D-332), with tests in `tests/test_asr_completion.py`. It changes no VEX control: no new loader,
 input, asset or dependency. The owner approved the change ("option 1, yes push and open the
 PR") but did not separately re-review the new digest; `reviewed` stays 2026-10-15.
+
+**Addendum, re-pinned again 2026-10-15.** Also the same day as the owner review,
+`source_sha256` and `REVIEWED_VEX_SOURCE` moved from `666b8770…` to
+`18fe2dd71870faebd43e3adaafefdadf4ae1a7c12fec55817ac6debb2daefe37` for a diff limited to type
+annotations and `sys.platform` guards around Windows-only APIs, so mypy passes on the Linux CI
+runner: `src/hawedit/{ingest_cache,linux_snapshot,models,native_io,native_process,
+studio_artifacts,studio_history,studio_private}.py`. Windows behaviour is unchanged, and no VEX
+control is affected: no new loader, input, asset or dependency. The owner approved the change
+("yes fix the CI errors") but did not separately re-review the new digest; `reviewed` stays
+2026-10-15.

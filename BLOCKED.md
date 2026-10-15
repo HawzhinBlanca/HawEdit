@@ -1197,6 +1197,11 @@ does not block T0b (the D-number renumber), which is independent.
 > new loader, input, asset or dependency). The owner approved the change ("option 1, yes push and
 > open the PR") but did not separately re-review the new digest; `reviewed` is unchanged. D-333.
 >
+> **Re-pinned again 2026-10-15**, same day: `666b8770…` → `18fe2dd7…` for a type-annotation and
+> `sys.platform`-guard-only diff (Windows-only APIs, so mypy passes on the Linux CI runner; files
+> listed in D-333). No VEX control is affected. The owner approved it ("yes fix the CI errors") but
+> did not separately re-review the new digest; `reviewed` is unchanged.
+>
 > The original text is kept below.
 
 `security/wsl-asr-vex.json` carries twelve CVE dispositions, a `reviewed` date of 2026-08-09,
