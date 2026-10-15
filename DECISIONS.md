@@ -16463,10 +16463,23 @@ artifact bytes are unchanged. The run report counts `beam5_retries`. The complet
 policy becomes `omni-natural-eos-greedy-beam5-retry-v1`, so cache records and
 checkpoint journals written under the single-beam policy refuse as D-281 specifies.
 
+**Retry memory (measured 2026-10-15; owner chose option 1).** specs/v12-fused-model/research.md,
+"T8 beam-5 retry path measured 2026-10-15" (RTX 3090 Ti, GPU 1, torch 2.8.0+cu128, fairseq2 0.6,
+omnilingual-asr 0.2.0, :8000 stopped): greedy with fused v12 and CTC-3B both resident fits
+(33.9 s segment: 21.90 GiB allocated, 23.41 GiB reserved), but the beam-5 retry beside a
+resident CTC-3B overflows the 24 GB card (19.2 s: 126.9 s, 24.38 GiB reserved; 33.9 s: 586.2 s,
+31.04 GiB reserved, about 6 GB of WDDM spill). Owner decision 2026-10-15: "option 1", move
+CTC-3B off the GPU only while a retry runs. So the retry runs after the segment's greedy and CTC
+forwards have joined (no CTC forward overlaps it); only when LLM and CTC share a CUDA device,
+CTC moves to the CPU, `torch.cuda.empty_cache()` runs, the retry decodes, and CTC returns to its
+configured device in a `finally`. A failed return is `DecodeIncomplete`: the run never continues
+with CTC off its device and never switches model. Greedy segments do not move CTC, and their
+bytes are unchanged. The retry's wall time and peak with CTC parked are not yet measured.
+
 **Residual risk.** 16 of the 113 measured loops still looped under beam (long read
 speech); those segments halt. Genuine stuttering can match the repeat rule and is
-retried, then halts if beam repeats it. Beam memory on one card and real upstream
-context-length types are T0 hardware facts. A CTC-length guard (arXiv 2408.09491)
+retried, then halts if beam repeats it. Real upstream context-length types are a T0
+hardware fact. A CTC-length guard (arXiv 2408.09491)
 stays an option only after measurement.
 
 ## D-333 - Renew the WSL ASR VEX for the v12 tree, with the reviewed digest pinned

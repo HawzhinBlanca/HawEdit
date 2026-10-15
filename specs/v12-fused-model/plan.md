@@ -82,6 +82,7 @@ It links D-181, D-260, D-281, D-285, D-286 and BLOCKED #21.
 2. **Suspect → re-decode that one segment** with the same model, same audio and same language, using `nbest=5` (beam 5, the omniasr production setting).
    - The completion contract gains a beam variant: the **selected** hypothesis must end on a sampled natural EOS.
    - Its output must not be suspect under (b) or (c).
+   - **Memory (owner "option 1", 2026-10-15):** beam 5 beside a resident CTC-3B overflows the 24 GB card (research.md, "T8 beam-5 retry path measured 2026-10-15"). The retry therefore runs after the segment's greedy and CTC forwards have joined; when LLM and CTC share one CUDA device, CTC-3B moves to the CPU (then `torch.cuda.empty_cache()`) for the retry only and always moves back in a `finally`. If it cannot move back, the run halts with `DecodeIncomplete`. Separate devices: no moves. Greedy segments: no moves.
 3. **Still suspect → `DecodeIncomplete`** naming the segment and both attempts: an honest halt (D-260/D-281).
    - Never trim repeats, splice attempts, guess words, or fall back to another model or the stock model.
 4. **Provenance:** each segment records `decode_mode: greedy | beam5_retry` and why it was retried.

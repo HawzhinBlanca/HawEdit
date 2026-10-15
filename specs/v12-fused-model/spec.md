@@ -80,5 +80,13 @@ EARS acceptance criteria. Each names the tests that cite it in `tasks.md`.
   `test_beam_observer_ignores_checks_inside_the_compression_window`,
   `test_beam_observer_refuses_a_greedy_configured_generator`,
   `test_contract_refusal_is_not_retried`
+- WHEN a beam-5 retry runs and the LLM and CTC share one CUDA device, THE backend SHALL move
+  CTC-3B to the CPU only for the retry after the segment's CTC forward has finished, SHALL always
+  move it back, and SHALL halt with `DecodeIncomplete` if it cannot; on separate devices or for a
+  greedy segment it SHALL not move CTC.
+  `test_shared_device_beam_retry_parks_ctc_on_cpu_and_restores_it`,
+  `test_separate_devices_never_move_ctc`, `test_failed_beam_retry_still_restores_ctc`,
+  `test_ctc_that_cannot_return_to_its_device_halts_the_run`,
+  `test_clean_greedy_segment_never_moves_ctc_and_its_bytes_do_not_change`
 - WHEN a cache record carries the previous completion policy, THE store SHALL refuse it.
   `test_loop_guard_policy_refuses_single_beam_cache_records`
