@@ -162,3 +162,25 @@ Because one halt stops the whole run, a long video with hundreds of segments is 
   - Literature: a CTC-length guard ("LLM text more than 1.5× the CTC text") removed repetition entirely in arXiv 2408.09491.
   - **Caveat:** HawEdit's CTC is the stock multilingual model decoded unconditioned (D-xxx at `DECISIONS.md:6291`), so its length is only a rough reference. Measure it before relying on it.
 - **Caveat on the 4-repeat rule:** genuine stuttering ("هەر هەر هەر هەر") can match it. References are typically disfluency-cleaned, so the 0 false positives on references may understate this for conversational audio.
+
+## T0 measured 2026-10-15 (omniasr side, GPU 1 only)
+- **Setup:** `omniasr-v11-audit/scripts/hawedit_t0_measure.py`, output `results/hawedit_t0_measure.json`.
+  - Fused v12 LLM in bf16 with the upstream greedy decoder (nbest=1), as HawEdit pins it.
+  - CTC-3B in bf16 in a parallel thread on the same segment.
+  - RTX 3090 Ti, torch 2.8.0+cu128, fairseq2 0.6, omnilingual-asr 0.2.0. The :8000 server was stopped.
+- **Resident after loading both:** 20.29 GiB allocated (LLM 14.55 + CTC 5.74).
+
+| Segment | Wall time | Peak allocated | Peak reserved |
+|---|---|---|---|
+| 9.1 s | 4.8 s | 20.63 GiB | 22.23 GiB |
+| 19.2 s | 7.9 s | 21.00 GiB | 22.50 GiB |
+| 33.9 s (close to the 34.5 s union ceiling, D-283) | 13.0 s | 21.90 GiB | **23.41 GiB** |
+| 10.0 s Zainab clip that loops under greedy | 5.4 s | 20.73 GiB | 22.25 GiB |
+
+- **Gate verdict (plan T0, "peak above ~22.5 GiB → STOP and re-plan"):** **exceeded by about 0.9 GiB reserved** on segments near the ceiling. Allocated stays under the limit (21.9). Everything ran with no OOM; on WDDM the overflow spills to shared RAM rather than failing.
+- **Caveat:** the Windows-level shared/dedicated counters for the second pass were contaminated, because the watchdog restarted :8000 between passes. The per-process torch peaks above are unaffected.
+- **Re-plan options, for the owner:**
+  - **(a) T0b:** when the LLM and CTC share one device, run CTC after the LLM instead of in parallel. This costs about the CTC forward time (Meta RTF 0.003, under 0.2 s per segment) and removes the concurrent-activation peak.
+  - **(b)** Accept the measured margin; the 24 GiB card holds 23.4 GiB reserved.
+  - **(c)** Call `torch.cuda.empty_cache()` between segments. This trims caching slack but not the concurrent peak.
+- **Related omniasr finding (2026-10-14):** on WDDM, fairseq2's KV cache growth (16-step copies) plus PyTorch's caching allocator can spill heavily for long or batched beam decoding. HawEdit decodes one segment at a time, greedy, at 40 s or less, and the measurements above show that case is bounded. The T8 beam-5 retry decodes one segment with 5 rows, which raises KV memory about 5×, and that path is **unmeasured**. Measure it before T7.
