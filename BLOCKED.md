@@ -1191,6 +1191,12 @@ does not block T0b (the D-number renumber), which is independent.
 > run as part of it and is still the runtime confirmation. The pattern this entry names had
 > recurred meanwhile: `1cea90d`, `e8ab656`, `4f9bedb` and `6bed0c9` rebound `source_sha256`
 > (`81f6f606…` → `39e585d4…`) with `reviewed` left at 2026-08-09 and the policy already expired.
+> **Re-pinned 2026-10-15**, the same day as the owner review: `source_sha256` and the pin moved
+> `4e607203…` → `666b8770…` for a diff limited to the T8 retry's device moves
+> (`src/hawedit/asr.py`; tests in `tests/test_asr_completion.py`), which changes no VEX control (no
+> new loader, input, asset or dependency). The owner approved the change ("option 1, yes push and
+> open the PR") but did not separately re-review the new digest; `reviewed` is unchanged. D-333.
+>
 > The original text is kept below.
 
 `security/wsl-asr-vex.json` carries twelve CVE dispositions, a `reviewed` date of 2026-08-09,

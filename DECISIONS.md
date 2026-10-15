@@ -16525,3 +16525,12 @@ no `custom_generate` under `src/hawedit` (tested) and local verified checkpoints
 
 **Not covered.** The live gate was not run; it remains the runtime confirmation. Sources for the
 new rulings are the OSV records, because the scan stored no reference URLs.
+
+**Addendum, re-pinned 2026-10-15.** The same day as the owner review, `source_sha256` and
+`REVIEWED_VEX_SOURCE` moved from `4e607203…` to
+`666b8770c22a0574abf1eb91ce276d48d37266fba336700e120e32395187298e` for a diff limited to the
+T8 retry's device moves: `src/hawedit/asr.py` (`_greedy_draft`, `_beam_retry`, `_ctc_parked`,
+`_park_ctc`, `_restore_ctc`; CTC-3B parked on the CPU while a shared-device beam-5 retry runs,
+D-332), with tests in `tests/test_asr_completion.py`. It changes no VEX control: no new loader,
+input, asset or dependency. The owner approved the change ("option 1, yes push and open the
+PR") but did not separately re-review the new digest; `reviewed` stays 2026-10-15.
