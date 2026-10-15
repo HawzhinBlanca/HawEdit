@@ -161,10 +161,12 @@ def run_span_verification(
 
     # 5. Face tracking & Per-Shot Framing
     print("Running face tracker...")
-    tracker = OpenCvFaceTracker(sample_fps=5.0)
-    raw_points = tracker.track(SOURCE_MEDIA, in_ms=clip_in_ms, out_ms=clip_out_ms)
     # Clip-relative shot cuts
     span_cuts = [c for c in all_shot_cuts_ms if clip_in_ms < c < clip_out_ms]
+    tracker = OpenCvFaceTracker(sample_fps=5.0)
+    raw_points = tracker.track(
+        SOURCE_MEDIA, in_ms=clip_in_ms, out_ms=clip_out_ms, shot_cuts_ms=span_cuts
+    )
     crop_w, _ = vertical_crop_size(source_width, source_height)
     stabilized_points = stabilize(
         raw_points,
@@ -229,12 +231,13 @@ def run_span_verification(
     # 8. Remap focus points for silence tightening
     if silence_plan is not None and silence_plan.total_removed_ms > 0:
         render_focus_points = []
+        last_t = -1
         for p in stabilized_points:
-            t_rel = p.at_ms - clip_in_ms
-            if any(start <= t_rel < end for start, end in silence_plan.removed_intervals_ms):
-                continue
             remapped_at = remap_timestamp(p.at_ms, silence_plan) + clip_in_ms
+            if remapped_at <= last_t:
+                remapped_at = last_t + 1
             render_focus_points.append((remapped_at, p.center_x))
+            last_t = remapped_at
     else:
         render_focus_points = [(p.at_ms, p.center_x) for p in stabilized_points]
 
@@ -316,6 +319,7 @@ def run_span_verification(
         for_review=True,
         ffmpeg=ffmpeg_bin,
         per_shot_boxes=per_shot_boxes,
+        target_face_height_share=0.28,
     )
     print(f"Render completed: {rendered_mp4} ({rendered_mp4.stat().st_size} bytes)")
 
@@ -371,6 +375,25 @@ def run_span_verification(
 
     # 14. Extract contact sheet frames for visual review
     contact_frames: list[Path] = []
+    # Hook badge frame at 1.5s
+    hook_frame_path = span_dir / f"{span_name}_hook_badge.jpg"
+    cmd_hook = [
+        str(ffmpeg_bin),
+        "-y",
+        "-ss",
+        "1.50",
+        "-i",
+        str(rendered_mp4),
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
+        str(hook_frame_path),
+    ]
+    subprocess.run(cmd_hook, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    contact_frames.append(hook_frame_path)
+    print(f"Generated hook badge frame: {hook_frame_path.name}")
+
     # Sample midpoint of each shot
     for idx, (start_t, end_t) in enumerate(output_shot_intervals):
         sample_t = (start_t + end_t) / 2.0

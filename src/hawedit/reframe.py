@@ -381,6 +381,8 @@ class OpenCvFaceTracker:
                     faces = boxes(frontal, gray) + boxes(profile, gray)
                     flipped_profile = boxes(profile, cv2.flip(gray, 1))
                     faces += [(width - (x + w), y, w, h) for x, y, w, h in flipped_profile]
+                # Drop background noise/blinds in upper edge (y < 8% frame height)
+                faces = [f for f in faces if f[1] >= int(height * 0.08)]
                 max_dist = int(width * 0.35) if previous is not None else None
                 chosen = choose_face(tuple(faces), previous, max_distance=max_dist)
                 if chosen is not None:
@@ -613,7 +615,11 @@ class MotionSpeakerTracker:
                         (width - (x + w), y, w, h)
                         for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
                     ]
-                valid_faces = [f for f in faces if f[2] * f[3] >= self.min_face_area]
+                valid_faces = [
+                    f
+                    for f in faces
+                    if f[2] * f[3] >= self.min_face_area and f[1] >= int(height * 0.08)
+                ]
 
                 # Deduplicate overlapping face boxes
                 deduped_faces: list[tuple[int, int, int, int]] = []

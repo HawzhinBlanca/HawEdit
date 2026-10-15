@@ -414,14 +414,15 @@ HOOK_BANNER_THEME: Final = CaptionTheme(
     primary="&H0000D4FF",  # High-contrast Kurdish Gold (&H00D4FF in BGR = RGB FF D4 00)
     secondary="&H0000D4FF",
     bold=True,
-    outline=16.0,  # crisp plate padding with border_style=3
-    shadow=0.0,
-    back_colour="&HCC101010",  # 80% deep contrast plate
+    outline=4.0,
+    shadow=2.5,
+    outline_colour="&H00000000",
+    back_colour="&H80000000",
     margin_l=60,
     margin_r=60,
     margin_v=HOOK_BANNER_MARGIN_V,
     alignment=8,
-    border_style=3,
+    border_style=1,
 )
 
 
@@ -1798,7 +1799,7 @@ def build_ass(
             ),
             *(
                 [
-                    HOOK_BANNER_THEME.plate_style_row(
+                    HOOK_BANNER_THEME.style_row(
                         "HookBanner",
                         font_name,
                         HOOK_BANNER_FONT_SIZE,

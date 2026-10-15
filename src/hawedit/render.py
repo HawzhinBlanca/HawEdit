@@ -955,7 +955,12 @@ def _interpolated(points: Sequence[tuple[float, int]], fallback: int) -> str:
     """
     if not points:
         return str(fallback)
-    ordered = sorted(points)
+    raw_ordered = sorted(points, key=lambda item: item[0])
+    ordered: list[tuple[float, int]] = []
+    for t, val in raw_ordered:
+        if ordered and t <= ordered[-1][0]:
+            t = round(ordered[-1][0] + 0.001, 3)
+        ordered.append((t, val))
     expression = str(ordered[-1][1])
     for index in range(len(ordered) - 2, -1, -1):
         start_s, here = ordered[index]
@@ -1464,6 +1469,7 @@ def render_clip(
     assembly_spans: Sequence[AssemblySpan] | None = None,
     plan: VisualEditPlan | None = None,
     per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = (),
+    target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1640,6 +1646,7 @@ def render_clip(
             clip_in_ms=clip.in_ms,
             lanczos=deliverable,
             unsharp=deliverable,
+            target_face_height_share=target_face_height_share,
         )
 
     # Keep the container suffix: ffmpeg infers its muxer from the path. NamedTemporaryFile is
