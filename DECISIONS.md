@@ -16351,3 +16351,120 @@ D-330 introduces per-shot adaptive framing:
 
 **Measurement:** Tested in `tests/test_render.py` and `tests/test_reframe.py`. Backward compatibility verified for single-shot clips without camera cuts.
 
+## D-331 - Draft with a fused champion checkpoint, on GPU 1 only
+
+2026-10-14; owner-approved specs/v12-fused-model plan T1-T6: "make v12 fully set and
+ready to use anywhere", then "Approve all T0–T8". BLUEPRINT sections 2, 3 Stage 1, 6
+and 7; D-136, D-181, D-260, D-281, D-285, D-286 unchanged except as stated; BLOCKED #21.
+
+**Fused checkpoint.** v12 is a rank-64 LoRA trained on fused v11 and then fused into
+one fairseq2 `.pt` (wav2vec2_llama/7b, 10288 ids), so it cannot be an adapter folder.
+`OmniAsrBackend(fused_checkpoint=)` loads it through the LoRA route's direct `7b` card
+and tokenizer-derived vocabulary (D-181, D-285), without PEFT. The tokenizer is the
+held canonical written-v2 file and must report `FUSED_VOCAB_SIZE = 10288` ids, else
+the run halts before weights load. Only CTC-3B and that tokenizer are held from the
+stock set; the stock LLM is neither read nor hashed on this route. A fused checkpoint
+and a LoRA adapter are mutually exclusive everywhere; the LoRA route is unchanged.
+
+**Admission is a code allowlist, never a neighbouring file.** `FUSED_CHECKPOINT_ASSETS`
+sits beside `OMNI_ASSETS` in `omni_assets.py` and holds exactly one entry, "Kurdish
+OmniASR-7B v12 fused checkpoint (c750)": `kurdish_omniasr_7b_v12_c750.pt`, 15,610,646,560
+bytes, SHA-256 `f7b3a5e272e52d6c0677f78fd44c22cf6196a79a3a3057a85b7d72f759ff5fb2`.
+Adding an entry is an owner decision. A `SHA256SUMS` file is not an authority, because
+whoever writes the `.pt` can write it too (VEX control audit, 2026-10-14: CVE-2026-4538
+controls 1 and 2, CVE-2026-24747).
+
+**Identity `fused:<sha256>`.** The host checks that the path is a regular file (not
+followed through a link) whose filename and exact size match an allowlist entry, and
+takes that entry's SHA-256 as the identity. This is cheap, so it keys reuse before the
+worker runs, as D-260 requires. Before any loader, the worker opens the file no-follow
+and single-link, refuses a size other than the allowlisted one before hashing, then
+hashes the held bytes once per process and stat identity. It refuses any digest other
+than the allowlisted one and loads only through a `/proc/self/fd` alias of that
+descriptor. The worker accepts `lora:` with an adapter and `fused:` with a
+checkpoint, never crossed, never both; a stock request still claims nothing. The
+`fused_checkpoint` request field exists only on fused runs, so stock and LoRA
+requests stay byte-identical (D-136). `AsrProvenance.adapter` records the identity.
+
+**Selection.** `--omni-asr-checkpoint PATH` or `HAWEDIT_CHAMPION_CHECKPOINT` selects
+it; either is refused beside `--omni-asr-adapter` or `--stock-decoder`. Set means
+required: a missing `.pt`, a file off the allowlist or a byte mismatch is
+`ChampionUnavailable`, never a fallback to the LoRA champion or the base decoder.
+Unset keeps the LoRA default; making v12 the default is plan T7, an owner decision
+not taken here. The studio host binds the fused path, allowlisted digest and kind; its
+LoRA descriptor bytes are unchanged.
+
+**Not yet bound in the VEX gate.** The WSL runtime receipt, its parser, the probe and
+`tests/test_vex.py` consume `OMNI_ASSETS` through `provision_omni_assets`, which
+downloads each asset from its HTTPS URL. The fused file has no URL and is supplied by
+the operator, so it is not added there. Adding it would need a new provisioning step
+and would change the receipt's three-asset, 43,546,500,168-byte checks and VEX
+`applicability.assets`. Until the owner rewrites the D7/D8 justifications and binds it,
+the VEX's statement that "only the exact reviewed 43.5 GB checkpoint/tokenizer byte set
+may reach the loaders" does not cover fused runs. `security/wsl-asr-vex.json` is
+owner-only and unchanged here.
+
+**GPU 1 only, diverging from BLUEPRINT sections 2, 3 and 6 by owner rule.** LLM, CTC
+and validator default to `DEFAULT_ASR_DEVICE = "cuda:1"`; `HAWEDIT_ASR_*_DEVICE` still
+override. GPU 0 stays visible and the two-GPU setup checks remain, because
+`gpu_runtime` refuses `CUDA_VISIBLE_DEVICES`; Stage 1 simply does not use it. LLM and
+CTC now share one 24 GB card in parallel threads, and D-286's release still precedes
+the validator. That co-residency is unmeasured: plan T0 must record process-local
+peak bytes first, and a peak above about 22.5 GiB re-plans to sequential decoding.
+
+**:8000 coordination.** The omniasr server holds about 14.6 GB of GPU 1 and HawEdit
+never stops it. Before loading, the worker reads `torch.cuda.mem_get_info` for each
+Stage 1 device and halts naming the busy GPU below `DEFAULT_MIN_FREE_GPU_GIB = 20.0`
+(`HAWEDIT_ASR_MIN_FREE_GPU_GIB`). That number is judgment, not a measurement: an idle
+card passes and a card holding the server does not; T0 must replace it.
+`scripts/run-with-omniasr-paused.sh` is the operator route: it takes
+`app/MAINTENANCE` with its own PID (refusing an existing lock), runs `stop_server.sh`
+and the command, then always removes its own lock and runs `restart_server.sh`,
+keeping the command's exit status.
+
+No dependency, licence, model-default, spending or release change; BLOCKED #21 covers
+fused weights too. Synthetic fakes are not inference evidence: loading the real `.pt`
+with fairseq2 0.6, the completion contract on it, and VRAM peaks belong to T0.
+
+## D-332 - Re-decode a looping greedy segment once with beam 5, else halt (amends D-281)
+
+2026-10-14; owner-approved specs/v12-fused-model plan T8. The owner chose "Approve all
+T0–T8", which names "the T8 loop guard (beam-5 retry, else an honest halt)". Amends
+D-281's single-beam admission for exactly this case. BLUEPRINT sections 3 Stage 1 and
+8.1; D-260, D-278, D-331.
+
+**Why.** Measured on the omniasr side (research.md, 2026-10-13; RTX 3090 Ti, GPU 1,
+fairseq2 0.6, omnilingual-asr 0.2.0): greedy v12 loops on 4 of 922 FLEURS clips, and
+upstream stops a loop by compression ratio without EOS, so D-281 halts the whole run.
+Beam 5 removed the loop on 97 of 113 genuine greedy loops (median CER 89.6 to 10.8).
+
+**Rule.** Greedy decoding is unchanged for every segment. A segment is suspect when
+greedy has no sampled natural EOS (`NoNaturalEos`), when its text repeats a unit of
+1-4 words at least 4 times in a row, or when it exceeds
+`DEFAULT_LOOP_MAX_CHARS_PER_S = 30.0` (`HAWEDIT_LOOP_MAX_CHARS_PER_S`; measured
+references peak at 19.3). A suspect segment is decoded once more by the same loaded
+champion, audio and language with upstream `BEAM_RETRY_NBEST = 5` and upstream's other
+beam defaults. The retry is kept only if its selected hypothesis ended on a sampled
+natural EOS and its text passes both admission checks; otherwise `DecodeIncomplete`
+names the segment and both attempts. Contract refusals (version, class, source hash)
+never retry.
+
+**Beam completion.** Upstream returns row 0 after its last reorder. The observer
+records the generation's own state-bag reorders on that call's local bag, follows
+each row's ancestry to the EOS it inherited, and refuses a selected row still
+decoding at the length limit. An EOS first seen right after an upstream compression
+check (every 250 steps, past the window) cannot be told from that check's forced stop,
+so it is refused too: an honest halt rather than a guess.
+
+**Not a fallback.** It is a second decode of the same champion. Nothing trims repeats,
+splices attempts, guesses words or switches model. Each retried `SegmentConfidence`
+records `decode_mode: beam5_retry` and why; greedy segments omit both keys, so their
+artifact bytes are unchanged. The run report counts `beam5_retries`. The completion
+policy becomes `omni-natural-eos-greedy-beam5-retry-v1`, so cache records and
+checkpoint journals written under the single-beam policy refuse as D-281 specifies.
+
+**Residual risk.** 16 of the 113 measured loops still looped under beam (long read
+speech); those segments halt. Genuine stuttering can match the repeat rule and is
+retried, then halts if beam repeats it. Beam memory on one card and real upstream
+context-length types are T0 hardware facts. A CTC-length guard (arXiv 2408.09491)
+stays an option only after measurement.
