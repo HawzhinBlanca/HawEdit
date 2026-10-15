@@ -350,6 +350,8 @@ def test_native_owner_launcher_exit_not_completion(tmp_path: Path) -> None:
 def test_native_owner_abrupt_parent_death(tmp_path: Path) -> None:
     if not _available():
         return
+    if sys.platform != "win32":  # unreachable: _available() is True only on Windows
+        return
     barrier = tmp_path / "owner-ready.json"
     release = tmp_path / "release.txt"
     code = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -65,7 +66,7 @@ def test_executable_mutation_waits_for_released_windows_lease(tmp_path: Path) ->
 def test_executable_mutation_refuses_retained_windows_lease(tmp_path: Path) -> None:
     binary, replacement = _files(tmp_path)
     before = binary.read_bytes(), replacement.read_bytes()
-    if os.name != "nt":
+    if sys.platform != "win32":
         with pytest.raises(NativeProcessError, match="Windows"):
             _lease(binary)
         assert before == (binary.read_bytes(), replacement.read_bytes())

@@ -447,7 +447,7 @@ class LinuxSnapshot:
             ):
                 raise LinuxSnapshotError("Snapshot root must be an empty private owned directory")
             if mode is SnapshotMode.ROOTED_IMAGE:
-                launch_descriptions = frozenset()
+                launch_descriptions: frozenset[int] = frozenset()
                 if launch is not None:
                     from hawedit.linux_rooted_launch import RootedLaunch
 

@@ -302,6 +302,8 @@ def test_native_io_uncertain_original_handle_retains_memory_and_refuses_launch(
 def test_native_io_pending_reads_owner_death_signals_original_native_member(tmp_path: Path) -> None:
     if not available():
         return
+    if sys.platform != "win32":  # unreachable: available() is True only on Windows
+        return
     private = PrivateDirectory(tmp_path / "owner", exclusive=True)
     barrier, release = private.path / "ready.json", private.path / "release.txt"
     code = (

@@ -30,7 +30,7 @@ def private_file(path: Path, data: bytes) -> None:
 
 
 def directory_alias(link: Path, target: Path) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":
         result = subprocess.run(
             ["cmd", "/c", "mklink", "/J", str(link), str(target)],
             capture_output=True,

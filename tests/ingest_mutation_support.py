@@ -1,7 +1,7 @@
 """Preparation for deliberate byte drift of a disposable copied executable."""
 
 import math
-import os
+import sys
 import time
 from pathlib import Path
 
@@ -15,7 +15,7 @@ def replace_test_executable(replacement: Path, binary: Path, *, timeout_s: float
             replacement.replace(binary)
             return
         except PermissionError as exc:
-            if os.name != "nt" or exc.winerror not in (5, 32):
+            if sys.platform != "win32" or exc.winerror not in (5, 32):
                 raise
             remaining = deadline - time.monotonic()
             if remaining <= 0:
