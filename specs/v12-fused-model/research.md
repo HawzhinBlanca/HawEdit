@@ -184,3 +184,19 @@ Because one halt stops the whole run, a long video with hundreds of segments is 
   - **(b)** Accept the measured margin; the 24 GiB card holds 23.4 GiB reserved.
   - **(c)** Call `torch.cuda.empty_cache()` between segments. This trims caching slack but not the concurrent peak.
 - **Related omniasr finding (2026-10-14):** on WDDM, fairseq2's KV cache growth (16-step copies) plus PyTorch's caching allocator can spill heavily for long or batched beam decoding. HawEdit decodes one segment at a time, greedy, at 40 s or less, and the measurements above show that case is bounded. The T8 beam-5 retry decodes one segment with 5 rows, which raises KV memory about 5×, and that path is **unmeasured**. Measure it before T7.
+
+### T8 beam-5 retry path measured 2026-10-15
+- **Setup:** same as T0, with `T0_NBEST=5`; output `results/hawedit_t0_measure_nbest5.json`.
+
+| Segment | Wall time | Peak allocated | Peak reserved |
+|---|---|---|---|
+| 9.1 s | 6.1 s | 21.36 GiB | 23.15 GiB |
+| 19.2 s | **126.9 s** | 22.01 GiB | **24.38 GiB** |
+| 33.9 s | **586.2 s** | 22.94 GiB | **31.04 GiB** (WDDM spill of about 6 GB seen while it ran) |
+| 10 s loop clip | 21.3 s | 21.48 GiB | 23.78 GiB |
+
+- **Verdict:** with CTC-3B resident on the same 24 GB card, the T8 beam-5 retry overflows into shared RAM and is 15–45× slower. **T7 must not ship until the retry has its own memory plan.**
+- **Options:**
+  1. Move CTC-3B to the CPU for the retry only, then back.
+  2. Drop the retry and keep the honest halt.
+  3. Retry only on segments of 10 s or less.
