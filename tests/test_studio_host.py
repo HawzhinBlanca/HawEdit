@@ -19,6 +19,7 @@ from hawedit.environment import HostLock
 from hawedit.gemini import API_ROOT, Governance, VertexGeminiJudge
 from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.models import CheckpointIntegrityReport
+from hawedit.omni_assets import FusedCheckpointAsset
 from hawedit.studio_authorization import SignedStudioTransport
 from hawedit.studio_generation import ProducerSelection
 from hawedit.studio_private import PrivateDirectory
@@ -273,6 +274,50 @@ def test_host_admission_refuses_observed_drift(
     with pytest.raises(host.StudioHostError):
         host.capture_studio_deployment(observation["configuration"])
     assert observation["last_evidence"].exists(), "Retain refused evidence rather than deleting it"
+
+
+def allowed(digit: str) -> FusedCheckpointAsset:
+    return FusedCheckpointAsset("synthetic fused", "v12.pt", 1, digit * 64)
+
+
+def test_host_admission_records_a_fused_champion(
+    observation: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-331: the selected fused checkpoint is bound by its declared digest and kind."""
+    from hawedit import studio_host as host
+
+    checkpoint = observation["root"].path / "v12.pt"
+    monkeypatch.setattr(host, "resolve_champion_checkpoint", lambda: checkpoint)
+    monkeypatch.setattr(host, "fused_checkpoint_asset", lambda path: allowed("e"))
+    monkeypatch.setattr(host, "resolve_champion_adapter", lambda: pytest.fail("LoRA consulted"))
+    document = json.loads(
+        host.capture_studio_deployment(observation["configuration"]).canonical_json
+    )
+    assert document["champion"] == {
+        "path": str(checkpoint.absolute()),
+        "sha256": "e" * 64,
+        "kind": "fused",
+    }
+
+
+def test_host_admission_refuses_fused_champion_drift(
+    observation: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hawedit import studio_host as host
+
+    checkpoint = observation["root"].path / "v12.pt"
+    monkeypatch.setattr(host, "resolve_champion_checkpoint", lambda: checkpoint)
+    monkeypatch.setattr(host, "fused_checkpoint_asset", lambda path: allowed("e"))
+    original = vars(host)["run_live_gate"]
+
+    def changed(**kwargs: Any) -> dict[str, object]:
+        result: dict[str, object] = original(**kwargs)
+        monkeypatch.setattr(host, "fused_checkpoint_asset", lambda path: allowed("f"))
+        return result
+
+    monkeypatch.setattr(host, "run_live_gate", changed)
+    with pytest.raises(host.StudioHostError, match="drift"):
+        host.capture_studio_deployment(observation["configuration"])
 
 
 def _signed_host(

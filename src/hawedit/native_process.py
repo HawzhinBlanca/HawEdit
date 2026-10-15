@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import threading
 import time
 import weakref
@@ -252,7 +253,9 @@ def _path(value: Path, *, directory: bool) -> Path:
         raise NativeProcessError("Native launch refuses ambiguous paths")
     resolved = value.resolve(strict=True)
     info = resolved.lstat()
-    if bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+    if sys.platform == "win32" and bool(
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
         raise NativeProcessError("Native launch refuses reparse resources")
     if not (
         stat.S_ISDIR(info.st_mode)
@@ -298,6 +301,8 @@ def _held_path(k: Any, handle: int) -> Path:
 
 
 def _open_image(k: Any, path: Path, expected: str) -> BinaryIO:
+    if sys.platform != "win32":  # msvcrt is Windows-only; _libraries() already refused
+        raise NativeProcessError("Windows native loader unavailable")
     import msvcrt
 
     handle = k.CreateFileW(str(path), 0x80000000, 1, None, 3, 0x00200000, None)
@@ -423,6 +428,8 @@ class NativeJob:
                 ),
                 "Native job limits",
             )
+            if sys.platform != "win32":  # msvcrt is Windows-only; _libraries() already refused
+                raise NativeProcessError("Windows native loader unavailable")
             import msvcrt
 
             current = scope._k.GetCurrentProcess()
@@ -546,6 +553,8 @@ class NativeJob:
             raise NativeProcessError("Native scope is closed")
 
     def _verify_image(self) -> None:
+        if sys.platform != "win32":  # msvcrt is Windows-only; _libraries() already refused
+            raise NativeProcessError("Windows native loader unavailable")
         import msvcrt
 
         if self._image is None:

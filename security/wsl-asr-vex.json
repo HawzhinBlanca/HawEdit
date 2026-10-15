@@ -1,12 +1,13 @@
 {
   "schema": 1,
   "product": "hawedit-wsl-asr",
-  "reviewed": "2026-08-09",
-  "expires": "2026-09-08",
+  "reviewed": "2026-10-15",
+  "expires": "2026-11-14",
   "applicability": {
     "python": "3.12",
-    "source_sha256": "39e585d4bdb3b5a03dc376ee95eee1657f2233ee7ac970be6926a892ce2e4977",
+    "source_sha256": "18fe2dd71870faebd43e3adaafefdadf4ae1a7c12fec55817ac6debb2daefe37",
     "packages": {
+      "accelerate": "1.12.0",
       "omnilingual-asr": "0.2.0",
       "torch": "2.8.0",
       "transformers": "4.57.6"
@@ -45,7 +46,7 @@
       "justification": "The locked version remains in the scanner's affected range. The reviewed OmniASR route does not intentionally call torch.lstm_cell, but the transitive model graph is too large to claim that the primitive is unreachable.",
       "controls": [
         "The worker exposes only bounded audio transcription, not a Python or tensor-operation API.",
-        "Canonical model bytes and the complete dependency graph are identity-bound before use."
+        "On the receipt-backed WSL route the worker's source snapshot and dependency lock are identity-checked against the setup receipt before it starts; an explicit HAWEDIT_WSL_PYTHON/HAWEDIT_WSL_SOURCE or interpreter= override skips that check and is outside this disposition. The canonical OmniASR assets, and on a fused run the allowlisted v12 fused checkpoint, are size- and SHA-256-verified before load."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/issues/149626",
@@ -64,8 +65,8 @@
       "status": "affected",
       "justification": "The locked version remains scanner-affected. HawEdit does not accept TorchScript programs, but absence of every internal torch.jit.script call in the transitive graph has not been proven.",
       "controls": [
-        "No caller can submit Python, TorchScript, model code, or a model repository to the WSL worker.",
-        "Only HawEdit's fingerprinted worker snapshot and reviewed dependency lock execute."
+        "No caller can submit Python, TorchScript or model code to the WSL worker. The model paths a request may name are bound before any loader reads them: the validator directory to its models/integrity.json snapshot, a LoRA adapter bundle (safetensors) to the host's lora:<fingerprint> identity, and a fused checkpoint to the code allowlist FUSED_CHECKPOINT_ASSETS.",
+        "Only HawEdit's fingerprinted worker snapshot and reviewed dependency lock execute on the receipt-backed WSL route; an explicit HAWEDIT_WSL_PYTHON/HAWEDIT_WSL_SOURCE or interpreter= override bypasses the receipt and is outside this disposition."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/issues/149623",
@@ -85,7 +86,7 @@
       "justification": "The locked version remains scanner-affected. Sequence tensors exist in ASR and the review does not prove that torch.nn.utils.rnn.unpack_sequence is absent from all transitive execution.",
       "controls": [
         "Stage 0 bounds every speech segment below the OmniASR 40-second interface ceiling.",
-        "The worker accepts media through one schema-validated request instead of arbitrary tensor shapes."
+        "The worker accepts media only through a schema_version 2 JSON request whose fields it type-checks (a non-empty media_id; segment WAV paths contained in the request directory with integer millisecond bounds of at most 40 s) and accepts no tensors; unknown keys are ignored and the request file size is not bounded."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/issues/149622",
@@ -104,7 +105,7 @@
       "justification": "PyTorch 2.8.0 is explicitly named. The canonical ASR path does not intentionally call torch.linalg.lu, but the review does not elevate that observation into an unreachable claim for the full dependency graph.",
       "controls": [
         "Untrusted callers cannot invoke linear-algebra operations or provide tensor slices directly.",
-        "ASR work is isolated in the dedicated WSL worker and segment duration is bounded."
+        "On Windows (runtime auto or wsl) ASR runs in the dedicated WSL worker; runtime local, and auto off Windows, runs the same code in-process. Segment duration is bounded to 40 s on every route."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/issues/151401"
@@ -122,7 +123,7 @@
       "justification": "The reported interaction is between torch.rot90 and torch.randn_like. The WSL product route is audio-only, has no image augmentation or rotation stage, and exposes neither operation to callers.",
       "controls": [
         "The product boundary is the canonical audio ASR worker; visual pipelines do not execute inside this environment.",
-        "The worker request schema contains media paths and transcript output, not tensor operations."
+        "The worker request carries speech-segment paths and bounds plus model selection (validator directory, LoRA adapter or allowlisted fused checkpoint, and the claimed model identity), never tensor operations; the transcript goes to a separate output path."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/issues/147847"
@@ -155,10 +156,10 @@
       "package": "torch",
       "version": "2.8.0",
       "status": "not_affected",
-      "justification": "The advisory targets deserialization by the PT2 loading handler. HawEdit never accepts or loads a PT2 archive; the worker constructs the fixed OmniASR pipelines from the three separately verified canonical assets.",
+      "justification": "The advisory targets deserialization by the PT2 loading handler. HawEdit never accepts or loads a PT2 archive. The worker constructs the fixed OmniASR pipelines from the three separately verified canonical assets or, on a fused run, from CTC-3B and the tokenizer plus the v12 fused checkpoint, which is admitted only through the code allowlist FUSED_CHECKPOINT_ASSETS and goes through fairseq2's ordinary checkpoint loader, not the PT2 handler.",
       "controls": [
-        "No user-selected compiled model, export archive, package, or checkpoint path reaches a PyTorch loader.",
-        "The three permitted model assets are exact-size and SHA-256 allowlisted."
+        "No compiled model, export archive or torch.package is accepted or loaded. The only operator-selected checkpoint that reaches a PyTorch checkpoint loader is a fused checkpoint on FUSED_CHECKPOINT_ASSETS (exact filename, size and SHA-256); an operator-selected LoRA adapter is loaded as safetensors through held descriptors.",
+        "The three canonical OmniASR assets (OMNI_ASSETS) and the one v12 fused checkpoint (FUSED_CHECKPOINT_ASSETS: kurdish_omniasr_7b_v12_c750.pt, 15610646560 bytes, SHA-256 f7b3a5e272e52d6c0677f78fd44c22cf6196a79a3a3057a85b7d72f759ff5fb2) are exact-size and SHA-256 allowlisted in code."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/pull/176791"
@@ -175,11 +176,11 @@
       "package": "torch",
       "version": "2.8.0",
       "status": "affected",
-      "justification": "PyTorch 2.8.0 contains the affected weights_only unpickler and OmniASR loads .pt checkpoints. This is affected-but-mitigated, not unreachable: only the exact reviewed 43.5 GB checkpoint/tokenizer byte set may reach the loaders.",
+      "justification": "PyTorch 2.8.0 contains the affected weights_only unpickler and OmniASR loads .pt checkpoints. This is affected-but-mitigated, not unreachable: only reviewed byte sets may reach the loaders, namely the exact 43.5 GB canonical checkpoint/tokenizer set and, on a fused run, CTC-3B and the tokenizer plus the 15.6 GB v12 fused checkpoint (kurdish_omniasr_7b_v12_c750.pt, 15610646560 bytes, SHA-256 f7b3a5e272e52d6c0677f78fd44c22cf6196a79a3a3057a85b7d72f759ff5fb2) admitted only through the code allowlist FUSED_CHECKPOINT_ASSETS. applicability.assets lists only the three OMNI_ASSETS because the runtime receipt, its probe and the live gate derive their asset set from OMNI_ASSETS; the fused checkpoint is operator-supplied with no download URL, so it is bound by the code allowlist and the worker's held-descriptor verification, not by the receipt or this gate.",
       "controls": [
-        "All three OmniASR assets are bound by exact size and SHA-256 in this disposition and in the runtime receipt.",
-        "The worker rehashes no-follow regular-file descriptors before model construction and rejects symlinks, hardlinks, extra members, mutation, and card drift.",
-        "Verified descriptors remain open through pipeline construction, closing pathname replacement between verification and load."
+        "All three canonical OmniASR assets are bound by exact size and SHA-256 in this disposition and in the runtime receipt; the v12 fused checkpoint is bound by exact filename, size and SHA-256 in FUSED_CHECKPOINT_ASSETS only.",
+        "Before model construction the worker opens each loaded checkpoint no-follow as a single-link regular file and hashes the held descriptor, rejecting symlinks, hardlinks, size or digest mismatches, mutation during hashing, extra canonical members and card drift; a fused checkpoint is refused on a size mismatch before hashing and its stat identity is rechecked when the descriptor is released. Canonical assets are not rechecked after load.",
+        "Verified descriptors, canonical and fused, remain open through pipeline construction and reach fairseq2 only through descriptor aliases (/proc/self/fd or /dev/fd), closing pathname replacement between verification and load."
       ],
       "sources": [
         "https://github.com/pytorch/pytorch/security/advisories/GHSA-63cw-57p8-fm3p",
@@ -199,7 +200,7 @@
       "justification": "Transformers 4.57.6 is affected by config-driven remote-kernel loading. HawEdit uses this version, so the disposition relies on application controls rather than claiming the vulnerable library code is absent.",
       "controls": [
         "Every HawEdit-owned Transformers loader recursively rejects private implementation fields and repository-shaped public implementation fields before any loader call.",
-        "Remote code is disabled and model/config identities are fixed by the reviewed WSL lock and canonical asset/card checks."
+        "No loader in the WSL ASR product passes trust_remote_code=True, and nested trust_remote_code is refused; library versions are fixed by the reviewed WSL lock, the validator's checkpoint and config bytes by models/integrity.json, OmniASR's by the asset/card checks, and a LoRA adapter_config.json by its fingerprint. HawEdit's host-side VideoChat3 reader, outside this product boundary, does pass trust_remote_code=True."
       ],
       "sources": [
         "https://github.com/huggingface/transformers/commit/a7f8e7ff37d87d1a1a0c8cf607971c607741452f",
@@ -255,10 +256,67 @@
       "justification": "The flaw is in X-CLIP checkpoint conversion. The isolated product is audio ASR, contains no X-CLIP import or conversion call, and refuses non-allowlisted model types.",
       "controls": [
         "No checkpoint conversion utility or user-selected model type is exposed by the worker.",
-        "Canonical OmniASR asset and card identities are enforced before model construction."
+        "Canonical OmniASR card identities, and the size and SHA-256 of every canonical asset a run loads (all three, or CTC-3B and the tokenizer on a fused run), are enforced before model construction; a fused run's 7B weights come only from the code-allowlisted v12 checkpoint."
       ],
       "sources": [
         "https://www.zerodayinitiative.com/advisories/ZDI-25-1144/"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-4j2p-28q2-5m79",
+        "CVE-2026-69112",
+        "PYSEC-2026-3804"
+      ],
+      "package": "accelerate",
+      "version": "1.12.0",
+      "status": "affected",
+      "justification": "accelerate 1.12.0 is in the advisory's range with no fixed version listed. The Qwen3-ASR validator loads through Transformers with device_map, so accelerate-backed loading is reachable, and it has not been shown that the vulnerable sharded-index loaders (load_checkpoint_in_model, load_checkpoint_and_dispatch) are never called. Affected-but-mitigated: OmniASR loads single-file fairseq2 checkpoints, and the validator's verified file set contains no sharded index.",
+      "controls": [
+        "The validator directory is opened only through verified_checkpoint_access, which holds a shared checkpoint lock through every parse and reopen (D-115) and verifies the exact file set, sizes and digests of the pinned snapshot in models/integrity.json; that set has a single model.safetensors and no model.safetensors.index.json, and any extra or linked member outside .cache/ is refused.",
+        "assert_transformers_config_safe checks the verified configuration before qwen_asr is imported or any Transformers loader runs."
+      ],
+      "sources": [
+        "https://osv.dev/vulnerability/GHSA-4j2p-28q2-5m79",
+        "https://osv.dev/vulnerability/PYSEC-2026-3804"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-xrqw-3rrv-vx5w",
+        "CVE-2026-9856",
+        "PYSEC-2026-3929"
+      ],
+      "package": "transformers",
+      "version": "4.57.6",
+      "status": "not_affected",
+      "justification": "The flaw is in save_pretrained() for tokenizers and processors, which writes chat_template keys as filenames. The WSL ASR product never saves a tokenizer, processor or model: no save_pretrained call exists under src/hawedit, so the vulnerable code is not on any HawEdit execution path.",
+      "controls": [
+        "tests/test_vex.py fails if save_pretrained appears anywhere under src/hawedit.",
+        "The worker's outputs are its transcript result and operation journal records, never model, tokenizer or processor files."
+      ],
+      "sources": [
+        "https://osv.dev/vulnerability/GHSA-xrqw-3rrv-vx5w",
+        "https://osv.dev/vulnerability/PYSEC-2026-3929"
+      ]
+    },
+    {
+      "advisory_ids": [
+        "GHSA-x9r9-c232-4q39",
+        "CVE-2026-80047",
+        "PYSEC-2026-4174"
+      ],
+      "package": "transformers",
+      "version": "4.57.6",
+      "status": "affected",
+      "justification": "load_custom_generate() writes a remote custom_generate/generate.py into the Hugging Face modules cache before the trust check, with no fixed version listed. HawEdit never passes custom_generate and loads only local verified checkpoints, but the WSL worker does not set HF_HUB_OFFLINE or otherwise deny network access, so a Hub fetch inside third-party generation code is not excluded by HawEdit's code. Affected-but-mitigated rather than not_affected.",
+      "controls": [
+        "tests/test_vex.py fails if custom_generate appears anywhere under src/hawedit.",
+        "The validator is constructed only from a local directory whose exact file set is verified against models/integrity.json (no custom_generate/ member; extra members outside .cache/ are refused), and OmniASR decodes through fairseq2/omnilingual-asr, not Transformers generate()."
+      ],
+      "sources": [
+        "https://osv.dev/vulnerability/GHSA-x9r9-c232-4q39",
+        "https://osv.dev/vulnerability/PYSEC-2026-4174"
       ]
     }
   ]

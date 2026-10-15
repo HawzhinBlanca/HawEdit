@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
 
 from hawedit.asr import (
+    DEFAULT_ASR_DEVICE,
     VALIDATOR_MODEL_ID,
     OmniSegmentBackend,
     SegmentTranscript,
@@ -220,18 +221,21 @@ class OperationJournal:
 
 def _segment(value: Any) -> SegmentTranscript:
     try:
-        if not isinstance(value, dict) or set(value) != {
-            "text_raw",
-            "ctc_text",
-            "words",
-            "mean_logprob",
-        }:
+        base = {"text_raw", "ctc_text", "words", "mean_logprob"}
+        # D-332 added decode provenance; the binding's completion policy already refuses a
+        # journal written before it, so a four-field record here is a greedy draft.
+        if not isinstance(value, dict) or set(value) not in (
+            base,
+            base | {"decode_mode", "retry_reason"},
+        ):
             raise ValueError("invalid segment fields")
         return SegmentTranscript(
             value["text_raw"],
             value["ctc_text"],
             tuple(Word(**word) for word in value["words"]),
             value["mean_logprob"],
+            value.get("decode_mode", "greedy"),
+            value.get("retry_reason"),
         )
     except (AttributeError, TypeError, ValueError, KeyError) as exc:
         raise RuntimeError("ASR checkpoint segment is invalid") from exc
@@ -329,9 +333,9 @@ def worker_journal(
         "devices": {
             name: os.environ.get(name, default)
             for name, default in (
-                ("HAWEDIT_ASR_LLM_DEVICE", "cuda:0"),
-                ("HAWEDIT_ASR_CTC_DEVICE", "cuda:1"),
-                ("HAWEDIT_ASR_VALIDATOR_DEVICE", "cuda:1"),
+                ("HAWEDIT_ASR_LLM_DEVICE", DEFAULT_ASR_DEVICE),
+                ("HAWEDIT_ASR_CTC_DEVICE", DEFAULT_ASR_DEVICE),
+                ("HAWEDIT_ASR_VALIDATOR_DEVICE", DEFAULT_ASR_DEVICE),
             )
         },
         "audio": [

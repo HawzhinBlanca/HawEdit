@@ -16,6 +16,7 @@ run on real weights.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -31,6 +32,7 @@ import pytest
 
 from hawedit.asr import (
     CHAMPION_ADAPTER_ENV,
+    CHAMPION_CHECKPOINT_ENV,
     LONG_AUDIO_THRESHOLD_S,
     AsrProductionFailure,
     ASRResult,
@@ -50,13 +52,19 @@ from hawedit.asr import (
     create_omni_asr_producer,
     long_audio_failure_rate,
     resolve_champion_adapter,
+    resolve_champion_checkpoint,
     transcribe_prepared_segments,
     validate_adapter,
 )
-from hawedit.asr_worker import run_request
+from hawedit.asr_worker import assert_gpu_headroom, run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
-from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
+from hawedit.omni_assets import (
+    CANONICAL_CTC_CARD,
+    CANONICAL_LLM_CARD,
+    FusedCheckpointAsset,
+    OmniAssetError,
+)
 from hawedit.registry import ModelEntry, ModelExcluded, ModelNotInRegistry
 from hawedit.transcripts import (
     AsrProvenance,
@@ -964,6 +972,19 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     assert "transcribe" not in loaded
 
 
+def test_stage_1_defaults_to_gpu_1_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-331: LLM, CTC and validator all default to GPU 1; GPU 0 is never chosen silently."""
+    for name in ("LLM", "CTC", "VALIDATOR"):
+        monkeypatch.delenv(f"HAWEDIT_ASR_{name}_DEVICE", raising=False)
+    backend = OmniAsrBackend()
+    assert (backend.llm_device, backend.ctc_device) == ("cuda:1", "cuda:1")
+    (tmp_path / "validator").mkdir()
+    assert QwenSoraniValidator(tmp_path / "validator").device == "cuda:1"
+    # An explicit operator choice is still honoured.
+    monkeypatch.setenv("HAWEDIT_ASR_LLM_DEVICE", "cuda:0")
+    assert OmniAsrBackend().llm_device == "cuda:0"
+
+
 def test_qwen_validator_device_env_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1343,6 +1364,7 @@ def _capture_wsl_request(
     adapter: Path | None,
     *,
     fault: str | None = None,
+    fused: Path | None = None,
 ) -> dict[str, Any]:
     """Run the producer with the worker faked, and return the request it wrote.
 
@@ -1393,7 +1415,9 @@ def _capture_wsl_request(
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
     monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
     monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
-    WslOmniAsrProducer(interpreter="/opt/hawedit/python", lora_adapter=adapter).transcribe(
+    WslOmniAsrProducer(
+        interpreter="/opt/hawedit/python", lora_adapter=adapter, fused_checkpoint=fused
+    ).transcribe(
         "zar38",
         tmp_path / "audio.wav",
         (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
@@ -1416,6 +1440,26 @@ def test_the_wsl_request_carries_the_adapter_across_the_boundary(
     assert request["lora_adapter"] == "/mnt/c/shared", (
         "the adapter did not reach the worker, so it would have run base weights"
     )
+
+
+def test_the_wsl_request_carries_the_fused_checkpoint_across_the_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-331: the fused champion crosses the same single channel under its own identity."""
+    (tmp_path / "v12").mkdir()
+    checkpoint = tmp_path / "v12" / "kurdish_omniasr_7b_v12_c750.pt"
+    checkpoint.write_bytes(b"synthetic-fused-weights")
+    digest = hashlib.sha256(b"synthetic-fused-weights").hexdigest()
+    allowed = FusedCheckpointAsset("synthetic", checkpoint.name, 23, digest)
+    monkeypatch.setattr("hawedit.omni_assets.FUSED_CHECKPOINT_ASSETS", (allowed,))
+
+    request = _capture_wsl_request(
+        monkeypatch, tmp_path, tmp_path / "stage1", None, fused=checkpoint
+    )
+
+    assert request["fused_checkpoint"] == "/mnt/c/shared"
+    assert request["model_identity"] == f"fused:{digest}"
+    assert "lora_adapter" not in request
 
 
 def test_a_stock_wsl_request_contains_only_the_required_schema_fields(
@@ -1568,6 +1612,26 @@ def test_the_environment_override_wins_over_the_defaults(tmp_path: Path) -> None
     assert found == bundle
 
 
+def test_the_fused_champion_environment_selects_or_halts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-331: unset keeps the LoRA default; set means that checkpoint or an honest halt."""
+    assert resolve_champion_checkpoint(env={}) is None
+    assert resolve_champion_checkpoint(env={CHAMPION_CHECKPOINT_ENV: "  "}) is None
+    (tmp_path / "v12").mkdir()
+    checkpoint = tmp_path / "v12" / "v12.pt"
+    checkpoint.write_bytes(b"fused")
+    digest = hashlib.sha256(b"fused").hexdigest()
+    selected = {CHAMPION_CHECKPOINT_ENV: str(checkpoint)}
+    with pytest.raises(ChampionUnavailable, match="allowlist"):
+        resolve_champion_checkpoint(env=selected)
+    allowed = FusedCheckpointAsset("synthetic", "v12.pt", 5, digest)
+    monkeypatch.setattr("hawedit.omni_assets.FUSED_CHECKPOINT_ASSETS", (allowed,))
+    assert resolve_champion_checkpoint(env=selected) == checkpoint
+    with pytest.raises(ChampionUnavailable, match="missing"):
+        resolve_champion_checkpoint(env={CHAMPION_CHECKPOINT_ENV: str(tmp_path / "absent.pt")})
+
+
 @pytest.mark.parametrize("adapted", [False, True])
 def test_host_refuses_foreign_worker_adapter_provenance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, adapted: bool
@@ -1642,3 +1706,45 @@ def test_producer_refuses_identity_drift_during_inference(tmp_path: Path, route:
         with pytest.raises(ValueError, match="identity changed"):
             run_request(request, output, backend=backend)
     assert not output.exists()
+
+
+def test_gpu_headroom_halts_naming_the_busy_gpu() -> None:
+    """D-331: the :8000 server's ~14.6 GB on GPU 1 is an honest halt, never a divert."""
+    gib = 1024**3
+    seen: list[int] = []
+
+    def busy(index: int) -> tuple[int, int]:
+        seen.append(index)
+        return (9 * gib, 24 * gib)
+
+    with pytest.raises(RuntimeError, match=r"GPU 1 has 9\.0 of 24\.0 GiB free.*:8000"):
+        assert_gpu_headroom(("cuda:1", "cuda:1"), busy, environ={})
+    assert seen == [1], "each distinct device is checked once"
+    assert_gpu_headroom(("cuda:1",), lambda index: (23 * gib, 24 * gib), environ={})
+    assert_gpu_headroom(("cuda:1",), busy, environ={"HAWEDIT_ASR_MIN_FREE_GPU_GIB": "8"})
+    assert_gpu_headroom(("cpu",), lambda index: pytest.fail("cpu has no GPU budget"), environ={})
+
+
+def test_worker_checks_gpu_headroom_before_loading_the_real_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment, 1.0)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-before-inference",
+                "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    busy = SimpleNamespace(cuda=SimpleNamespace(mem_get_info=lambda index: (0, 24 * 1024**3)))
+    monkeypatch.setitem(sys.modules, "torch", busy)
+    monkeypatch.setattr(OmniAsrBackend, "_load", lambda self: pytest.fail("loaded on a busy GPU"))
+    with pytest.raises(RuntimeError, match="GPU 1 has 0.0"):
+        run_request(request, tmp_path / "output.json")
+    assert not (tmp_path / "output.json").exists()

@@ -6,6 +6,7 @@ import ctypes
 import math
 import os
 import struct
+import sys
 import threading
 import time
 import uuid
@@ -58,6 +59,12 @@ def _error(operation: str, code: int | None = None) -> NativeIOError:
     reader = getattr(ctypes, "get_last_error", None)
     selected = code if code is not None else int(reader()) if callable(reader) else -1
     return NativeIOError(f"{operation}: Win32 error {selected}")
+
+
+def _last_error() -> int:
+    if sys.platform != "win32":  # ctypes.get_last_error is Windows-only; _libraries() refused
+        raise NativeIOError("Windows native IO loader unavailable")
+    return int(ctypes.get_last_error())
 
 
 def _check(value: object, operation: str) -> None:
@@ -243,6 +250,8 @@ class _NativePipe:
                 raise _error("Private pipe client creation")
             try:
                 _inspect_private_pipe(int(client), sid)
+                if sys.platform != "win32":  # msvcrt is Windows-only; _libraries() refused
+                    raise NativeIOError("Windows native IO loader unavailable")
                 import msvcrt
 
                 fd = msvcrt.open_osfhandle(
@@ -257,7 +266,7 @@ class _NativePipe:
                 os.close(fd)
                 raise
             connected = self.k.ConnectNamedPipe(self.handle, ctypes.byref(self.overlap))
-            code = 0 if connected else int(ctypes.get_last_error())
+            code = 0 if connected else _last_error()
             if code == 997:
                 self.pending = True
                 raise NativeIOError("Private pipe connection unexpectedly pending")
@@ -301,7 +310,7 @@ class _NativePipe:
         result = self.k.GetOverlappedResult(
             self.handle, ctypes.byref(self.overlap), ctypes.byref(count), False
         )
-        code = 0 if result else int(ctypes.get_last_error())
+        code = 0 if result else _last_error()
         if code == 996:
             return None
         if code not in (0, 995, 109, 232):
@@ -330,7 +339,7 @@ class _NativePipe:
             result = self.k.WriteFile(
                 self.handle, self.buffer, len(data), ctypes.byref(count), ctypes.byref(self.overlap)
             )
-        code = 0 if result else int(ctypes.get_last_error())
+        code = 0 if result else _last_error()
         if code == 997:
             self.pending = True
             return None
@@ -383,7 +392,7 @@ class _NativePipe:
             self.close_child()
             if self.pending:
                 result = self.k.CancelIoEx(self.handle, ctypes.byref(self.overlap))
-                code = 0 if result else int(ctypes.get_last_error())
+                code = 0 if result else _last_error()
                 if code not in (0, 1168):
                     raise _error("Native IO cancellation request", code)
                 deadline = time.monotonic() + 5

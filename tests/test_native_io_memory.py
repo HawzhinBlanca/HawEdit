@@ -44,6 +44,8 @@ def _available() -> bool:
 
 
 def _query(address: int) -> _MemoryInfo:
+    if sys.platform != "win32":  # called only after _available() is True
+        raise RuntimeError("VirtualQuery is a Windows probe")
     loader = ctypes.WinDLL
     k = loader("kernel32", use_last_error=True)
     k.VirtualQuery.argtypes = [w.LPVOID, ctypes.POINTER(_MemoryInfo), ctypes.c_size_t]
@@ -117,6 +119,8 @@ def test_native_io_native_arena_survives_cancel_request(reading: bool) -> None:
 
 def test_native_io_pending_arena_survives_python_owner_collection() -> None:
     if not _available():
+        return
+    if sys.platform != "win32":  # unreachable: _available() is True only on Windows
         return
     api = _api()
     pipe = api._NativePipe(reading=True)

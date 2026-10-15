@@ -126,7 +126,7 @@ def _install_success_mocks(
         ),
     )
     monkeypatch.setattr(gate, "_find_uv", lambda *_args, **_kwargs: "/home/ai/.local/bin/uv")
-    monkeypatch.setattr(gate, "_utc_now", lambda: datetime(2026, 8, 9, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr(gate, "_utc_now", lambda: datetime(2026, 10, 15, 12, 0, tzinfo=UTC))
 
     def run(command: list[str], **_kwargs: object) -> gate.ProcessOutput:
         commands.append(command)
@@ -211,9 +211,9 @@ def test_live_gate_runs_exact_pinned_contract_and_publishes_bound_evidence(
     assert persisted["audit_tool"]["package_count"] == len(gate.AUDIT_DISTRIBUTIONS)
     assert persisted["runtime"]["source_sha256"] == receipt.source_sha256
     assert persisted["runtime"]["asset_bytes"] == 43_546_500_168
-    assert persisted["audit"]["dependencies"] == 3
-    assert persisted["audit"]["findings"] == 12
-    assert persisted["evaluation"]["matched_dispositions"] == 12
+    assert persisted["audit"]["dependencies"] == 4
+    assert persisted["audit"]["findings"] == 15
+    assert persisted["evaluation"]["matched_dispositions"] == 15
     assert persisted["audit"]["report"] == _audit_report()
 
 

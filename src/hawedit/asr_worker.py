@@ -15,6 +15,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,36 @@ def _integer(value: object, field: str, index: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"ASR worker segment {index} {field} must be an integer")
     return value
+
+
+MIN_FREE_GPU_GIB_ENV = "HAWEDIT_ASR_MIN_FREE_GPU_GIB"
+# Judgment, not a measurement (D-331): an idle 24 GiB card passes, a card the omniasr :8000
+# server holds (~14.6 GB) does not. The T0 hardware run must replace it with the measured peak.
+DEFAULT_MIN_FREE_GPU_GIB = 20.0
+
+
+def assert_gpu_headroom(
+    devices: Iterable[str],
+    mem_get_info: Callable[[int], tuple[int, int]],
+    environ: Mapping[str, str] = os.environ,
+) -> None:
+    """Halt before loading anything when another process holds a Stage 1 GPU (D-260)."""
+    try:
+        need_gib = float(environ.get(MIN_FREE_GPU_GIB_ENV, DEFAULT_MIN_FREE_GPU_GIB))
+    except ValueError as exc:
+        raise ValueError(f"{MIN_FREE_GPU_GIB_ENV} must be a number of GiB") from exc
+    for device in sorted(set(devices)):
+        if not device.startswith("cuda:"):
+            continue
+        index = int(device.removeprefix("cuda:"))
+        free, total = mem_get_info(index)
+        if free < need_gib * 1024**3:
+            raise RuntimeError(
+                f"GPU {index} has {free / 1024**3:.1f} of {total / 1024**3:.1f} GiB free; Stage 1 "
+                f"needs {need_gib:.1f} GiB ({MIN_FREE_GPU_GIB_ENV}). Another process is using it "
+                "(e.g. the omniasr :8000 server: run through scripts/run-with-omniasr-paused.sh). "
+                "Refusing rather than drafting on another device or model."
+            )
 
 
 def run_request(
@@ -167,20 +198,41 @@ def _infer_request(
             "ASR worker request names a LoRA adapter but a backend was supplied; the adapter "
             "would be ignored and its transcript filed under the adapter's name anyway"
         )
+    # The fused champion (D-331) follows the same rules under its own identity prefix, and
+    # neither kind may stand in for the other.
+    fused = payload.get("fused_checkpoint")
+    if fused is not None and not isinstance(fused, str):
+        raise ValueError("ASR worker request fused_checkpoint must be a path string")
+    if fused is not None and adapter is not None:
+        raise ValueError("ASR worker request names both a LoRA adapter and a fused checkpoint")
+    if fused is not None and backend is not None:
+        raise ValueError(
+            "ASR worker request names a fused checkpoint but a backend was supplied; the "
+            "checkpoint would be ignored and its transcript filed under its name anyway"
+        )
     claimed_identity = payload.get("model_identity")
-    if adapter is not None:
+    if adapter is not None or fused is not None:
+        kind, weights = ("lora", adapter) if adapter is not None else ("fused", fused)
         if (
-            not adapter.strip()
+            not weights
+            or not weights.strip()
             or not isinstance(claimed_identity, str)
-            or re.fullmatch(r"lora:[a-f0-9]{64}", claimed_identity) is None
+            or re.fullmatch(rf"{kind}:[a-f0-9]{{64}}", claimed_identity) is None
         ):
             raise ValueError("ASR worker requires a current complete adapter identity")
     elif claimed_identity is not None:
         raise ValueError("ASR worker stock request cannot claim an adapter identity")
-    model = backend or OmniAsrBackend(lora_adapter=Path(adapter) if adapter is not None else None)
+    model = backend or OmniAsrBackend(
+        lora_adapter=Path(adapter) if adapter is not None else None,
+        fused_checkpoint=Path(fused) if fused is not None else None,
+    )
     expected_identity = getattr(model, "adapter_name", None)
     if claimed_identity != expected_identity:
         raise ValueError("ASR worker adapter identity differs from the host request")
+    if backend is None and isinstance(model, OmniAsrBackend):
+        import torch
+
+        assert_gpu_headroom((model.llm_device, model.ctc_device), torch.cuda.mem_get_info)
     with ExitStack() as leases:
         journal = (
             leases.enter_context(

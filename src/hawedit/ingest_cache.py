@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import stat
+import sys
 import time
 import uuid
 from collections.abc import Iterator
@@ -56,7 +57,10 @@ def _plain(path: Path, *, directory: bool = False, single_link: bool = True) -> 
     valid = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
     if (
         not valid
-        or bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        or (
+            sys.platform == "win32"
+            and bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        )
         or (not directory and single_link and info.st_nlink != 1)
     ):
         raise IngestCacheError("Ingest cache refuses linked or nonregular storage")

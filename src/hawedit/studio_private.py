@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import sys
 import uuid
 from contextlib import suppress
 from pathlib import Path
@@ -42,7 +43,9 @@ def _identity(info: os.stat_result) -> tuple[int, int, int]:
 
 def _plain(path: Path, *, directory: bool) -> os.stat_result:
     info = path.lstat()
-    reparse = bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    reparse = sys.platform == "win32" and bool(
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
     valid = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
     if not valid or reparse or (not directory and info.st_nlink != 1):
         raise StudioStorageError("Studio private journal refuses linked or nonregular storage")

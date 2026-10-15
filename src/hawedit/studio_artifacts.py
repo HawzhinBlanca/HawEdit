@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -85,7 +86,9 @@ def _metadata(info: os.stat_result) -> tuple[int, ...]:
 
 
 def _plain(info: os.stat_result, *, directory: bool) -> None:
-    reparse = bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    reparse = sys.platform == "win32" and bool(
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
     valid = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
     if reparse or not valid or (not directory and info.st_nlink != 1):
         raise ArtifactError("Linked or non-regular artifact evidence is refused")

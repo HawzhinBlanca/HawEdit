@@ -489,7 +489,11 @@ def _probe_local_omni_runtime() -> tuple[str, Path, int]:
     if str(getattr(torchaudio, "__version__", "")).split("+", 1)[0] != versions["torchaudio"]:
         raise RuntimeError("imported torchaudio version disagrees with installed package metadata")
     cuda = getattr(torch, "cuda", None)
-    device_count = cuda.device_count() if callable(getattr(cuda, "device_count", None)) else 0
+    device_count = (
+        cuda.device_count()
+        if cuda is not None and callable(getattr(cuda, "device_count", None))
+        else 0
+    )
     if (
         cuda is None
         or not callable(getattr(cuda, "is_available", None))

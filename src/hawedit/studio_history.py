@@ -6,6 +6,7 @@ import hashlib
 import math
 import os
 import stat
+import sys
 import time
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
@@ -53,7 +54,8 @@ def _root(root: Path) -> None:
     try:
         info = root.lstat()
         if not stat.S_ISDIR(info.st_mode) or (
-            getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            sys.platform == "win32"
+            and getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
         ):
             raise HistoryError("Historical storage must be an unlinked directory", status=503)
     except OSError as exc:
