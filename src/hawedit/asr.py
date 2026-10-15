@@ -1098,41 +1098,77 @@ class OmniAsrBackend:
         )
         return transcribe_completed(beam, audio_path, self.language, nbest=BEAM_RETRY_NBEST)
 
-    def _draft_text(
-        self, pipeline: Any, audio_path: Path, duration_s: float
-    ) -> tuple[str, str | None]:
-        """Greedy as before; a suspect segment gets one beam-5 retry, else halts (D-332).
+    def _greedy_draft(self, pipeline: Any, audio_path: Path, duration_s: float) -> tuple[str, str]:
+        """Greedy as before; returns the text and why it is suspect ("" when clean, D-332)."""
+        try:
+            text = _one_draft(self._transcribe_llm(pipeline, audio_path))
+        except NoNaturalEos as exc:
+            return "", f"no natural EOS ({exc})"
+        return text, loop_suspect(text, duration_s) or ""
+
+    def _beam_retry(
+        self, llm: Any, ctc: Any, audio_path: Path, duration_s: float, reason: str
+    ) -> str:
+        """One beam-5 retry of a suspect segment, else halt (D-332).
 
         Never trims repeats, splices the attempts or falls back to another model.
         """
-        try:
-            text = _one_draft(self._transcribe_llm(pipeline, audio_path))
-            reason = loop_suspect(text, duration_s)
-        except NoNaturalEos as exc:
-            reason = f"no natural EOS ({exc})"
-        if reason is None:
-            return text, None
-        try:
-            retried = _one_draft(self._transcribe_llm_beam(pipeline, audio_path))
-            problem = loop_suspect(retried, duration_s)
-        except NoNaturalEos as exc:
-            problem = f"no natural EOS ({exc})"
+        with self._ctc_parked(ctc):
+            try:
+                retried = _one_draft(self._transcribe_llm_beam(llm, audio_path))
+                problem = loop_suspect(retried, duration_s)
+            except NoNaturalEos as exc:
+                problem = f"no natural EOS ({exc})"
         if problem is not None:
             raise DecodeIncomplete(
                 f"segment {audio_path.name}: greedy attempt: {reason}; beam-5 retry: {problem}"
             )
-        return retried, reason
+        return retried
+
+    @contextmanager
+    def _ctc_parked(self, ctc: Any) -> Iterator[None]:
+        """D-332 option 1: beam 5 beside a resident CTC-3B overflows one 24 GB card.
+
+        Only when both models share a CUDA device, CTC waits on the CPU for the retry and always
+        returns; if it cannot, the run halts rather than aligning on the CPU or another model.
+        """
+        if self.llm_device != self.ctc_device or not self.ctc_device.startswith("cuda"):
+            yield
+            return
+        try:
+            self._park_ctc(ctc)
+            yield
+        finally:
+            try:
+                self._restore_ctc(ctc)
+            except Exception as exc:
+                raise DecodeIncomplete(
+                    f"CTC-3B could not return to {self.ctc_device} after the beam-5 retry; "
+                    "halting rather than continuing with CTC off its device"
+                ) from exc
+
+    def _park_ctc(self, ctc: Any) -> None:
+        import torch
+
+        ctc.model.to("cpu")
+        torch.cuda.empty_cache()
+
+    def _restore_ctc(self, ctc: Any) -> None:
+        ctc.model.to(self.ctc_device)
 
     def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
         expected_identity = self.adapter_name
         llm, ctc = self._load()
-        # The two model forwards are independent and live on different GPUs. CTC does not need
-        # the LLM text until the cheap Viterbi projection after both complete.
+        # The two greedy forwards are independent. CTC does not need the LLM text until the
+        # cheap Viterbi projection after both complete.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="omniasr") as executor:
-            text_future = executor.submit(self._draft_text, llm, audio_path, duration_s)
+            text_future = executor.submit(self._greedy_draft, llm, audio_path, duration_s)
             emissions_future = executor.submit(self._ctc_emissions, ctc, audio_path)
             text, retry_reason = text_future.result()
             log_probs, frame_count, ctc_text = emissions_future.result()
+        if retry_reason:
+            # After the join, so no CTC forward is running when the retry parks CTC (D-332).
+            text = self._beam_retry(llm, ctc, audio_path, duration_s, retry_reason)
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
         if self.adapter_name != expected_identity:
             raise RuntimeError("ASR adapter identity changed during segment inference")
@@ -1141,8 +1177,8 @@ class OmniAsrBackend:
             ctc_text,
             words,
             _mean_aligned_logprob(words),
-            "greedy" if retry_reason is None else "beam5_retry",
-            retry_reason,
+            "beam5_retry" if retry_reason else "greedy",
+            retry_reason or None,
         )
 
     def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:

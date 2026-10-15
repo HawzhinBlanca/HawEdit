@@ -227,6 +227,12 @@ class CompletionBackend(OmniAsrBackend):
     def _ctc_emissions(self, item: object, audio_path: Path) -> tuple[object, int, str]:
         return object(), 100, "speech"
 
+    def _park_ctc(self, ctc: object) -> None:
+        pass  # D-332 option 1: no real CTC model to move in this fake.
+
+    def _restore_ctc(self, ctc: object) -> None:
+        pass
+
     def _align_emissions(
         self,
         item: object,
@@ -461,10 +467,29 @@ def test_beam_observer_refuses_a_greedy_configured_generator() -> None:
 
 
 class RetryBackend(OmniAsrBackend):
-    def __init__(self, greedy: object, beam: object) -> None:
+    def __init__(
+        self,
+        greedy: object,
+        beam: object,
+        *,
+        ctc_device: str = "cuda:1",
+        restore_error: Exception | None = None,
+    ) -> None:
         super().__init__()
         self.greedy, self.beam = greedy, beam
         self.calls: list[str] = []
+        # Fixed rather than read from HAWEDIT_ASR_*_DEVICE, so the CTC parking path is exact.
+        self.llm_device, self.ctc_device = "cuda:1", ctc_device
+        self.restore_error = restore_error
+        self.events: list[str] = []
+
+    def _park_ctc(self, ctc: object) -> None:
+        self.events.append("park")
+
+    def _restore_ctc(self, ctc: object) -> None:
+        self.events.append("restore")
+        if self.restore_error is not None:
+            raise self.restore_error
 
     def _load(self) -> tuple[object, object]:
         return object(), object()
@@ -480,9 +505,11 @@ class RetryBackend(OmniAsrBackend):
 
     def _transcribe_llm_beam(self, item: Any, audio_path: Path) -> list[str]:
         self.calls.append("beam5")
+        self.events.append("beam5")
         return self._decode(self.beam)
 
     def _ctc_emissions(self, item: object, audio_path: Path) -> tuple[object, int, str]:
+        self.events.append("ctc")
         return object(), 100, "ctc"
 
     def _align_emissions(
@@ -529,6 +556,54 @@ def test_contract_refusal_is_not_retried() -> None:
     with pytest.raises(DecodeIncomplete, match="Unsupported decoder"):
         backend.transcribe_segment(Path("speech-0007.wav"), 5.0)
     assert backend.calls == ["greedy"]
+
+
+def test_shared_device_beam_retry_parks_ctc_on_cpu_and_restores_it() -> None:
+    """D-332 option 1: the retry runs only after this segment's CTC forward has joined."""
+    backend = RetryBackend(LOOP, "ئەمە زۆر باشە")
+    item = backend.transcribe_segment(Path("speech-0007.wav"), 5.0)
+    assert backend.events == ["ctc", "park", "beam5", "restore"]
+    assert item.decode_mode == "beam5_retry"
+
+
+def test_separate_devices_never_move_ctc() -> None:
+    backend = RetryBackend(LOOP, "ئەمە زۆر باشە", ctc_device="cuda:0")
+    item = backend.transcribe_segment(Path("speech-0007.wav"), 5.0)
+    assert backend.events == ["ctc", "beam5"]
+    assert item.decode_mode == "beam5_retry"
+
+
+@pytest.mark.parametrize("beam", [RuntimeError("beam blew up"), LOOP], ids=["raises", "loops"])
+def test_failed_beam_retry_still_restores_ctc(beam: object) -> None:
+    backend = RetryBackend(LOOP, beam)
+    with pytest.raises((RuntimeError, DecodeIncomplete)):
+        backend.transcribe_segment(Path("speech-0007.wav"), 5.0)
+    assert backend.events == ["ctc", "park", "beam5", "restore"]
+
+
+def test_ctc_that_cannot_return_to_its_device_halts_the_run() -> None:
+    backend = RetryBackend(LOOP, "ئەمە زۆر باشە", restore_error=RuntimeError("CUDA OOM"))
+    with pytest.raises(DecodeIncomplete, match="CTC-3B could not return to cuda:1") as caught:
+        backend.transcribe_segment(Path("speech-0007.wav"), 5.0)
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert backend.events == ["ctc", "park", "beam5", "restore"]
+
+
+def test_clean_greedy_segment_never_moves_ctc_and_its_bytes_do_not_change() -> None:
+    from hawedit.asr import _assemble_canonical_transcript, _PreparedSpeechSegment
+
+    def artifact(backend: RetryBackend) -> str:
+        item = backend.transcribe_segment(Path("speech-0007.wav"), 5.0)
+        segment = _PreparedSpeechSegment(Path("speech-0007.wav"), 0, 5_000)
+        return _assemble_canonical_transcript("media-001", ((segment, item),)).to_json()
+
+    shared = RetryBackend("ئەمە زۆر باشە", AssertionError("beam must not run"))
+    separate = RetryBackend(
+        "ئەمە زۆر باشە", AssertionError("beam must not run"), ctc_device="cuda:0"
+    )
+    assert artifact(shared) == artifact(separate)
+    assert shared.events == separate.events == ["ctc"]
+    assert "decode_mode" not in artifact(shared)
 
 
 def test_retry_provenance_reaches_the_artifact_and_greedy_bytes_do_not_change() -> None:
