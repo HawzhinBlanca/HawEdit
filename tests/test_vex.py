@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -21,6 +21,13 @@ from hawedit.wsl_setup import package_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "security" / "wsl-asr-vex.json"
+# BLOCKED #24 option 1: the (reviewed, source digest) pair a human actually reviewed, pinned beside
+# BUILD_LOCK_SHA256. Rebinding `source_sha256` without moving `reviewed` fails here; moving both
+# means editing this line too, which is the deliberate re-review step, not a quiet rebind.
+REVIEWED_VEX_SOURCE: Final = (
+    date(2026, 10, 15),
+    "4e607203a558ec9c916827783f785f85a953375208080a903a046fcdffc2f415",
+)
 
 
 def _policy_payload() -> dict[str, Any]:
@@ -68,6 +75,10 @@ def _audit_dependencies(audit: dict[str, object]) -> list[dict[str, object]]:
     assert isinstance(dependencies, list)
     assert all(isinstance(dependency, dict) for dependency in dependencies)
     return dependencies
+
+
+def _dependency(audit: dict[str, object], name: str) -> dict[str, object]:
+    return next(item for item in _audit_dependencies(audit) if item["name"] == name)
 
 
 def _receipt_payload(policy: dict[str, Any] | None = None) -> dict[str, object]:
@@ -119,11 +130,11 @@ def _evaluate_fixture(tmp_path: Path, policy: dict[str, Any] | None = None) -> N
         load_runtime_identity(receipt_path),
         findings,
         packages,
-        as_of=date(2026, 8, 9),
+        as_of=date(2026, 10, 15),
     )
-    assert result.finding_count == 12
-    assert result.disposition_count == 12
-    assert result.matched_dispositions == 12
+    assert result.finding_count == 15
+    assert result.disposition_count == 15
+    assert result.matched_dispositions == 15
 
 
 def test_checked_in_policy_binds_current_lock_and_assets_and_closes_report(tmp_path: Path) -> None:
@@ -137,6 +148,32 @@ def test_checked_in_policy_binds_current_lock_and_assets_and_closes_report(tmp_p
     _evaluate_fixture(tmp_path)
 
 
+def test_source_digest_cannot_move_without_the_reviewed_date(tmp_path: Path) -> None:
+    def pinned(path: Path) -> bool:
+        policy = load_vex(path)
+        return (policy.reviewed, policy.source_sha256) == REVIEWED_VEX_SOURCE
+
+    assert pinned(POLICY), (
+        "security/wsl-asr-vex.json no longer names the reviewed (date, source digest) pair; "
+        "re-review the dispositions and move `reviewed` and REVIEWED_VEX_SOURCE together "
+        "(BLOCKED #24)"
+    )
+    rebound = _policy_payload()
+    rebound["applicability"]["source_sha256"] = "f" * 64
+    assert not pinned(_write_json(tmp_path / "rebound.json", rebound))
+
+
+def test_not_affected_rulings_rest_on_absent_transformers_calls() -> None:
+    """CVE-2026-9856 (save_pretrained) and CVE-2026-80047 (custom_generate) controls."""
+    for call in ("save_pretrained", "custom_generate"):
+        users = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src" / "hawedit").rglob("*.py")
+            if call in path.read_text(encoding="utf-8")
+        )
+        assert not users, f"{call} now appears in {users}; re-review the VEX disposition"
+
+
 def test_reviewed_source_snapshot_drift_is_refused(tmp_path: Path) -> None:
     receipt = _receipt_payload()
     receipt["source_sha256"] = "f" * 64
@@ -147,7 +184,7 @@ def test_reviewed_source_snapshot_drift_is_refused(tmp_path: Path) -> None:
             load_runtime_identity(_write_json(tmp_path / "receipt.json", receipt)),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
@@ -167,13 +204,13 @@ def test_unknown_new_advisory_is_refused(tmp_path: Path) -> None:
             load_runtime_identity(_write_json(tmp_path / "receipt.json", _receipt_payload(policy))),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
 def test_unknown_alias_on_known_advisory_is_refused(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = _audit_dependencies(audit)[1]["vulns"]
+    vulns = _dependency(audit, "torch")["vulns"]
     assert isinstance(vulns, list)
     assert isinstance(vulns[0], dict)
     aliases = vulns[0]["aliases"]
@@ -186,7 +223,7 @@ def test_unknown_alias_on_known_advisory_is_refused(tmp_path: Path) -> None:
             load_runtime_identity(_write_json(tmp_path / "receipt.json", _receipt_payload())),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
@@ -204,7 +241,7 @@ def test_expired_vex_is_refused_even_when_every_finding_matches(tmp_path: Path) 
             load_runtime_identity(receipt_path),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
@@ -223,7 +260,7 @@ def test_observed_lock_drift_is_refused(tmp_path: Path, lock_name: str) -> None:
             load_runtime_identity(_write_json(tmp_path / "receipt.json", receipt)),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
@@ -242,7 +279,7 @@ def test_observed_asset_drift_is_refused(tmp_path: Path) -> None:
             load_runtime_identity(_write_json(tmp_path / "receipt.json", receipt)),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
@@ -260,13 +297,13 @@ def test_truncated_audit_inventory_is_refused(tmp_path: Path) -> None:
             load_runtime_identity(_write_json(tmp_path / "receipt.json", receipt)),
             findings,
             audited,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
 def test_alias_emitted_as_primary_still_matches_one_disposition(tmp_path: Path) -> None:
     audit = _audit_payload()
-    first_vuln = _audit_dependencies(audit)[1]["vulns"]
+    first_vuln = _dependency(audit, "torch")["vulns"]
     assert isinstance(first_vuln, list)
     assert isinstance(first_vuln[0], dict)
     primary = first_vuln[0]["id"]
@@ -281,9 +318,9 @@ def test_alias_emitted_as_primary_still_matches_one_disposition(tmp_path: Path) 
         load_runtime_identity(_write_json(tmp_path / "receipt.json", _receipt_payload())),
         findings,
         packages,
-        as_of=date(2026, 8, 9),
+        as_of=date(2026, 10, 15),
     )
-    assert result.matched_dispositions == 12
+    assert result.matched_dispositions == 15
 
 
 def test_duplicate_alias_across_dispositions_is_refused(tmp_path: Path) -> None:
@@ -303,7 +340,7 @@ def test_duplicate_alias_across_dispositions_is_refused(tmp_path: Path) -> None:
 
 def test_repeated_osv_range_for_one_advisory_is_canonicalized(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = _audit_dependencies(audit)[1]["vulns"]
+    vulns = _dependency(audit, "torch")["vulns"]
     assert isinstance(vulns, list)
     repeated = dict(vulns[0])
     repeated["fix_versions"] = ["99.0.0"]
@@ -317,7 +354,7 @@ def test_repeated_osv_range_for_one_advisory_is_canonicalized(tmp_path: Path) ->
 
 def test_duplicate_primary_advisory_with_conflicting_aliases_is_refused(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = _audit_dependencies(audit)[1]["vulns"]
+    vulns = _dependency(audit, "torch")["vulns"]
     assert isinstance(vulns, list)
     conflicting = dict(vulns[0])
     conflicting["aliases"] = ["CVE-2099-9999"]
@@ -366,7 +403,7 @@ def test_audit_only_report_requires_an_empty_fixes_array(tmp_path: Path, fixes: 
 
 def test_removed_advisory_makes_the_disposition_visibly_stale(tmp_path: Path) -> None:
     audit = _audit_payload()
-    vulns = _audit_dependencies(audit)[1]["vulns"]
+    vulns = _dependency(audit, "torch")["vulns"]
     assert isinstance(vulns, list)
     vulns.pop()
     findings, packages = load_pip_audit(_write_json(tmp_path / "audit.json", audit))
@@ -376,7 +413,7 @@ def test_removed_advisory_makes_the_disposition_visibly_stale(tmp_path: Path) ->
             load_runtime_identity(_write_json(tmp_path / "receipt.json", _receipt_payload())),
             findings,
             packages,
-            as_of=date(2026, 8, 9),
+            as_of=date(2026, 10, 15),
         )
 
 
@@ -452,7 +489,7 @@ def test_cli_accepts_closed_fixture_and_refuses_unknown_advisory(
                 "--report",
                 str(report),
                 "--as-of",
-                "2026-08-09",
+                "2026-10-15",
             ]
         )
         == 0
@@ -477,7 +514,7 @@ def test_cli_accepts_closed_fixture_and_refuses_unknown_advisory(
                 "--report",
                 str(report),
                 "--as-of",
-                "2026-08-09",
+                "2026-10-15",
             ]
         )
         == 1

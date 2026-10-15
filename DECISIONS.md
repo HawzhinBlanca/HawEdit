@@ -16468,3 +16468,47 @@ speech); those segments halt. Genuine stuttering can match the repeat rule and i
 retried, then halts if beam repeats it. Beam memory on one card and real upstream
 context-length types are T0 hardware facts. A CTC-length guard (arXiv 2408.09491)
 stays an option only after measurement.
+
+## D-333 - Renew the WSL ASR VEX for the v12 tree, with the reviewed digest pinned
+
+2026-10-15; owner approval: asked "Do you approve me applying the VEX update from the review
+packet, with you as the reviewer (review date today, the 3 new advisory rulings, the over-strong
+claims reworded to match the code, v12's file added to the allowlist)?", the owner chose
+"Approve VEX update". Resolves BLOCKED #24 by its option 1. Evidence: the 2026-10-14 review
+packet in `omniasr-v11-audit/release/vex_review/` (`VEX_REVIEW_PACKET.md`, `control_audit.md`,
+`osv_scan_2026-10-14.json`, an OSV scan of all 138 packages of the current runtime lock). D-331,
+D-332, D-115.
+
+**Review binding.** `security/wsl-asr-vex.json`: `reviewed` 2026-10-15, `expires` 2026-11-14,
+`applicability.source_sha256` = `package_digest(src/hawedit)` of this tree,
+`4e607203a558ec9c916827783f785f85a953375208080a903a046fcdffc2f415`. Lock digests and the three
+`OMNI_ASSETS` are unchanged. `tests/test_vex.py` pins `REVIEWED_VEX_SOURCE` to that
+(date, digest) pair, so changing `source_sha256` without moving `reviewed` fails; moving both
+means editing the pin, the deliberate re-review step. The unit tests evaluate at 2026-10-15.
+
+**Claims reworded to the code, not code weakened.** The control audit found nine control
+sentences only partly true. Each now says exactly what the code does: the receipt bypass under
+`HAWEDIT_WSL_PYTHON`/`HAWEDIT_WSL_SOURCE`/`interpreter=` is named as outside the disposition;
+request model paths (validator directory, LoRA adapter, fused checkpoint) are named with what
+binds each; unknown request keys and the unbounded request size are stated; `local` runtime runs
+in-process; LoRA weights load as safetensors; canonical assets are not rechecked after load; the
+validator's identity comes from `models/integrity.json`; the host-side VideoChat3 reader's
+`trust_remote_code=True` is named as outside the product boundary.
+
+**v12 fused checkpoint.** CVE-2026-4538 (not_affected) and CVE-2026-24747 (affected) now cover
+it: admitted only through the code allowlist `FUSED_CHECKPOINT_ASSETS` (exact filename,
+15,610,646,560 bytes, SHA-256 `f7b3a5e2…`) and held no-follow, single-link, before fairseq2
+`load_model`. `applicability.assets` stays the three `OMNI_ASSETS`, because the receipt, its
+probe and the live gate derive their asset set from `OMNI_ASSETS`; the fused file has no
+download URL. Binding it in the gate would need a local-asset provisioning step (follow-up).
+
+**New dispositions (12 to 15).** accelerate 1.12.0 CVE-2026-69112 `affected`: the validator
+loads with `device_map`; its verified file set has no sharded index. transformers 4.57.6
+CVE-2026-9856 `not_affected`: no `save_pretrained` under `src/hawedit`, and a test now fails if
+one appears. transformers CVE-2026-80047 `affected`, not the packet's draft `not_affected`: the
+packet made that ruling conditional on the worker enforcing `HF_HUB_OFFLINE`, and it does not;
+no `custom_generate` under `src/hawedit` (tested) and local verified checkpoints are the controls.
+`accelerate` joins `applicability.packages` at its locked version.
+
+**Not covered.** The live gate was not run; it remains the runtime confirmation. Sources for the
+new rulings are the OSV records, because the scan stored no reference URLs.

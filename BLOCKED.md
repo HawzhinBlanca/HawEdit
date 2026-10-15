@@ -1175,7 +1175,23 @@ does not block T0b (the D-number renumber), which is independent.
 
 ---
 
-## #24 · The VEX review date does not move when the digest it reviewed does
+## #24 · The VEX review date does not move when the digest it reviewed does — **RESOLVED 2026-10-15** (D-333)
+
+> **Resolved by owner review, 2026-10-15 (option 1).** Asked "Do you approve me applying the VEX
+> update from the review packet, with you as the reviewer (review date today, the 3 new advisory
+> rulings, the over-strong claims reworded to match the code, v12's file added to the
+> allowlist)?", the owner chose "Approve VEX update". `security/wsl-asr-vex.json` now reads
+> `reviewed` 2026-10-15, `expires` 2026-11-14 and `source_sha256` `4e607203…` — the
+> `package_digest(src/hawedit)` of the final `claude/v12-fused-model` tree — with fifteen
+> dispositions. `tests/test_vex.py` pins `REVIEWED_VEX_SOURCE = (2026-10-15, 4e607203…)` beside
+> its `BUILD_LOCK_SHA256` check, so a digest rebind that does not move `reviewed` (and the pin,
+> deliberately) fails. Evidence: `omniasr-v11-audit/release/vex_review/` (`VEX_REVIEW_PACKET.md`,
+> `control_audit.md`, `osv_scan_2026-10-14.json`). The review was of that packet and this
+> source; the live gate (`hawedit-wsl-vex`, pip-audit on the provisioned WSL runtime) was not
+> run as part of it and is still the runtime confirmation. The pattern this entry names had
+> recurred meanwhile: `1cea90d`, `e8ab656`, `4f9bedb` and `6bed0c9` rebound `source_sha256`
+> (`81f6f606…` → `39e585d4…`) with `reviewed` left at 2026-08-09 and the policy already expired.
+> The original text is kept below.
 
 `security/wsl-asr-vex.json` carries twelve CVE dispositions, a `reviewed` date of 2026-08-09,
 and an `applicability.source_sha256`. `tests/test_vex.py:131` binds that digest to
