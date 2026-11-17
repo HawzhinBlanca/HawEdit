@@ -1613,7 +1613,6 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
     tmp_path: Path,
 ) -> None:
     from hawedit.reframe import FocusPoint, SpeakerFocusPoint
-    from hawedit.render import Reframe
 
     class AmbiguousSpeakerTracker:
         def track_speakers(
@@ -1649,8 +1648,10 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
     )
     assert run.clip is not None and run.clip.output is not None
     assert run.clip.output.crop_target == "face_tracked"
-    assert run.render is not None and not isinstance(run.render, StageSkipped)
-    assert run.render.reframe is Reframe.FACE_TRACKED
+    # D-335: the fixture has no face, so the delivery gate refuses the face_tracked claim.
+    assert isinstance(run.render, StageSkipped)
+    assert "face_tracking_unsubstantiated" in run.render.reason
+    assert "measured 0.0" in run.render.reason
 
 
 @needs_ffmpeg

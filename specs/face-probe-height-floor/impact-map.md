@@ -38,3 +38,10 @@ Re-run `find_referencing_symbols` on `probe_face_tracking` before implementing i
   smallest measured face is 11.6 %, and the tracker's own floor (`MIN_FACE_AREA`, about 45 px
   on a 1080-high source = 4.2 %) plus the 1.5x zoom toward 15 % make that unlikely, but that is
   reasoning, not a measurement.
+
+## Checked by the gate after T1 (2026-11-17, tree `0d3a8c2`)
+
+Full `bash scripts/verify.sh` on HawaPC01: 6,559 passed, 1 failed. The one failure was
+`test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance`, with
+`face_tracking_unsubstantiated ... measured 0.0`. That run used the default temp folder, so it
+covers the 8 or more tests the logging run missed. No other test needs T2's treatment.

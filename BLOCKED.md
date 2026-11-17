@@ -1262,7 +1262,7 @@ Tracked under Items 9, 10, and 11 of Reality Check (2026-09-13):
    end-to-end runs without mock fallbacks in CI.
 
 
-## #26 · A pipeline test passes only because the face detector fires on caption text — needs Hawa
+## #26 · A pipeline test passes only because the face detector fires on caption text — needs Hawa — **RESOLVED 2026-11-17** (D-335)
 
 Found 2026-11-17 while fixing Kurdish caption direction (D-334). HawaPC01, Windows 11, `.venv`
 CPython 3.12, ffmpeg 8.1.1-full, opencv-python-headless 4.12.0.88; no `models/face_detection_yunet.onnx`
@@ -1301,3 +1301,19 @@ Three honest ways out exist, and they mean different things:
 Lowering the floor, passing `min_face_share`, or re-pinning the digest to make it pass would be
 editing a test to match an accident. None of those was done. Until Hawa picks one, the gate has
 this one failure and no `kurdish-rtl-base-direction` row can flip.
+
+### Resolved 2026-11-17 by D-335
+
+Hawa chose way out 1, "Fix the measurement", and approved `specs/face-probe-height-floor/plan.md`.
+`measure.probe_face_tracking` now drops a detection under 5 % of the frame height
+(`MIN_FACE_HEIGHT_SHARE`), so caption text is no longer a face. The same render measures
+`face_detected_share` 0.0, and the test expects the refusal:
+`face_tracking_unsubstantiated`, measured 0.0, with the clip still claiming `face_tracked`.
+
+The gate on the tree with the floor but before the test change (`0d3a8c2`, HawaPC01, Windows 11,
+`.venv` CPython 3.12.10, opencv-python-headless 4.12.0): 6,559 passed, 1 failed, and the one
+failure was this test with "measured 0.0". No other test changed outcome.
+
+Still open, and not part of this blocker: `tests/fixtures/` has no clip with a real face, so no
+test publishes a `face_tracked` render; `SPEAKER_AMBIGUOUS_RENDER_SHA256` is still pinned to the
+pre-D-334 digest and is not checked on a refused render.
