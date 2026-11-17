@@ -118,7 +118,8 @@ def check_subtitles(
 
     # 2. Parse Dialogue events for line length
     max_chars = 0
-    clean_tag_re = re.compile(r"\{[^}]*\}")
+    # U+200F is the caption base-direction mark (D-334): layout, not a character to count.
+    clean_tag_re = re.compile(r"\{[^}]*\}|\u200f")
 
     for line in content.splitlines():
         if line.startswith("Dialogue:"):

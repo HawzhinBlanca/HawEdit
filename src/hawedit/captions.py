@@ -45,6 +45,7 @@ from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
 __all__ = [
+    "ASS_ENCODING_AUTO",
     "BROADCAST_THEME",
     "DEFAULT_BOTTOM_CAPTION_BAND",
     "DEFAULT_MAX_CHARS_PER_LINE",
@@ -69,6 +70,7 @@ __all__ = [
     "REPORT_THEME",
     "RESTRAINED_MOBILE_FONT_SIZE",
     "RESTRAINED_MOBILE_THEME",
+    "RTL_MARK",
     "SPEAKER_TAG_FONT_SIZE",
     "SPEAKER_TAG_MS",
     "SPEAKER_TAG_THEME",
@@ -247,7 +249,7 @@ class CaptionTheme:
             f"{self.border_style},"
             f"{self.outline:g},{self.shadow:g},{align},{self.margin_l},"
             f"{self.margin_r},"
-            f"{mv},1"
+            f"{mv},{ASS_ENCODING_AUTO}"
         )
 
     def plate_style_row(
@@ -271,7 +273,8 @@ class CaptionTheme:
         return (
             f"Style: {name},{font_name},{font_size},{p},{s},"
             f"{self.outline_colour},{plate_colour},{int(self.bold)},0,0,0,100,100,0,0,"
-            f"3,{plate_padding:g},0,{align},{self.margin_l},{self.margin_r},{mv},1"
+            f"3,{plate_padding:g},0,{align},{self.margin_l},{self.margin_r},{mv},"
+            f"{ASS_ENCODING_AUTO}"
         )
 
 
@@ -298,6 +301,14 @@ REPORT_THEME: Final = CaptionTheme()
 # 108 lands in that band while leaving the widest popup (22 characters, ~620 px) comfortably
 # inside the 920 px the left and right margins leave for it.
 VIRAL_FONT_SIZE: Final = 108
+
+# Base direction, D-334. libass lays a line out left-to-right unless the Style's Encoding is -1
+# (auto-detect), and auto-detect reads the first strong character — so a Sorani line that opens
+# on a Latin brand name is still detected left-to-right unless it starts with U+200F. Rendered on
+# HawaPC01 with ffmpeg 8.1.1: Encoding 1 drew `WORD_HIGHLIGHT` words in reversed order and every
+# style's sentence-final full stop at the sentence start. specs/kurdish-rtl-base-direction.
+ASS_ENCODING_AUTO: Final = -1
+RTL_MARK: Final = "\u200f"
 
 # The opening card. A social clip is scrolled past in the first second or it is not watched, and
 # Stage 4 already writes a Kurdish title for every verdict — `title_ckb` — which the render threw
@@ -1022,10 +1033,10 @@ def measure_rendered_caption_width(
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
-        "-1,0,0,0,100,100,0,0,1,2.0,0.0,2,0,0,0,1\n\n"
+        f"-1,0,0,0,100,100,0,0,1,2.0,0.0,2,0,0,0,{ASS_ENCODING_AUTO}\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        f"Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{escaped}\n"
+        f"Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{RTL_MARK}{escaped}\n"
     )
     try:
         assert_ass_fonts_cover_kurdish(ass_content, resolved_fonts)
@@ -2189,7 +2200,13 @@ def build_ass(
             style_name = choose_style(chunk[0].start_ms, end_ms)
             events.append(event(chunk[0].start_ms, end_ms, render(chunk), style_name=style_name))
 
-    return header + "\n" + "\n".join(events) + "\n"
+    return header + "\n" + "\n".join(_mark_right_to_left(e) for e in events) + "\n"
+
+
+def _mark_right_to_left(event: str) -> str:
+    """Start every visual line of one `Dialogue:` event with `RTL_MARK` (D-334)."""
+    *fields, text = event.split(",", 9)
+    return ",".join(fields) + "," + RTL_MARK + text.replace("\\N", "\\N" + RTL_MARK)
 
 
 def find_ffmpeg() -> Path | None:
@@ -2380,7 +2397,8 @@ def compare_golden_render(reference: Path, candidate: Path, ffmpeg: Path | None 
         )
 
 
-_ASS_OVERRIDE_TAGS: Final = re.compile(r"\{[^}]*\}")
+# Also drops `RTL_MARK`: it is layout, not text, and every reader below cleans through this.
+_ASS_OVERRIDE_TAGS: Final = re.compile(r"\{[^}]*\}|\u200f")
 
 
 def _collapse_repeated_token_blocks(tokens: list[str], max_block_size: int = 8) -> list[str]:

@@ -16544,3 +16544,50 @@ studio_artifacts,studio_history,studio_private}.py`. Windows behaviour is unchan
 control is affected: no new loader, input, asset or dependency. The owner approved the change
 ("yes fix the CI errors") but did not separately re-review the new digest; `reviewed` stays
 2026-10-15.
+
+## D-334 - Kurdish captions are laid out right-to-left: Encoding -1 and a leading U+200F (supersedes D-269 clause 1)
+
+2026-11-17; owner approval: asked "Approve the caption plan, including new golden images and the
+cleanup?", the owner chose "Approve plan" (`specs/kurdish-rtl-base-direction/plan.md`).
+Blueprint ref: §4.3, §4.3.6. Type: defect elimination, not a deviation. D-269, D-307.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12, ffmpeg 8.1.1-full (gyan.dev; libass,
+HarfBuzz, FriBidi), `assets/fonts/NotoNaskhArabic-Regular.ttf`, production filter string
+(`subtitle_filter`). Frames and both probes: `specs/kurdish-rtl-base-direction/captures/`.
+All three Style writers emitted `Encoding = 1`, and libass laid every line out left-to-right:
+
+- `WORD_HIGHLIGHT` drew the words in reversed order (D-269 recorded this). It is the default
+  for `PODCAST`, `INTERVIEW` and `SOCIAL`, and `PODCAST` is `DEFAULT_CONTENT_TYPE`, so a default
+  run burned reversed Sorani.
+- `LINE`, `VIRAL_POPUP` and `RTL_WORD_HIGHLIGHT` drew a sentence-final full stop at the sentence
+  start. Not recorded before this ADR.
+- A line containing a Latin word or digits drew that segment at the wrong end.
+- `kurdish-caption.png` and `kurdish-viral-karaoke.png` were rendered from that output, so
+  §4.3.6's safeguard was protecting it.
+
+| Variant | Golden, question, mixed-script lines | Line opening on a Latin word |
+|---|---|---|
+| Encoding -1 | correct in all four styles | still left-to-right |
+| U+200F alone | unchanged | unchanged |
+| Encoding -1 and leading U+200F | correct | correct |
+
+**Decision.**
+1. `ASS_ENCODING_AUTO = -1` in `style_row`, `plate_style_row` and the width probe.
+2. `build_ass` starts every visual line of every Dialogue with `RTL_MARK` (U+200F), in one
+   place, where the events are joined. The width probe's line carries the same mark.
+3. Readers drop the mark with the override tags (`_ASS_OVERRIDE_TAGS`, and the sanity gate's own
+   pattern), so text verification and line-length counts are unchanged.
+4. D-269 clause 1 ("retain `WORD_HIGHLIGHT` ... byte-identical") is superseded: the bytes it
+   preserved were the defect. `RTL_WORD_HIGHLIGHT` and its position maths are kept as they are.
+5. The four golden references were re-rendered once through the golden tests' own render path;
+   the previous files are kept in `captures/golden-before/`. Tests that pinned the old Style
+   ending or Dialogue prefix were moved to the new bytes, including one negative assertion
+   (`",140,1" not in ass`) that would otherwise have passed vacuously.
+
+**Not established.** The Linux ffmpeg CI fetches (`scripts/fetch-ffmpeg.sh`) has not rendered
+this; the golden comparison there decides. Latin words fall back to a larger bold font; that is
+a separate defect. So is the `\kf` fill inside each `WORD_HIGHLIGHT` word: the words are now in
+reading order, but the colour still sweeps each word from its left edge, which is the end of a
+Sorani word (visible in the new `kurdish-caption-fixture.png`; libass issue #406). Not fixed here. `security/wsl-asr-vex.json` binds `package_digest(src/hawedit)`, so this
+source change moves that digest and `tests/test_vex.py` fails until the owner re-pins it; no
+loader, input, asset or dependency changed, and the pin was not moved by this ADR.

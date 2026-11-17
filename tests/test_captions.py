@@ -540,13 +540,13 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.m
 # Task T1.8: Pinned SHA256 digests for all committed reference goldens (anti-cheat).
 # Altering a golden file without an explicit, reviewed change fails this check.
 GOLDEN_DIGESTS: Final[dict[str, str]] = {
-    "kurdish-caption.png": ("e3d3f3e5d22df202e978b327e7cf73deee7d4c601319898e5ef79e5877fd1f90"),
+    "kurdish-caption.png": ("61a9c459f5e61fe2b45342f1ba966f33461ce7e6a1169c911f4ce7af8c154c16"),
     "kurdish-viral-karaoke.png": (
-        "0f9e8e457aff772a89ba8f3d78b9e3c14f859ad12d176a5a25b95107289b567d"
+        "156c0258ac4325bfb4cf6bdee830b60041e33668696cfb767488a553b35d8abe"
     ),
-    "kurdish-hook-card.png": ("12d1a92949a85a2706f56853914065bf15b29dfbdbb8843957164fd2f9e385b2"),
+    "kurdish-hook-card.png": ("b64fae770d7e04e2778546a5afb3770f5ebb6756c3b03cfbee193e15fa28561d"),
     "kurdish-caption-fixture.png": (
-        "78a822e529d662ce39252467fddd8a1c4e46fe56687a3d206455ba94697bb343"
+        "a4d5ac1489128c95e4c7598753cef8fad42db5a2770b85a0140a36ef86b9ab08"
     ),
 }
 
@@ -1364,10 +1364,14 @@ def test_popup_events_hold_across_a_short_hole_and_stop_at_the_sentence() -> Non
 
 
 def test_the_default_theme_is_byte_identical_to_what_shipped_before_it_existed() -> None:
-    """`REPORT_THEME` is a refactor, not a change. Every existing caller must be unaffected."""
+    """`REPORT_THEME` is a refactor, not a change. Every existing caller must be unaffected.
+
+    The one field that did change since is the last: D-334 moved Encoding from 1 to -1, because
+    1 is what drew Sorani left-to-right.
+    """
     assert REPORT_THEME.style_row("Kurdish", "Noto Naskh Arabic", 64) == (
         "Style: Kurdish,Noto Naskh Arabic,64,&H00FFFFFF,&H0000FFFF,&H00000000,"
-        "&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,60,60,140,1"
+        "&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,60,60,140,-1"
     )
 
 
@@ -1395,7 +1399,7 @@ def test_the_viral_theme_clears_the_platform_caption_bar() -> None:
 def test_a_theme_reaches_the_rendered_style_row() -> None:
     ass = build_ass((_popup_sentence(),), font_size=74, theme=VIRAL_THEME)
     assert VIRAL_THEME.style_row("Kurdish", "Noto Naskh Arabic", 74) in ass
-    assert ",140,1" not in ass
+    assert ",140,-1" not in ass
 
 
 def test_a_custom_theme_round_trips_every_field() -> None:
@@ -1413,7 +1417,7 @@ def test_a_custom_theme_round_trips_every_field() -> None:
     )
     assert theme.style_row("K", "F", 10) == (
         "Style: K,F,10,&H00112233,&H00445566,&H00778899,&H00AABBCC,1,0,0,0,100,100,0,0,1,"
-        "2.5,0.5,2,1,2,3,1"
+        "2.5,0.5,2,1,2,3,-1"
     )
 
 
@@ -1739,7 +1743,7 @@ def test_build_ass_emits_kurdish_top_for_overlapping_events() -> None:
 
     # KurdishTop style must be declared with alignment 8 and margin_v 240
     assert "Style: KurdishTop,Noto Naskh Arabic" in ass_text
-    assert f",8,{VIRAL_THEME.margin_l},{VIRAL_THEME.margin_r},{DEFAULT_TOP_MARGIN_V},1" in ass_text
+    assert f",8,{VIRAL_THEME.margin_l},{VIRAL_THEME.margin_r},{DEFAULT_TOP_MARGIN_V},-1" in ass_text
 
     dialogue_lines = [line for line in ass_text.splitlines() if line.startswith("Dialogue:")]
     # First dialogue line should use KurdishTop to avoid face overlap
@@ -1921,12 +1925,13 @@ def test_build_ass_with_speaker_metadata_and_turns() -> None:
     assert "Style: SpeakerTag," in ass_text
 
     # Events exist for SPEAKER_00 and SPEAKER_01, but NOT SPEAKER_02
+    # Every visual line opens on U+200F, the base-direction mark (D-334).
     expected_spk0 = (
         "Dialogue: 2,0:00:00.00,0:00:03.50,SpeakerTag,,0,0,0,,"
-        "{\\fad(250,250)}د. ئاراس عومەر\\N{\\fs28\\c&HCCCCCC&}پزیشکی پسپۆڕ"
+        "\u200f{\\fad(250,250)}د. ئاراس عومەر\\N\u200f{\\fs28\\c&HCCCCCC&}پزیشکی پسپۆڕ"
     )
     expected_spk1 = (
-        "Dialogue: 2,0:00:04.50,0:00:08.00,SpeakerTag,,0,0,0,,{\\fad(250,250)}هاوژین عەزیز"
+        "Dialogue: 2,0:00:04.50,0:00:08.00,SpeakerTag,,0,0,0,,\u200f{\\fad(250,250)}هاوژین عەزیز"
     )
     assert expected_spk0 in ass_text
     assert expected_spk1 in ass_text
@@ -2433,7 +2438,7 @@ def test_mobile_caption_layout_preserves_canonical_sorani(tmp_path: Path) -> Non
     assert RESTRAINED_MOBILE_THEME.bold is True
     assert RESTRAINED_MOBILE_THEME.outline == 4.0
     assert f"Style: Kurdish,Noto Naskh Arabic,{RESTRAINED_MOBILE_FONT_SIZE}" in ass_text
-    assert ",80,80,380,1" in ass_text
+    assert ",80,80,380,-1" in ass_text
 
     # Explicit theme override equals default layout
     ass_explicit = mobile_caption_layout(
@@ -2492,3 +2497,220 @@ def test_mobile_caption_layout_preserves_canonical_sorani(tmp_path: Path) -> Non
     # Empty sentence list rejected
     with pytest.raises(ValueError, match="no sentences"):
         mobile_caption_layout(())
+
+
+# --- Kurdish base direction (specs/kurdish-rtl-base-direction, D-334) --------------------
+#
+# libass lays a line out left-to-right unless told otherwise. Every test below renders, or
+# reads, what `build_ass` itself emits; none of them builds its own ASS.
+
+_BASE_DIRECTION_STYLES: Final[tuple[CaptionStyle, ...]] = (
+    CaptionStyle.LINE,
+    CaptionStyle.WORD_HIGHLIGHT,
+    CaptionStyle.VIRAL_POPUP,
+    CaptionStyle.RTL_WORD_HIGHLIGHT,
+)
+
+
+def _dialogue_texts(ass: str) -> list[str]:
+    return [line.split(",", 9)[9] for line in ass.splitlines() if line.startswith("Dialogue:")]
+
+
+def _render_frame_at(ffmpeg: Path, ass_path: Path, output: Path, at_s: float) -> Path:
+    """One frame at `at_s`, through production's own filter string (`subtitle_filter`).
+
+    `render_caption_png` only ever draws t=0, where a karaoke line has highlighted nothing.
+    """
+    import subprocess
+
+    subprocess.run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:d=4",
+            "-vf",
+            subtitle_filter(ass_path, FONTS_DIR),
+            "-ss",
+            f"{at_s:.3f}",
+            "-frames:v",
+            "1",
+            "-y",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    return output
+
+
+def _highlight_centres(png: Path) -> tuple[float, float]:
+    """Mean x of the highlighted (gold) pixels and of the not-yet-highlighted (white) ones."""
+    image = cv2.imread(str(png))
+    assert image is not None, f"could not read {png}"
+    blue, green, red = (image[..., channel].astype(int) for channel in range(3))
+    gold = (red > 180) & (green > 150) & (blue < 90)
+    white = (red > 200) & (green > 200) & (blue > 200)
+    assert gold.any(), "no highlighted pixels in the frame"
+    assert white.any(), "no unhighlighted pixels in the frame"
+    return float(gold.nonzero()[1].mean()), float(white.nonzero()[1].mean())
+
+
+def _ink_components(png: Path) -> list[tuple[int, int, int, int]]:
+    """(x, y, width, height) of every connected blob of caption ink."""
+    image = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+    assert image is not None, f"could not read {png}"
+    _, mask = cv2.threshold(image, 128, 255, cv2.THRESH_BINARY)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    return [
+        (int(stats[i][0]), int(stats[i][1]), int(stats[i][2]), int(stats[i][3]))
+        for i in range(1, count)
+    ]
+
+
+def test_every_style_line_requests_auto_base_direction() -> None:
+    """AC1. `Encoding = 1` is what made libass treat Sorani as a left-to-right paragraph."""
+    import inspect
+
+    from hawedit.captions import ASS_ENCODING_AUTO
+
+    assert ASS_ENCODING_AUTO == -1
+    for style in CaptionStyle:
+        ass = build_ass(
+            (_golden_sentence(),),
+            style=style,
+            title_ckb="ناونیشانی تاقیکردنەوە",
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        )
+        rows = [line for line in ass.splitlines() if line.startswith("Style:")]
+        assert rows, f"{style} emitted no Style row"
+        for row in rows:
+            assert row.rsplit(",", 1)[1] == "-1", f"{style}: {row!r} does not end in -1"
+    # The width probe writes its own Style row and never returns the ASS it rendered.
+    assert "ASS_ENCODING_AUTO" in inspect.getsource(measure_rendered_caption_width)
+
+
+def test_every_dialogue_text_starts_with_a_right_to_left_mark() -> None:
+    """AC2. Auto-detection reads the first strong character, and that can be a Latin word."""
+    from hawedit.captions import RTL_MARK
+
+    assert RTL_MARK == "\u200f"
+    for style in CaptionStyle:
+        later = Sentence(words=words(("ئەمە", 2000, 2400), ("باشە.", 2400, 3000)), complete=True)
+        ass = build_ass(
+            (_golden_sentence(), later),
+            style=style,
+            title_ckb="ناونیشانی تاقیکردنەوەی درێژ بۆ دوو دێڕ",
+            clip_in_ms=0,
+            clip_duration_ms=4000,
+        )
+        texts = _dialogue_texts(ass)
+        assert texts, f"{style} emitted no Dialogue"
+        for text in texts:
+            for visual_line in text.split("\\N"):
+                assert visual_line.startswith(RTL_MARK), f"{style}: {visual_line!r}"
+
+
+def test_caption_readers_ignore_the_leading_right_to_left_mark(tmp_path: Path) -> None:
+    """AC3. The mark is layout, not text: every reader reports what it reported without it."""
+    from hawedit.captions import RTL_MARK
+    from hawedit.measure import _parse_ass_dialogue_cues
+
+    sentence = _golden_sentence()
+    expected = [word.w for word in sentence.words]
+    for style in _BASE_DIRECTION_STYLES:
+        ass = build_ass((sentence,), style=style, clip_in_ms=0, clip_duration_ms=2000)
+        assert RTL_MARK in ass
+        verify_caption_integrity(ass, expected_text=expected, fonts_dir=FONTS_DIR)
+        marked = tmp_path / f"{style.value}-marked.ass"
+        plain = tmp_path / f"{style.value}-plain.ass"
+        marked.write_text(ass, encoding="utf-8")
+        plain.write_text(ass.replace(RTL_MARK, ""), encoding="utf-8")
+        assert _parse_ass_dialogue_cues(marked) == _parse_ass_dialogue_cues(plain)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_word_highlight_renders_the_first_word_rightmost(tmp_path: Path) -> None:
+    """AC4. Inside the third word, the two spoken words are gold and must be on the right."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    ass_path = tmp_path / "karaoke.ass"
+    ass_path.write_text(
+        build_ass(
+            (_golden_sentence(),),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    frame = _render_frame_at(ffmpeg, ass_path, tmp_path / "karaoke.png", 1.1)
+    spoken_x, unspoken_x = _highlight_centres(frame)
+    assert spoken_x > unspoken_x + 100, (
+        f"spoken words centred at x={spoken_x:.0f}, unspoken at x={unspoken_x:.0f}: "
+        "the sentence is drawn left-to-right"
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_sentence_final_full_stop_renders_at_the_left_end(tmp_path: Path) -> None:
+    """AC5. A full stop is direction-neutral, so it goes wherever the paragraph direction says."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    # Neither end letter carries a dot of its own, so the only dot-sized blob is the full stop.
+    sentence = Sentence(words=words(("هەموو", 0, 400), ("باشە.", 400, 1000)), complete=True)
+    for style in (CaptionStyle.LINE, CaptionStyle.VIRAL_POPUP, CaptionStyle.RTL_WORD_HIGHLIGHT):
+        ass_path = tmp_path / f"{style.value}.ass"
+        ass_path.write_text(
+            build_ass((sentence,), style=style, clip_in_ms=0, clip_duration_ms=2000),
+            encoding="utf-8",
+        )
+        frame = _render_frame_at(ffmpeg, ass_path, tmp_path / f"{style.value}.png", 0.7)
+        blobs = _ink_components(frame)
+        assert len(blobs) >= 3, f"{style}: expected letters and a full stop, found {blobs}"
+        dot_limit = 0.35 * max(height for _, _, _, height in blobs)
+
+        def is_dot(blob: tuple[int, int, int, int], limit: float = dot_limit) -> bool:
+            return blob[2] <= limit and blob[3] <= limit
+
+        leftmost = min(blobs, key=lambda blob: blob[0])
+        rightmost = max(blobs, key=lambda blob: blob[0] + blob[2])
+        assert is_dot(leftmost), f"{style}: left end is {leftmost}, not the full stop"
+        assert not is_dot(rightmost), f"{style}: the full stop {rightmost} is at the right end"
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_a_line_starting_with_a_latin_word_is_still_right_to_left(tmp_path: Path) -> None:
+    """AC6. Without the mark, a leading brand name makes libass detect a left-to-right line."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    sentence = Sentence(
+        words=words(("OpusClip", 0, 600), ("زۆر", 600, 1000), ("باشە.", 1000, 1600)),
+        complete=True,
+    )
+    ass_path = tmp_path / "latin-first.ass"
+    ass_path.write_text(
+        build_ass(
+            (sentence,),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    frame = _render_frame_at(ffmpeg, ass_path, tmp_path / "latin-first.png", 0.8)
+    latin_x, sorani_x = _highlight_centres(frame)
+    assert latin_x > sorani_x + 100, (
+        f"the Latin first word is centred at x={latin_x:.0f}, the last word at "
+        f"x={sorani_x:.0f}: the line is drawn left-to-right"
+    )

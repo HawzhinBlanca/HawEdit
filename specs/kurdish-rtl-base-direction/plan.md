@@ -68,3 +68,32 @@ with the before/after frames as its measurement.
    `Research/`. They make the tree dirty, which the reproducible-build tests refuse.
 
 Approved-by: Hawa — in chat, 2026-11-17, "Approve plan" (covers the golden replacement and the checkout cleanup above; recorded by Claude Code on the owner's instruction)
+
+## Learned while implementing (2026-11-17)
+
+- **Order.** Encoding -1 changes the rendered pixels, so the goldens had to move in the same
+  change as T1, not after T3. The four ledger rows stay as written; they can only flip together.
+- **One reader the impact map missed.** `sanity_gate.check_subtitles` counts characters per
+  line with its own tag pattern; the mark would have added one. Its pattern now drops U+200F.
+- **Tests moved to the new bytes** (all Style ending `1` → `-1` or the Dialogue prefix):
+  `test_captions.py` — `test_the_default_theme_is_byte_identical_to_what_shipped_before_it_existed`,
+  `test_a_custom_theme_round_trips_every_field`,
+  `test_build_ass_emits_kurdish_top_for_overlapping_events`,
+  `test_build_ass_with_speaker_metadata_and_turns`,
+  `test_mobile_caption_layout_preserves_canonical_sorani`,
+  `test_a_theme_reaches_the_rendered_style_row` (negative assertion kept meaningful);
+  `test_broadcast_studio.py` — `test_broadcast_subtitles_respect_vertical_margin_safe_zone`,
+  `test_build_ass_margin_v_override`, `test_build_ass_broadcast_studio_formatting`.
+- **The edit sentinel is a tracked file.** `.codystem-allow-self-edit` is committed (since
+  `a530ab2`), so the enforcement surface is permanently unlocked in this repo. I removed it by
+  mistake after the golden copy and restored it from HEAD; it is unchanged in this branch.
+- **Blocked on the owner: the VEX source binding.** `security/wsl-asr-vex.json` pins
+  `package_digest(src/hawedit)`. Any source change moves it, so
+  `tests/test_vex.py::test_checked_in_policy_binds_current_lock_and_assets_and_closes_report`
+  fails (`18fe2dd7…` pinned, `2484425d…` now). D-333's addenda show the owner approving each
+  re-pin. I did not move it. Until it is re-pinned the gate cannot be green and no row can flip.
+- **Not run:** a baseline gate on the untouched tree. I started one and stopped it at about 9%
+  after 12 minutes, because it would have delayed every edit by more than an hour.
+- **Still wrong after this change:** inside each `WORD_HIGHLIGHT` word the highlight colour
+  fills from the left edge, i.e. from the end of the Sorani word (seen in the new fixture
+  golden). Word order and punctuation are fixed; the fill direction is not. Recorded in D-334.
