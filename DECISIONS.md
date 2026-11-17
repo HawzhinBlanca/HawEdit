@@ -16591,3 +16591,15 @@ reading order, but the colour still sweeps each word from its left edge, which i
 Sorani word (visible in the new `kurdish-caption-fixture.png`; libass issue #406). Not fixed here. `security/wsl-asr-vex.json` binds `package_digest(src/hawedit)`, so this
 source change moves that digest and `tests/test_vex.py` fails until the owner re-pins it; no
 loader, input, asset or dependency changed, and the pin was not moved by this ADR.
+
+**Addendum, VEX source binding re-pinned 2026-11-17.** Asked "Re-pin the security review binding
+to the new source digest?", the owner chose "Approve re-pin". `security/wsl-asr-vex.json`
+`applicability.source_sha256` and `tests/test_vex.py` `REVIEWED_VEX_SOURCE` moved from
+`18fe2dd71870faebd43e3adaafefdadf4ae1a7c12fec55817ac6debb2daefe37` to
+`fef53d73c7a7c7d1f5425ff16399d059984c40884dc38a3fc1c42da891619a7a`, which is
+`package_digest(src/hawedit)` at commit `6fe4f9f`. The diff behind it is this ADR's:
+`src/hawedit/captions.py` and `src/hawedit/sanity_gate.py`. No VEX control is affected: no new
+loader, input, asset or dependency. As in D-333's addenda, the owner approved the change but did
+not separately re-review the digest; `reviewed` stays 2026-10-15. `expires` stays 2026-11-14,
+which had already passed on the day of this re-pin; it was not extended, and the unit tests
+evaluate at 2026-10-15.

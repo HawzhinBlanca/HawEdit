@@ -97,3 +97,6 @@ Approved-by: Hawa — in chat, 2026-11-17, "Approve plan" (covers the golden rep
 - **Still wrong after this change:** inside each `WORD_HIGHLIGHT` word the highlight colour
   fills from the left edge, i.e. from the end of the Sorani word (seen in the new fixture
   golden). Word order and punctuation are fixed; the fill direction is not. Recorded in D-334.
+- **VEX binding resolved 2026-11-17.** The owner approved the re-pin in chat ("Approve re-pin").
+  Both pins now name `fef53d73…`, the digest at `6fe4f9f`. `reviewed` and `expires` were not
+  moved; `expires` (2026-11-14) is already past. Recorded as an addendum to D-334.
