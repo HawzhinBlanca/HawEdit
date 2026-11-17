@@ -26,7 +26,7 @@ POLICY = ROOT / "security" / "wsl-asr-vex.json"
 # means editing this line too, which is the deliberate re-review step, not a quiet rebind.
 REVIEWED_VEX_SOURCE: Final = (
     date(2026, 10, 15),
-    "fef53d73c7a7c7d1f5425ff16399d059984c40884dc38a3fc1c42da891619a7a",
+    "a7b54139328bd7a9a79c0d62237683ebc517d9e247367fe81928425ac1ea62f2",
 )
 
 

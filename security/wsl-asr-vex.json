@@ -5,7 +5,7 @@
   "expires": "2026-11-14",
   "applicability": {
     "python": "3.12",
-    "source_sha256": "fef53d73c7a7c7d1f5425ff16399d059984c40884dc38a3fc1c42da891619a7a",
+    "source_sha256": "a7b54139328bd7a9a79c0d62237683ebc517d9e247367fe81928425ac1ea62f2",
     "packages": {
       "accelerate": "1.12.0",
       "omnilingual-asr": "0.2.0",
