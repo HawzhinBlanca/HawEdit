@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 
+import test_candidate_review as candidate_review_fixtures
 from hawedit.asr import CanonicalTranscriptProducer
 from hawedit.brand import (
     BrandKit,
@@ -54,7 +55,6 @@ from hawedit.clip import (
 )
 from hawedit.diarization import Segment
 from hawedit.discovery import Candidate, MergedCandidate
-from hawedit.escalation import DEFAULT_DISAGREEMENT_CER
 from hawedit.ingest import DiarizationUnavailable, IngestError
 from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import (
@@ -88,8 +88,11 @@ from hawedit.transcripts import (
     Word,
 )
 from hawedit.visual_index import MAX_FRAMES_PER_WINDOW
+from signed_pipeline_test_review import private_test_source, review_sidecars, signed_test_delivery
 
 ROOT = Path(__file__).resolve().parents[1]
+
+review_tools = candidate_review_fixtures.tools
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "kurdish-speech-3cuts.mp4"
@@ -286,13 +289,16 @@ def test_stage_5_fuses_the_speaker_turn_containing_the_selected_anchor(tmp_path:
 
 
 @pytest.fixture(scope="module")
-def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
-    """Six §3 stages against the real fixture, in one call. Rendered once."""
+def full_run(
+    tmp_path_factory: pytest.TempPathFactory, review_tools: candidate_review_fixtures.Tools
+) -> PipelineRun:
+    """Real private generation, then actual signed/freshly measured test publication."""
     if find_ffmpeg() is None:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
-    work = tmp_path_factory.mktemp("pipeline")
-    return run_pipeline(
-        FIXTURE,
+    work = tmp_path_factory.mktemp("pipeline") / "private"
+    source = private_test_source(work, FIXTURE)
+    run = run_pipeline(
+        source,
         work,
         media_id="fixture",
         transcript=a_transcript(),
@@ -300,6 +306,7 @@ def full_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         qc=_test_qc(True),
         verdict=a_verdict(100, 4_100),
     )
+    return signed_test_delivery(run, review_tools)
 
 
 @needs_ffmpeg
@@ -426,18 +433,13 @@ def test_the_run_report_serializes_to_json(full_run: PipelineRun) -> None:
     # cannot order anything.
     assert payload["index"]["document_count"] == len(full_run.sentences)
     assert payload["index"]["document_count"] > 1
-    # §3 Stage 1's routing decision is in the artifact, always — an empty `segments` list means
-    # nothing needs the validator, which must be distinguishable from the rule never running
-    # (D-135; the policy had no caller in `src/` at all before it).
-    escalation = payload["escalation"]
-    assert escalation["escalated"] == len(escalation["segments"])
-    assert escalation["disagreement_threshold_cer"] == DEFAULT_DISAGREEMENT_CER
-    # Which trigger fired has to be readable: measured on the real 38-minute run, 176 of the 312
-    # escalations came from disagreement alone, and that half rests on an unconditioned CTC decode
-    # (BLOCKED #19). A bare total would read as §3's intended routing.
-    by_trigger = escalation["by_trigger"]
-    assert set(by_trigger) == {"quartile_only", "disagreement_only", "both"}
-    assert sum(by_trigger.values()) == escalation["escalated"]
+    assert full_run.raw_diagnostics is not None
+    assert full_run.raw_diagnostics.segment_confidence == ()
+    assert full_run.raw_diagnostics.segment_origins is None
+    assert payload["asr_diagnostics_status"] == "recorded"
+    assert payload["asr_routing_status"] == "unavailable"
+    assert payload["escalation"] is None
+    assert payload["escalation_diagnostics"] is None
     assert payload["boundary"]["sentence_complete"] is True
     assert payload["clip"]["boundary"]["sentence_complete"] is True
     assert payload["render"]["reframe"] == "static_centre"
@@ -1263,16 +1265,21 @@ def test_distinct_selections_do_not_overwrite_each_others_deliveries(tmp_path: P
     assert Path(second.render.path) != first_path
     assert first_path.read_bytes() == first_bytes
 
-    with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        run_pipeline(
-            FIXTURE,
-            work,
-            media_id="variants",
-            transcript=a_transcript("variants"),
-            select_sentences=(0,),
-            qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
-            verdict=a_verdict(100, 1_700),
-        )
+    prior = {p.name: p.read_bytes() for p in review_sidecars(first).values()}
+    repeated = run_pipeline(
+        FIXTURE,
+        work,
+        media_id="variants",
+        transcript=a_transcript("variants"),
+        select_sentences=(0,),
+        qc=_test_qc(False, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
+        verdict=a_verdict(100, 1_700),
+    )
+
+    assert repeated.render is not None and not isinstance(repeated.render, StageSkipped)
+    assert Path(repeated.render.path) == first_path
+    assert {p.name: p.read_bytes() for p in review_sidecars(repeated).values()} == prior
+    review_sidecars(second)
 
 
 # --- composed model stages -----------------------------------------------------------------
@@ -1606,7 +1613,6 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
     tmp_path: Path,
 ) -> None:
     from hawedit.reframe import FocusPoint, SpeakerFocusPoint
-    from hawedit.render import Reframe
 
     class AmbiguousSpeakerTracker:
         def track_speakers(
@@ -1642,17 +1648,21 @@ def test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenan
     )
     assert run.clip is not None and run.clip.output is not None
     assert run.clip.output.crop_target == "face_tracked"
-    assert run.render is not None and not isinstance(run.render, StageSkipped)
-    assert run.render.reframe is Reframe.FACE_TRACKED
+    # D-335: the fixture has no face, so the delivery gate refuses the face_tracked claim.
+    assert isinstance(run.render, StageSkipped)
+    assert "face_tracking_unsubstantiated" in run.render.reason
+    assert "measured 0.0" in run.render.reason
 
 
 @needs_ffmpeg
+@pytest.mark.parametrize("profile", ["default", "production"])
 def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str
 ) -> None:
-    """Task T2.1: run_pipeline with MotionSpeakerTracker reframes in SPEAKER_TRACKED mode."""
+    """Detected boxes on this digit fixture cannot establish a speaking subject."""
     import cv2
 
+    from hawedit.boundary import Boundary
     from hawedit.reframe import MotionSpeakerTracker
     from hawedit.render import Reframe
 
@@ -1665,22 +1675,57 @@ def test_pipeline_integrates_motion_speaker_tracker_for_active_speaker_reframe(
 
     monkeypatch.setattr(cv2, "CascadeClassifier", lambda p: _MockClassifier())
 
+    tracker = MotionSpeakerTracker(sample_fps=5.0)
+    work = tmp_path / "work"
+    legacy_qc = _test_qc(True, reviewed_sha256=MOTION_SPEAKER_TRACKED_RENDER_SHA256)
     run = run_pipeline(
         FIXTURE,
-        tmp_path / "work",
+        work,
         media_id="motion-speaker-tracked",
         transcript=a_transcript("motion-speaker-tracked"),
         diarizer=_MeasuredDiarizer(),
         select_sentences=(0,),
         verdict=replace(a_verdict(100, 1_700), candidate_id="motion-speaker-tracked-0"),
-        qc=_test_qc(True, reviewed_sha256=MOTION_SPEAKER_TRACKED_RENDER_SHA256),
-        speaker_tracker=MotionSpeakerTracker(sample_fps=5.0),
+        qc=legacy_qc,
+        speaker_tracker=tracker,
+        profile=profile,
     )
+    assert not run.complete
+    assert run.ingest is not None and not isinstance(run.ingest, StageSkipped)
+    assert run.ingest.diarization is not None
+    assert isinstance(run.boundary, Boundary)
+    assert tracker.confirmed_speaker_centers == {}
+    # Inspect the actual decoder/tracker, preserving the pipeline's measured clock/cuts.
+    points = tracker.track_speakers(
+        FIXTURE,
+        run.boundary.final_in_ms,
+        run.boundary.final_out_ms,
+        run.ingest.diarization,
+        shot_cuts_ms=run.ingest.shot_cuts_ms,
+    )
+    assert points
+    assert all(not point.is_speaking and point.state != "speaker" for point in points)
+    assert tracker.confirmed_speaker_centers == {}
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == FIXTURE_SHA256
+    if profile == "production":
+        assert isinstance(run.render, StageSkipped)
+        assert "no usable speaker evidence" in run.render.reason
+        assert run.clip is None
+        assert set(work.rglob("*.mp4")) == {Path(run.ingest.proxy_path)}
+        return
     assert run.clip is not None and run.clip.output is not None
-    assert run.clip.output.crop_target == "speaker_face"
+    assert run.clip.output.crop_target == "static_centre"
+    assert run.clip.qc == legacy_qc
     assert run.render is not None and not isinstance(run.render, StageSkipped)
-    assert run.render.reframe is Reframe.SPEAKER_TRACKED
-    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped)
+    assert run.render.reframe is Reframe.STATIC_CENTRE
+    path = Path(run.render.path)
+    assert path == work / "review" / run.clip.clip_id / f"{run.clip.clip_id}.mp4"
+    assert path.is_file()
+    measured = json.loads(path.with_suffix(".measured.json").read_text(encoding="utf-8"))
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == measured["file"]["sha256"]
+    assert legacy_qc.reviewed_sha256 != measured["file"]["sha256"]
+    assert not list(path.parent.glob("*.sig"))
+    review_sidecars(run)
 
 
 def test_requested_speaker_tracking_refuses_missing_diarization_without_calling_provider(
@@ -2062,6 +2107,7 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
     """
     if find_ffmpeg() is None:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
+    from hawedit.artifact_bundle import ArtifactBundle, BundleAlreadyExists
     from hawedit.pipeline import _clip_id, _delivery_artifact_paths
 
     work = tmp_path / "work"
@@ -2075,10 +2121,14 @@ def test_the_guard_checks_the_paths_the_run_actually_writes(tmp_path: Path) -> N
         verdict=a_verdict(100, 1_700),
     )
     assert run.render is not None and not isinstance(run.render, StageSkipped), run.render
-    guarded = set(_delivery_artifact_paths(work, _clip_id("paths", (0,))))
+    guarded = set(_delivery_artifact_paths(work / "review", _clip_id("paths", (0,))))
     assert Path(run.render.path) in guarded, (
         f"the run wrote {run.render.path}, which the overwrite guard does not check"
     )
+    before = {p.name: p.read_bytes() for p in review_sidecars(run).values()}
+    with pytest.raises(BundleAlreadyExists, match="refusing to overwrite"):
+        ArtifactBundle.create(work / "review", _clip_id("paths", (0,)), private=True)
+    assert {p.name: p.read_bytes() for p in review_sidecars(run).values()} == before
 
 
 def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> None:
@@ -2088,7 +2138,7 @@ def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> N
     """
     if find_ffmpeg() is None:
         pytest.skip("no ffmpeg — set HAWEDIT_FFMPEG")
-    from hawedit.pipeline import Delivery, _clip_id
+    from hawedit.pipeline import _clip_id
 
     work = tmp_path / "work"
     clip_id = _clip_id("unreviewed", (0,))
@@ -2117,7 +2167,7 @@ def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> N
     assert run.delivery.reason == "awaiting human review"
     assert "human QC review" in run.delivery.blocked_by
 
-    # Now approve unchanged candidate and verify promotion without re-rendering
+    # Legacy metadata cannot authorize promotion, even when it matches the MP4 hash.
     cand_bytes = (review_dir / f"{clip_id}.mp4").read_bytes()
     cand_sha = hashlib.sha256(cand_bytes).hexdigest()
     run_approved = run_pipeline(
@@ -2130,11 +2180,12 @@ def test_unreviewed_render_is_retained_privately_for_review(tmp_path: Path) -> N
         qc=_test_qc(True, reviewed_sha256=cand_sha),
     )
     assert run_approved.render is not None and not isinstance(run_approved.render, StageSkipped)
-    assert public_dir.is_dir(), "public delivery directory must now exist"
-    promoted_mp4 = public_dir / f"{clip_id}.mp4"
+    assert not public_dir.exists(), "unsigned QC cannot authorize public delivery"
+    promoted_mp4 = review_dir / f"{clip_id}.mp4"
     assert promoted_mp4.is_file()
     assert promoted_mp4.read_bytes() == cand_bytes
-    assert isinstance(run_approved.delivery, Delivery)
+    review_sidecars(run_approved)
+    assert run_approved.complete is False
 
 
 # =========================================================================================
@@ -2160,11 +2211,15 @@ def _ntsc_copy(source: Path, dest: Path, rate: str = "30000/1001") -> Path:
 
 
 def _sidecars_on_disk(work: Path, clip_id: str) -> list[str]:
-    """The exact sidecars in one atomically published delivery bundle."""
-    bundle = work / clip_id
-    if not bundle.is_dir():
-        return []
-    return sorted(path.name for path in bundle.iterdir() if path.suffix in _SIDECARS)
+    """Inspect both actual namespaces so private leftovers cannot hide behind a wrong path."""
+    directories = (work / clip_id, work / "review" / clip_id)
+    return sorted(
+        path.name
+        for directory in directories
+        if directory.is_dir()
+        for path in directory.iterdir()
+        if path.suffix in _SIDECARS
+    )
 
 
 @needs_ffmpeg
@@ -2181,7 +2236,7 @@ def test_an_edl_safe_source_still_writes_the_whole_delivery_set(tmp_path: Path) 
         qc=_test_qc(True, reviewed_sha256=FIXTURE_RENDER_S0_SHA256),
         verdict=a_verdict(100, 1_700),
     )
-    assert not isinstance(run.delivery, StageSkipped), run.delivery
+    review_sidecars(run)
     assert _sidecars_on_disk(work, "safe-s0-0") == [
         "safe-s0-0.edit_plan.json",
         "safe-s0-0.edl",
@@ -2475,6 +2530,117 @@ def test_the_default_run_still_plans_at_section_3s_ceiling(tmp_path: Path) -> No
 
 
 # --- D-110: the report was silent about speech the transcript does not contain ----------------
+
+
+@pytest.mark.parametrize("refused", [False, True])
+def test_missing_asr_evidence_reports_unknown_not_zero(refused: bool) -> None:
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        transcript=(
+            StageSkipped(stage="transcript", reason="incomplete decoding", blocked_by=())
+            if refused
+            else None
+        ),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "unavailable"
+    for key in (
+        "transcript_gaps",
+        "speech_without_transcription_ms",
+        "rejected_validator_corrections",
+        "escalation",
+    ):
+        assert payload[key] is None
+    assert payload["complete"] is False
+    assert json.loads(json.dumps(payload)) == payload
+
+
+def test_partial_asr_diagnostics_do_not_claim_complete_coverage() -> None:
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        transcript_gaps=(UnalignedSpeech(start_ms=100, end_ms=200, reason="failed"),),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "partial"
+    assert payload["transcript_gaps"] == [
+        {"start_ms": 100, "end_ms": 200, "duration_ms": 100, "reason": "failed"}
+    ]
+    assert payload["speech_without_transcription_ms"] is None
+    assert payload["rejected_validator_corrections"] is None
+    assert payload["escalation"] is None
+
+
+@pytest.mark.parametrize("kind", ["correction", "routing"])
+def test_partial_asr_correction_and_routing_records_remain_visible(kind: str) -> None:
+    from hawedit.asr import VALIDATOR_MODEL_ID
+    from hawedit.escalation import EscalationDecision
+    from hawedit.transcripts import RejectedValidatorCorrection
+
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        rejected_validator_corrections=(
+            RejectedValidatorCorrection(100, 200, VALIDATOR_MODEL_ID, "failed"),
+        )
+        if kind == "correction"
+        else (),
+        escalation=(EscalationDecision("100-200", True, "models disagree"),)
+        if kind == "routing"
+        else (),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "partial"
+    assert payload["speech_without_transcription_ms"] is None
+    assert payload["transcript_gaps"] is None
+    if kind == "correction":
+        assert payload["rejected_validator_corrections"] == [
+            {
+                "start_ms": 100,
+                "end_ms": 200,
+                "duration_ms": 100,
+                "validator": VALIDATOR_MODEL_ID,
+                "reason": "failed",
+            }
+        ]
+        assert payload["escalation"] is None
+    else:
+        assert payload["rejected_validator_corrections"] is None
+        assert payload["asr_routing_status"] == "partial-unbound"
+        assert payload["escalation"] is None
+        assert payload["escalation_diagnostics"]["input_evidence"] == "unbound-reported"
+        escalation = payload["escalation_diagnostics"]["summary"]
+        assert escalation["scored_segments"] == 1
+        assert escalation["escalated"] == 1
+        assert escalation["disagreement_threshold_cer"] is None
+        assert escalation["segments"] == [
+            {"segment_id": "100-200", "escalate": True, "reason": "models disagree"}
+        ]
+
+
+def test_raw_diagnostics_are_the_reporting_source() -> None:
+    raw = a_transcript()
+    assert raw.segment_confidence == ()
+    assert raw.segment_origins is None
+    run = PipelineRun(
+        media_id="m",
+        source="x",
+        work_dir="w",
+        raw_diagnostics=raw,
+        transcript_gaps=(UnalignedSpeech(start_ms=100, end_ms=200, reason="unbound"),),
+    )
+    payload = run.to_dict()
+    assert payload["asr_diagnostics_status"] == "recorded"
+    assert payload["transcript_gaps"] == []
+    assert payload["speech_without_transcription_ms"] == 0
+    assert payload["rejected_validator_corrections"] == []
+    assert payload["asr_routing_status"] == "unavailable"
+    assert payload["escalation"] is None
+    assert payload["escalation_diagnostics"] is None
 
 
 @needs_ffmpeg
@@ -2919,7 +3085,9 @@ def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> No
 
 
 @pytest.fixture(scope="module")
-def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
+def whole_run(
+    tmp_path_factory: pytest.TempPathFactory, review_tools: candidate_review_fixtures.Tools
+) -> PipelineRun:
     """A run where **every** §3 stage produced something — the first in this suite.
 
     `complete` is what the CLI's exit code derives from (`return 0 if run.complete else 1`), and
@@ -2960,9 +3128,11 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
                 candidate_id=request.candidate_id,
             )
 
-    return run_pipeline(
-        FIXTURE,
-        tmp_path_factory.mktemp("whole"),
+    work = tmp_path_factory.mktemp("whole") / "private"
+    source = private_test_source(work, FIXTURE)
+    run = run_pipeline(
+        source,
+        work,
         media_id="whole",
         transcript=a_transcript("whole"),
         diarizer=_MeasuredDiarizer(),
@@ -2973,6 +3143,7 @@ def whole_run(tmp_path_factory: pytest.TempPathFactory) -> PipelineRun:
         judge=Judge(),
         visual_query="گرنگ",
     )
+    return signed_test_delivery(run, review_tools)
 
 
 @needs_ffmpeg
@@ -3416,6 +3587,11 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--judge-top-n requires --auto-select",
     ),
     (
+        "screener where it cannot act",
+        ["--screener", "gemini-flash"],
+        "--screener requires --auto-select",
+    ),
+    (
         "judging fewer than one candidate",
         ["--judge-top-n", "0", "--auto-select"],
         "--judge-top-n must be at least 1",
@@ -3518,6 +3694,16 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--stock-decoder applies only to a Stage 1 run",
     ),
     (
+        "a fused champion beside the base decoder",
+        ["--omni-asr", "--omni-asr-checkpoint", "v12.pt", "--stock-decoder"],
+        "cannot be combined with --omni-asr-adapter or --stock-decoder",
+    ),
+    (
+        "a fused champion without the runtime",
+        ["--omni-asr-checkpoint", "v12.pt"],
+        "--omni-asr-checkpoint requires --omni-asr",
+    ),
+    (
         "claiming ZDR governance with nothing being sent anywhere",
         ["--transcript", "x.json", "--sentences", "0", "--zero-data-retention"],
         "governance flags apply only with a Gemini or Vertex route",
@@ -3581,6 +3767,51 @@ def test_the_cli_refuses_a_combination_that_cannot_work(
     assert not (tmp_path / "work").exists(), f"{label}: the run had already started"
 
 
+# These guards depend on Python injection, not argv; execute them separately while keeping
+# the exhaustive source-to-case checks below intact.
+_TRANSPORT_PREFLIGHT_CASES: tuple[tuple[str, list[str], str], ...] = tuple(
+    (
+        kind,
+        ["--omni-asr", "--gemini", "--auto-select", "--screener", kind],
+        "Guarded generation requires a separately authorized screener transport",
+    )
+    for kind in ("gemini-flash", "jev")
+)
+
+
+@pytest.mark.parametrize(("label", "argv", "expected"), _TRANSPORT_PREFLIGHT_CASES)
+def test_injected_transport_preflight_refuses_before_any_input_work(
+    tmp_path: Path, label: str, argv: list[str], expected: str
+) -> None:
+    from hawedit.pipeline import build_and_run, build_parser
+
+    calls: list[str] = []
+
+    def forbidden(url: str, body: bytes | None, headers: object) -> tuple[int, str]:
+        calls.append(url)
+        raise AssertionError(f"{label}: guard permitted an upstream request")
+
+    args = build_parser().parse_args(
+        [str(tmp_path / "absent.mp4"), "--work-dir", str(tmp_path / "work"), *argv]
+    )
+    with pytest.raises(ValueError, match=expected):
+        build_and_run(args, judge_transport=forbidden)
+    assert calls == []
+    assert not (tmp_path / "work").exists()
+
+
+@pytest.mark.parametrize("flag", ["--stock-decoder", "--omni-asr-adapter=x"])
+def test_the_fused_champion_environment_refuses_a_second_decoder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """D-331: HAWEDIT_CHAMPION_CHECKPOINT selects the champion as firmly as the flag does."""
+    monkeypatch.setenv("HAWEDIT_CHAMPION_CHECKPOINT", str(tmp_path / "v12.pt"))
+    code, stderr = _cli_exit(["--omni-asr", flag], tmp_path)
+    assert code == 2, stderr
+    assert "cannot be combined with --omni-asr-adapter or --stock-decoder" in stderr
+    assert not (tmp_path / "work").exists()
+
+
 def test_every_refusal_in_the_source_has_a_case(tmp_path: Path) -> None:
     """Bidirectional, so the set stays a description of the block rather than a snapshot.
 
@@ -3589,7 +3820,9 @@ def test_every_refusal_in_the_source_has_a_case(tmp_path: Path) -> None:
     twelve of these fourteen were before D-149.
     """
     refusals = _argv_refusals()
-    covered = {expected for _label, _argv, expected in _REFUSAL_CASES}
+    covered = {
+        expected for _label, _argv, expected in (*_REFUSAL_CASES, *_TRANSPORT_PREFLIGHT_CASES)
+    }
     pre_empted = {message for message, _by in _PRE_EMPTED_REFUSALS}
 
     unmatched = [
@@ -5098,7 +5331,7 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
         ),
         verdict=a_verdict(100, 1_700),
     )
-    assert run.delivery is not None and not isinstance(run.delivery, StageSkipped), run.delivery
+    sidecars = review_sidecars(run)
     assert _sidecars_on_disk(work, f"{media_id}-s0-0") == [
         f"{media_id}-s0-0.edit_plan.json",
         f"{media_id}-s0-0.edl",
@@ -5106,7 +5339,7 @@ def test_an_ntsc_source_writes_a_complete_drop_frame_delivery_set(
         f"{media_id}-s0-0.measured.json",
         f"{media_id}-s0-0.srt",
     ]
-    edl = Path(run.delivery.edl_path).read_text(encoding="utf-8")
+    edl = sidecars["edl"].read_text(encoding="utf-8")
     assert "FCM: DROP FRAME" in edl
     assert ";" in next(line for line in edl.splitlines() if line.startswith("001"))
 
@@ -5201,6 +5434,16 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "mutually exclusive Stage 1",
     ),
     ("runtime without OmniASR", ("--omni-asr-runtime", "wsl"), "require --omni-asr"),
+    (
+        "fused champion without OmniASR",
+        ("--omni-asr-checkpoint", "v12.pt"),
+        "--omni-asr-checkpoint requires --omni-asr",
+    ),
+    (
+        "fused champion beside a LoRA adapter",
+        ("--omni-asr", "--omni-asr-checkpoint", "v12.pt", "--omni-asr-adapter", "x"),
+        "cannot be combined with --omni-asr-adapter or --stock-decoder",
+    ),
     ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
     (
         "two cloud routes",
@@ -5218,6 +5461,11 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "judge-top-n without auto-select",
         ("--judge-top-n", "5"),
         "--judge-top-n requires --auto-select",
+    ),
+    (
+        "screener without auto-select",
+        ("--screener", "gemini-flash"),
+        "--screener requires --auto-select",
     ),
     (
         "judging fewer than one candidate",
@@ -5384,7 +5632,10 @@ def _preflight_value_error_messages() -> tuple[str, ...]:
 def test_the_case_table_is_bound_bidirectionally_to_every_preflight_refusal() -> None:
     """A new guard needs a case; a removed guard cannot leave a decorative stale case."""
     messages = _preflight_value_error_messages()
-    fragments = {expected for _label, _flags, expected in _CLI_PREFLIGHT_CASES}
+    fragments = {
+        expected
+        for _label, _flags, expected in (*_CLI_PREFLIGHT_CASES, *_TRANSPORT_PREFLIGHT_CASES)
+    }
     matches = {
         message: sorted(fragment for fragment in fragments if fragment in message)
         for message in messages
@@ -5973,6 +6224,9 @@ def test_the_escalation_line_quotes_a_reason_that_actually_escalated(
     line = next(text for text in capsys.readouterr().out.splitlines() if text.startswith("stage 1"))
     assert "1/2" in line
     assert "the models disagree" in line
+    assert "unbound reported decisions" in line
+    assert "original routing unknown" in line
+    assert "human validation" not in line
     assert "confident and agreeing" not in line, (
         "the quoted reason must belong to a segment that was actually escalated"
     )
@@ -6456,7 +6710,6 @@ def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -
 
     The runner must never claim speaker tracking (speaker_face) without validated turns.
     """
-    from hawedit.pipeline import Delivery
     from hawedit.pyannote_adapter import PyannoteDiarizer
 
     result = run_pipeline(
@@ -6470,8 +6723,8 @@ def test_an_unavailable_diarizer_never_claims_speaker_tracking(tmp_path: Path) -
     )
 
     assert result.render is not None
-    assert isinstance(result.delivery, Delivery)
-    contract = json.loads(Path(result.delivery.editing_json_path).read_text(encoding="utf-8"))
+    sidecars = review_sidecars(result)
+    contract = json.loads(sidecars["json"].read_text(encoding="utf-8"))
     assert contract["output"]["crop_target"] in {"face_tracked", "static_centre"}
     assert contract["output"]["crop_target"] != "speaker_face"
     assert result.clip is not None
@@ -6671,9 +6924,13 @@ def test_the_production_profile_cannot_deliver_with_a_skipped_stage(
         profile="production",
     )
     assert isinstance(run.delivery, StageSkipped)
-    assert "production_profile_skipped_stage" in run.delivery.reason
+    assert run.delivery.reason == "awaiting human review"
+    assert run.complete is False
+    assert run.ingest is not None and not isinstance(run.ingest, StageSkipped)
+    assert run.ingest.diarization is None
     # Delivery bundle must not be published
-    assert not (work / "delivery" / "fixture-clip-0.mp4").exists()
+    assert run.clip is not None
+    assert not (work / run.clip.clip_id).exists()
 
 
 @needs_ffmpeg
@@ -6952,17 +7209,16 @@ def test_run_pipeline_applies_silence_tightening_and_reconciles_delivery(tmp_pat
     assert run.clip.output is not None
     assert run.clip.output.silence_removed_ms == 220
     assert not isinstance(run.render, StageSkipped)
-    assert not isinstance(run.delivery, StageSkipped)
-    assert run.delivery is not None
+    sidecars = review_sidecars(run)
 
     # Verify delivery bundle files
-    assert Path(run.delivery.srt_path).is_file()
-    assert Path(run.delivery.edl_path).is_file()
-    assert Path(run.delivery.editing_json_path).is_file()
-    assert Path(run.delivery.measured_path).is_file()
+    assert sidecars["srt"].is_file()
+    assert sidecars["edl"].is_file()
+    assert sidecars["json"].is_file()
+    assert sidecars["measured.json"].is_file()
 
     # Verify measured duration
-    measured = json.loads(Path(run.delivery.measured_path).read_text(encoding="utf-8"))
+    measured = json.loads(sidecars["measured.json"].read_text(encoding="utf-8"))
     # Fixture span is 4162 ms; tightened is 4162 - 220 = 3942 ms (within 40ms tolerance)
     assert abs(measured["video"]["duration_ms"] - (4162 - 220)) <= 40
     assert abs(measured["audio"]["duration_ms"] - (4162 - 220)) <= 40
@@ -7008,7 +7264,7 @@ def test_run_pipeline_with_filler_excision(tmp_path: Path) -> None:
     assert "یەعنی" not in [w.w for w in run.clip.transcript.words]
     assert "یەعنی" not in run.clip.transcript.raw_ckb
     assert not isinstance(run.render, StageSkipped)
-    assert not isinstance(run.delivery, StageSkipped)
+    review_sidecars(run)
 
 
 def test_pipeline_parser_two_person_split_options() -> None:

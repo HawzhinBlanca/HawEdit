@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
@@ -12,6 +13,7 @@ from typing import Any, Final, Protocol
 from hawedit.diarization import Segment, assert_exclusive
 
 __all__ = [
+    "DEFAULT_MIN_CONFIDENCE",
     "DEFAULT_MIN_DWELL_MS",
     "DEFAULT_MOVE_MS",
     "DEFAULT_SETTLE_MS",
@@ -28,6 +30,8 @@ __all__ = [
     "compute_two_person_split_crops",
     "detect_rapid_speaker_exchange",
     "layout_policy",
+    "median_face_box",
+    "per_shot_face_boxes",
     "probe_first_frame_face",
     "stabilize",
     "validate_speaker_focus_points",
@@ -35,6 +39,7 @@ __all__ = [
 
 # Minimum duration of a diarized speaker turn required to justify a camera transition.
 DEFAULT_MIN_DWELL_MS: Final = 600
+DEFAULT_MIN_CONFIDENCE: Final = 0.6
 
 # How long a committed camera move takes. Under ~250 ms it reads as a cut with a smear; over
 # ~600 ms the audience notices the camera rather than the speaker.
@@ -376,6 +381,8 @@ class OpenCvFaceTracker:
                     faces = boxes(frontal, gray) + boxes(profile, gray)
                     flipped_profile = boxes(profile, cv2.flip(gray, 1))
                     faces += [(width - (x + w), y, w, h) for x, y, w, h in flipped_profile]
+                # Drop background noise/blinds in upper edge (y < 8% frame height)
+                faces = [f for f in faces if f[1] >= int(height * 0.08)]
                 max_dist = int(width * 0.35) if previous is not None else None
                 chosen = choose_face(tuple(faces), previous, max_distance=max_dist)
                 if chosen is not None:
@@ -608,7 +615,11 @@ class MotionSpeakerTracker:
                         (width - (x + w), y, w, h)
                         for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
                     ]
-                valid_faces = [f for f in faces if f[2] * f[3] >= self.min_face_area]
+                valid_faces = [
+                    f
+                    for f in faces
+                    if f[2] * f[3] >= self.min_face_area and f[1] >= int(height * 0.08)
+                ]
 
                 # Deduplicate overlapping face boxes
                 deduped_faces: list[tuple[int, int, int, int]] = []
@@ -889,6 +900,48 @@ def median_face_box(points: Sequence[FocusPoint]) -> tuple[int | None, int | Non
     return verticals[len(verticals) // 2], heights[len(heights) // 2]
 
 
+def per_shot_face_boxes(
+    points: Sequence[FocusPoint],
+    shot_cuts_ms: Sequence[int] = (),
+    clip_in_ms: int = 0,
+    clip_out_ms: int | None = None,
+) -> tuple[tuple[int, int, int | None, int | None], ...]:
+    """Compute (start_ms, end_ms, center_y, face_height) per camera shot interval.
+
+    When shot_cuts_ms is empty, returns a single interval for the whole clip.
+    When camera cuts exist within the clip, each shot gets its own median face box,
+    enabling adaptive zoom on wide shots without vertical shimmer within shots. D-281.
+    """
+    if not points:
+        end_ms = clip_out_ms if clip_out_ms is not None else clip_in_ms
+        return ((clip_in_ms, end_ms, None, None),)
+
+    end_ms = clip_out_ms if clip_out_ms is not None else max(p.at_ms for p in points)
+    global_y, global_h = median_face_box(points)
+
+    cuts_in_range = sorted(c for c in shot_cuts_ms if clip_in_ms < c < end_ms)
+    if not cuts_in_range:
+        return ((clip_in_ms, end_ms, global_y, global_h),)
+
+    boundaries = [clip_in_ms, *cuts_in_range, end_ms]
+    results: list[tuple[int, int, int | None, int | None]] = []
+    for s_in, s_out in pairwise(boundaries):
+        shot_pts = [p for p in points if s_in <= p.at_ms < s_out]
+        if shot_pts:
+            s_y, s_h = median_face_box(shot_pts)
+            results.append(
+                (
+                    s_in,
+                    s_out,
+                    s_y if s_y is not None else global_y,
+                    s_h if s_h is not None else global_h,
+                )
+            )
+        else:
+            results.append((s_in, s_out, global_y, global_h))
+    return tuple(results)
+
+
 def stabilize(
     points: Sequence[FocusPoint],
     *,
@@ -1138,7 +1191,7 @@ def layout_policy(
     shot_cuts_ms: Sequence[int] = (),
     max_pan_px: int | None = None,
     cut_on_max_pan: bool = True,
-    min_confidence: float = 0.6,
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
 ) -> tuple[FocusPoint, ...]:
     """Derive stable camera keyframes obeying persistence policy on brief variations.
 
@@ -1185,6 +1238,24 @@ def layout_policy(
     if not overlapping_turns:
         return ()
 
+    cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
+    # Observed shots need their own speaking evidence; coordinates cannot cross scene cuts.
+    observed_shots: dict[int, bool] = {}
+    for p in points:
+        active = next((t for t in overlapping_turns if t.start_ms <= p.at_ms < t.end_ms), None)
+        if active is None:
+            continue
+        shot = bisect_right(cuts, p.at_ms)
+        verified = (
+            p.speaker == active.speaker
+            and p.state == "speaker"
+            and p.is_speaking
+            and p.confidence >= min_confidence
+        )
+        observed_shots[shot] = observed_shots.get(shot, False) or verified
+    if not all(observed_shots.values()):
+        return ()
+
     # Identify sustained speaker cut boundaries
     sustained_speaker_cuts: list[int] = []
     prev_turn_speaker: str | None = None
@@ -1213,7 +1284,6 @@ def layout_policy(
             if prev_turn_speaker is None or dur >= min_dwell_ms:
                 prev_turn_speaker = turn.speaker
 
-    cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
     all_cuts = sorted(set(cuts) | set(sustained_speaker_cuts))
 
     filtered_points: list[FocusPoint] = []
@@ -1264,10 +1334,11 @@ def layout_policy(
             # Ambiguous frame on transition: hold last confirmed center
             resolved_center = held_center
         else:
+            if not is_verified_speaker:
+                continue
             resolved_center = p.center_x
             held_center = p.center_x
-            if is_verified_speaker:
-                established_speaker = active_turn.speaker
+            established_speaker = active_turn.speaker
 
         filtered_points.append(FocusPoint(p.at_ms, resolved_center))
         last_pt_time = p.at_ms

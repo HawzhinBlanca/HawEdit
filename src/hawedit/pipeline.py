@@ -47,6 +47,7 @@ import sys
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, fields, replace
+from inspect import Parameter, signature
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, TextIO, TypeVar, cast, overload
@@ -77,10 +78,10 @@ from hawedit.captions import (
     CaptionVerificationError,
     HookBannerConfig,
     build_ass,
+    find_ffmpeg,
     verify_caption_integrity,
 )
 from hawedit.checkpoint import (
-    is_stage_complete,
     save_stage_checkpoint,
 )
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
@@ -112,10 +113,9 @@ from hawedit.delivery import (
     build_edl,
     build_effective_source_cuts,
     build_srt,
-    promote_candidate,
     reconcile_delivery,
 )
-from hawedit.diarization import turn_bounds_for_anchors
+from hawedit.diarization import Segment, turn_bounds_for_anchors
 from hawedit.discovery import Candidate, MergedCandidate, merge_candidates
 from hawedit.edit_plan import (
     CURRENT_PLAN_VERSION,
@@ -155,6 +155,7 @@ from hawedit.ingest import (
     ingest,
     probe_stream,
 )
+from hawedit.ingest_cache import IngestCache
 from hawedit.judge import (
     MAX_PERSISTED_VERDICT_BYTES,
     BilledCall,
@@ -167,13 +168,13 @@ from hawedit.judge import (
     tournament_score,
 )
 from hawedit.keyframes import KeyframeError, extract_judge_frames
-from hawedit.measure import ClipMeasurement, measure_clip
+from hawedit.measure import measure_clip
 from hawedit.normalize import normalize_sorani
 from hawedit.path_b import VideoUnderstanding
 from hawedit.qwen_visual import EmbedderUnavailable
 from hawedit.reframe import (
+    DEFAULT_MIN_CONFIDENCE,
     FocusPoint,
-    SpeakerAssociationError,
     SpeakerFocusPoint,
     SpeakerSubjectTracker,
     SubjectTracker,
@@ -181,11 +182,13 @@ from hawedit.reframe import (
     detect_rapid_speaker_exchange,
     layout_policy,
     median_face_box,
+    per_shot_face_boxes,
     probe_first_frame_face,
     stabilize,
     validate_speaker_focus_points,
 )
 from hawedit.render import (
+    BRollItem,
     Encoder,
     Reframe,
     RenderError,
@@ -198,6 +201,9 @@ from hawedit.render import (
     shot_spans,
     vertical_crop_size,
 )
+from hawedit.render_identity import render_input_digest
+from hawedit.review_candidate_cache import CandidateCacheError, inspect_existing_review_candidate
+from hawedit.screener import CandidateScreener, ScreenerTransport, get_screener
 from hawedit.sentences import (
     Sentence,
     UndeliverableOrder,
@@ -243,6 +249,7 @@ from hawedit.visual_index import (
 from hawedit.visual_pipeline import VisualComposer, VisualDiscoveryResult, VisualPipelineError
 
 if TYPE_CHECKING:
+    from hawedit.gemini import Transport
     from hawedit.models import ModelStore
 
 __all__ = [
@@ -347,8 +354,7 @@ class PipelineRun:
     # Validator corrections that were rejected while the canonical timed segment was retained.
     # They are not speech gaps, but they are still material Stage 1 fallback evidence.
     rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
-    # §3 Stage 1's validator-routing decision per segment. Empty means the routing rule ran and
-    # found no scored segments, not that the rule disappeared from the composed runner.
+    # §3 Stage 1's validator-routing decision per segment. Empty alone proves no measurement.
     escalation: tuple[EscalationDecision, ...] = ()
     index: Bm25Index | StageSkipped | None = None
     sentences: tuple[Sentence, ...] = ()
@@ -384,6 +390,8 @@ class PipelineRun:
     delivery: Delivery | StageSkipped | None = None
     config: EffectiveConfiguration | None = None
     episode_manifest: EpisodeManifest | None = None
+    # Retained after raw integrity verification, including refused raw transcripts. D-282.
+    raw_diagnostics: RawTranscript | None = None
 
     def _rejected_by_path(self) -> dict[str, int]:
         """How many candidates each discovery path lost, which is what §8.2 partitions on.
@@ -528,6 +536,75 @@ class PipelineRun:
             to_dict = getattr(value, "to_dict", None)
             return to_dict() if callable(to_dict) else str(value)
 
+        raw = self.raw_diagnostics
+        gaps = raw.unaligned if raw is not None else self.transcript_gaps
+        corrections = (
+            raw.rejected_validator_corrections
+            if raw is not None
+            else self.rejected_validator_corrections
+        )
+        scores = scores_from_transcript(raw) if raw is not None else ()
+        replay_available = bool(scores)
+        decisions = select_for_validation(scores) if replay_available else self.escalation
+        diagnostics_status = (
+            "recorded"
+            if raw is not None
+            else ("partial" if gaps or corrections or decisions else "unavailable")
+        )
+        original_routing = raw is not None and raw.segment_origins is not None
+        routing_status = (
+            "recorded-original"
+            if original_routing
+            else (
+                "legacy-selected-replay"
+                if replay_available
+                else ("partial-unbound" if decisions else "unavailable")
+            )
+        )
+        routing_summary = (
+            {
+                "scored_segments": len(decisions),
+                "escalated": sum(1 for decision in decisions if decision.escalate),
+                "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER
+                if replay_available
+                else None,
+                "by_trigger": {
+                    "quartile_only": sum(
+                        1
+                        for decision in decisions
+                        if decision.escalate and "disagree" not in decision.reason
+                    ),
+                    "disagreement_only": sum(
+                        1
+                        for decision in decisions
+                        if decision.escalate
+                        and "disagree" in decision.reason
+                        and "quartile" not in decision.reason
+                    ),
+                    "both": sum(
+                        1
+                        for decision in decisions
+                        if decision.escalate
+                        and "disagree" in decision.reason
+                        and "quartile" in decision.reason
+                    ),
+                }
+                if replay_available
+                else None,
+                "segments": [
+                    {
+                        "segment_id": decision.segment_id,
+                        "escalate": decision.escalate,
+                        "reason": decision.reason,
+                    }
+                    for decision in decisions
+                    if decision.escalate
+                ],
+            }
+            if replay_available or decisions
+            else None
+        )
+
         return {
             "media_id": self.media_id,
             "source": self.source,
@@ -536,6 +613,8 @@ class PipelineRun:
             "skipped": [name for name, _ in self.skipped()],
             "ingest": encode(self.ingest),
             "diarization": encode(self.diarization) or self._diarization_ran(),
+            "asr_diagnostics_status": diagnostics_status,
+            "asr_routing_status": routing_status,
             "transcript_gaps": [
                 {
                     "start_ms": gap.start_ms,
@@ -543,10 +622,18 @@ class PipelineRun:
                     "duration_ms": gap.end_ms - gap.start_ms,
                     "reason": gap.reason,
                 }
-                for gap in self.transcript_gaps
-            ],
-            "speech_without_transcription_ms": sum(
-                gap.end_ms - gap.start_ms for gap in self.transcript_gaps
+                for gap in gaps
+            ]
+            if raw is not None or gaps
+            else None,
+            "speech_without_transcription_ms": (
+                sum(gap.end_ms - gap.start_ms for gap in gaps) if raw is not None else None
+            ),
+            # D-332: greedy segments that looped and were re-decoded once with beam 5.
+            "beam5_retries": (
+                sum(1 for item in raw.segment_confidence if item.decode_mode == "beam5_retry")
+                if raw is not None
+                else None
             ),
             "rejected_validator_corrections": [
                 {
@@ -556,43 +643,19 @@ class PipelineRun:
                     "validator": item.validator,
                     "reason": item.reason,
                 }
-                for item in self.rejected_validator_corrections
-            ],
-            "escalation": {
-                "scored_segments": len(self.escalation),
-                "escalated": sum(1 for decision in self.escalation if decision.escalate),
-                "disagreement_threshold_cer": DEFAULT_DISAGREEMENT_CER,
-                "by_trigger": {
-                    "quartile_only": sum(
-                        1
-                        for decision in self.escalation
-                        if decision.escalate and "disagree" not in decision.reason
-                    ),
-                    "disagreement_only": sum(
-                        1
-                        for decision in self.escalation
-                        if decision.escalate
-                        and "disagree" in decision.reason
-                        and "quartile" not in decision.reason
-                    ),
-                    "both": sum(
-                        1
-                        for decision in self.escalation
-                        if decision.escalate
-                        and "disagree" in decision.reason
-                        and "quartile" in decision.reason
-                    ),
-                },
-                "segments": [
-                    {
-                        "segment_id": decision.segment_id,
-                        "escalate": decision.escalate,
-                        "reason": decision.reason,
-                    }
-                    for decision in self.escalation
-                    if decision.escalate
-                ],
-            },
+                for item in corrections
+            ]
+            if raw is not None or corrections
+            else None,
+            "escalation": routing_summary if original_routing else None,
+            "escalation_diagnostics": {
+                "input_evidence": (
+                    "selected-output-replay" if replay_available else "unbound-reported"
+                ),
+                "summary": routing_summary,
+            }
+            if not original_routing and routing_summary is not None
+            else None,
             "transcript": (
                 self.transcript.to_dict()
                 if isinstance(self.transcript, StageSkipped)
@@ -1678,6 +1741,214 @@ def _steady_camera(
     )
 
 
+@dataclass(frozen=True)
+class _CameraResolution:
+    mode: Reframe = Reframe.STATIC_CENTRE
+    focus_points: tuple[FocusPoint, ...] = ()
+    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
+    source_dimensions: tuple[int, int] | None = None
+    face_center_y: int | None = None
+    face_height: int | None = None
+    speaker_turns: tuple[Segment, ...] = ()
+    per_shot_boxes: tuple[tuple[int, int, int | None, int | None], ...] = ()
+
+
+def _accepts_shot_cuts(method: Callable[..., object]) -> bool:
+    parameters = signature(method).parameters
+    parameter = parameters.get("shot_cuts_ms")
+    return (parameter is not None and parameter.kind is not Parameter.POSITIONAL_ONLY) or any(
+        p.kind is Parameter.VAR_KEYWORD for p in parameters.values()
+    )
+
+
+def _resolve_camera(
+    source: Path,
+    ingested: IngestResult,
+    boundary: Boundary,
+    *,
+    speaker_tracker: SpeakerSubjectTracker | None,
+    subject_tracker: SubjectTracker | None,
+    two_person_split: str,
+    profile: str,
+    ffmpeg: Path | None,
+) -> _CameraResolution | StageSkipped:
+    turns = tuple(
+        turn
+        for turn in ingested.diarization or ()
+        if turn.start_ms < boundary.final_out_ms and turn.end_ms > boundary.final_in_ms
+    )
+    if two_person_split == "always" and speaker_tracker is None:
+        return StageSkipped(
+            stage="render",
+            reason="requested two-person split needs measured speaker/face association",
+            blocked_by=("measured speaker/face association",),
+        )
+    if speaker_tracker is not None:
+        if ingested.diarization is None:
+            return StageSkipped(
+                stage="render",
+                reason=(
+                    "requested speaker/face association needs measured diarization for "
+                    "the final clip; no validated Stage 0 turns are available"
+                ),
+                blocked_by=("Stage 0 measured diarization",),
+            )
+        if not turns:
+            return StageSkipped(
+                stage="render",
+                reason=(
+                    "requested speaker/face association has no measured diarization turn "
+                    f"overlapping the final clip {boundary.final_in_ms}.."
+                    f"{boundary.final_out_ms} ms"
+                ),
+                blocked_by=("overlapping measured diarization",),
+            )
+        _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
+        try:
+            # Select the compatible signature before invoking: an internal TypeError is a
+            # failed association, not permission to run the provider a second time.
+            points: tuple[SpeakerFocusPoint, ...]
+            if _accepts_shot_cuts(speaker_tracker.track_speakers):
+                points = cast(Any, speaker_tracker).track_speakers(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    turns,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            else:
+                points = speaker_tracker.track_speakers(
+                    source, boundary.final_in_ms, boundary.final_out_ms, turns
+                )
+            validate_speaker_focus_points(
+                points, turns, boundary.final_in_ms, boundary.final_out_ms
+            )
+            usable_points = tuple(
+                point
+                for point in points
+                if point.state == "speaker"
+                and point.is_speaking
+                and point.confidence >= DEFAULT_MIN_CONFIDENCE
+            )
+            dimensions: tuple[int, int] | None = None
+            focus: tuple[FocusPoint, ...] = ()
+            if usable_points:
+                dimensions = proxy_dimensions(source, ffmpeg)
+                crop_w, _ = vertical_crop_size(*dimensions)
+                focus = layout_policy(
+                    points,
+                    turns,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    dead_zone_px=max(1, crop_w // 10),
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    max_pan_px=max(1, int(crop_w * 0.6)),
+                    cut_on_max_pan=True,
+                )
+        except Exception as exc:
+            return _operational_failure("render", "speaker/face association", exc)
+        finally:
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "speaker/face association completion"
+            )
+        if not focus and (profile in ("production", "deliverable") or two_person_split == "always"):
+            return _operational_failure(
+                "render",
+                "speaker/face association",
+                RuntimeError("requested association returned no usable speaker evidence"),
+            )
+        if focus:
+            assert dimensions is not None
+            centers: dict[str, list[int]] = {}
+            for point in usable_points:
+                centers.setdefault(point.speaker, []).append(point.center_x)
+            if two_person_split == "always" and len(centers) < 2:
+                raise ValueError(
+                    "two-person split screen was requested with --two-person-split=always, "
+                    f"but only {len(centers)} distinct speaker(s) were tracked"
+                )
+            if two_person_split == "always" and len(centers) > 2:
+                return _operational_failure(
+                    "render",
+                    "speaker/face association",
+                    RuntimeError(
+                        "two-person split requires exactly two tracked speakers; "
+                        f"found {len(centers)}"
+                    ),
+                )
+            rapid = len(centers) >= 2 and detect_rapid_speaker_exchange(
+                turns, boundary.final_in_ms, boundary.final_out_ms
+            )
+            split = len(centers) == 2 and (
+                two_person_split == "always" or (two_person_split == "auto" and rapid)
+            )
+            if split:
+                keys = sorted(centers)
+                c1 = sorted(centers[keys[0]])[len(centers[keys[0]]) // 2]
+                c2 = sorted(centers[keys[1]])[len(centers[keys[1]]) // 2]
+                return _CameraResolution(
+                    mode=Reframe.TWO_PERSON_SPLIT,
+                    split_crops=compute_two_person_split_crops(
+                        *dimensions, min(c1, c2), max(c1, c2)
+                    ),
+                    source_dimensions=dimensions,
+                    speaker_turns=turns,
+                )
+            return _CameraResolution(
+                mode=Reframe.SPEAKER_TRACKED,
+                focus_points=focus,
+                source_dimensions=dimensions,
+                speaker_turns=turns,
+            )
+    if subject_tracker is not None:
+        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
+        try:
+            if _accepts_shot_cuts(subject_tracker.track):
+                raw_focus = subject_tracker.track(
+                    source,
+                    boundary.final_in_ms,
+                    boundary.final_out_ms,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                )
+            else:
+                raw_focus = subject_tracker.track(
+                    source, boundary.final_in_ms, boundary.final_out_ms
+                )
+            if raw_focus:
+                face_center_y, face_height = median_face_box(raw_focus)
+                per_shot = per_shot_face_boxes(
+                    raw_focus,
+                    shot_cuts_ms=ingested.shot_cuts_ms,
+                    clip_in_ms=boundary.final_in_ms,
+                    clip_out_ms=boundary.final_out_ms,
+                )
+                dimensions = proxy_dimensions(source, ffmpeg)
+                return _CameraResolution(
+                    mode=Reframe.FACE_TRACKED,
+                    focus_points=_steady_camera(
+                        raw_focus,
+                        source,
+                        ffmpeg,
+                        dimensions,
+                        shot_cuts_ms=ingested.shot_cuts_ms,
+                    ),
+                    source_dimensions=dimensions,
+                    face_center_y=face_center_y,
+                    face_height=face_height,
+                    per_shot_boxes=per_shot,
+                    speaker_turns=turns,
+                )
+            if profile in ("production", "deliverable"):
+                raise RuntimeError(
+                    f"zero faces detected in {ingested.source} for production profile"
+                )
+        except Exception as exc:
+            return _operational_failure("render", "requested subject tracking", exc)
+        finally:
+            _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
+    return _CameraResolution(speaker_turns=turns)
+
+
 def _clip_id(identifier: str, select_sentences: Sequence[int]) -> str:
     """The clip's id, derived in exactly one place.
 
@@ -1836,6 +2107,7 @@ def _render_episode_single_clip(
     music_bed_path: Path | str | None,
     music_ducking_volume: float,
     assemble: bool,
+    b_roll: Sequence[BRollItem] = (),
     profile: str,
     is_review_render: bool,
     visual_windows: Sequence[SceneWindow],
@@ -1843,7 +2115,8 @@ def _render_episode_single_clip(
     fps: float,
     config: EffectiveConfiguration,
 ) -> tuple[EpisodeClipSummary, Clip, RenderResult]:
-    """Render, sidecar, measure, reconcile and publish one clip in an episode run (AC-19)."""
+    """Render and reconcile a private episode review candidate (AC-19 / D-277)."""
+    is_review_render = True
     assert transcript is not None, "transcript required for clip render"
     (
         clip_select_sentences,
@@ -1915,38 +2188,26 @@ def _render_episode_single_clip(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    focus_points: tuple[FocusPoint, ...] = ()
-    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
-    face_center_y: int | None = None
-    face_height: int | None = None
-    reframe_mode = Reframe.STATIC_CENTRE
-
-    if subject_tracker is not None:
-        try:
-            try:
-                raw_focus = subject_tracker.track(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-            except TypeError:
-                raw_focus = subject_tracker.track(
-                    source, boundary.final_in_ms, boundary.final_out_ms
-                )
-            if raw_focus:
-                face_center_y, face_height = median_face_box(raw_focus)
-                src_dims = proxy_dimensions(source, ffmpeg)
-                focus_points = _steady_camera(
-                    raw_focus,
-                    source,
-                    ffmpeg,
-                    src_dims,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-                reframe_mode = Reframe.FACE_TRACKED
-        except Exception:
-            pass
+    camera = _resolve_camera(
+        source,
+        ingested,
+        boundary,
+        speaker_tracker=speaker_tracker,
+        subject_tracker=subject_tracker,
+        two_person_split=two_person_split,
+        profile=profile,
+        ffmpeg=ffmpeg,
+    )
+    if isinstance(camera, StageSkipped):
+        raise RenderError(camera.reason)
+    focus_points = camera.focus_points
+    split_crops = camera.split_crops
+    face_center_y = camera.face_center_y
+    face_height = camera.face_height
+    reframe_mode = camera.mode
+    measured_speaker_turns = tuple(
+        (turn.start_ms, turn.end_ms, turn.speaker) for turn in camera.speaker_turns
+    )
 
     crop_target = {
         Reframe.STATIC_CENTRE: "static_centre",
@@ -1984,7 +2245,7 @@ def _render_episode_single_clip(
     clip.assert_renderable(for_review=is_review_render)
 
     bundle_root = work_dir / "review" if is_review_render else work_dir
-    bundle = ArtifactBundle.create(bundle_root, clip.clip_id)
+    bundle = ArtifactBundle.create(bundle_root, clip.clip_id, private=True)
     ass_path = bundle.staged_path("ass")
     render_path = bundle.staged_path("mp4")
 
@@ -2106,7 +2367,7 @@ def _render_episode_single_clip(
         silence_target_gap_ms=silence_target_gap_ms,
         punch_in_cadence_ms=config.punch_in_cadence_ms,
         eased_push=eased_push or config.eased_push,
-        two_person_split="auto",
+        two_person_split=two_person_split,
         keyword_emphasis=keyword_emphasis,
         fps=fps,
     )
@@ -2130,7 +2391,7 @@ def _render_episode_single_clip(
         time_mapping=time_mapping,
         shot_cuts_ms=tuple(source_cuts),
         punch_in_ms=tuple(p[0] for p in planned_punch_ins),
-        speaker_turns=(),
+        speaker_turns=measured_speaker_turns,
         sentences=tuple(selected),
         relation_ids=(),
     )
@@ -2174,7 +2435,12 @@ def _render_episode_single_clip(
                 speaker_metadata=speaker_meta,
                 end_card=end_card,
                 keyword_emphasis=keyword_emphasis,
-                margin_v=(440 if resolved_caption_style is CaptionStyle.BROADCAST_STUDIO else None),
+                margin_v=(
+                    480
+                    if resolved_caption_style
+                    in (CaptionStyle.BROADCAST_STUDIO, CaptionStyle.KINETIC_POP)
+                    else None
+                ),
             ),
         )
         expected_caption_text = " ".join(s.text for s in render_selected)
@@ -2205,9 +2471,11 @@ def _render_episode_single_clip(
             brand_kit=brand_kit,
             music_bed_path=(Path(music_bed_path) if music_bed_path else None),
             music_ducking_volume=music_ducking_volume,
+            b_roll=b_roll,
             for_review=is_review_render,
             assembly_spans=assembly_spans,
             plan=visual_edit_plan,
+            per_shot_boxes=camera.per_shot_boxes,
         )
 
         if rendered.loudness_pass1 is not None:
@@ -2264,7 +2532,7 @@ def _render_episode_single_clip(
             source_shot_cuts_ms=reconcile_source_cuts,
             fps=fps,
             for_review=is_review_render,
-            speaker_turns=(),
+            speaker_turns=measured_speaker_turns,
             min_face_share=effective_min_face_share,
         )
 
@@ -2292,6 +2560,7 @@ def _render_episode_single_clip(
 
         bundle.publish()
         final_mp4 = bundle.final_dir / f"{clip.clip_id}.mp4"
+        rendered = replace(rendered, path=str(final_mp4))
         _ensure_clip_cover_image(
             bundle.final_dir,
             clip.clip_id,
@@ -2365,8 +2634,10 @@ def _run_episode_delivery(
     config: EffectiveConfiguration,
     visual_windows: Sequence[SceneWindow],
     log: RunEventLog,
+    b_roll: Sequence[BRollItem] = (),
 ) -> PipelineRun:
-    """Orchestrate multi-clip episode delivery with shared preprocessing (AC-19)."""
+    """Orchestrate private multi-clip review candidates with shared preprocessing."""
+    is_review_render = True
     episode_config = EpisodePlanConfig(
         max_clips=max_clips,
         min_separation_ms=min_separation_ms,
@@ -2448,6 +2719,7 @@ def _run_episode_delivery(
                 music_bed_path=music_bed_path,
                 music_ducking_volume=music_ducking_volume,
                 assemble=assemble,
+                b_roll=b_roll,
                 profile=profile,
                 is_review_render=is_review_render,
                 visual_windows=visual_windows,
@@ -2517,6 +2789,26 @@ def _run_episode_delivery(
     return updated_run
 
 
+def _unresolved_transcript_failure(transcript: RawTranscript) -> StageSkipped | None:
+    if not transcript.unaligned and not transcript.rejected_validator_corrections:
+        return None
+    first = (
+        transcript.unaligned[0]
+        if transcript.unaligned
+        else transcript.rejected_validator_corrections[0]
+    )
+    return StageSkipped(
+        stage="transcript",
+        reason=_safe_exception_text(
+            f"canonical ASR refused: {len(transcript.unaligned)} unaligned speech regions, "
+            f"{len(transcript.rejected_validator_corrections)} rejected validator corrections; "
+            f"first recorded failure at {first.start_ms}..{first.end_ms} ms: {first.reason}",
+            budget=1_024,
+        ),
+        blocked_by=("complete canonical ASR and successful selected corrections",),
+    )
+
+
 def run_pipeline(
     source: Path,
     work_dir: Path,
@@ -2532,6 +2824,7 @@ def run_pipeline(
     visual_composer: VisualComposer | None = None,
     visual_query: str | None = None,
     judge: EditorialJudge | None = None,
+    screener: CandidateScreener | str | None = None,
     temporal_grounder: TemporalGrounder | None = None,
     subject_tracker: SubjectTracker | None = None,
     auto_select: bool = False,
@@ -2567,6 +2860,7 @@ def run_pipeline(
     music_bed_path: Path | str | None = None,
     music_ducking_volume: float = 0.25,
     assemble: bool = False,
+    b_roll: Sequence[BRollItem] | str | Path | None = None,
     config: EffectiveConfiguration | None = None,
     max_clips: int | None = None,
     min_separation_ms: int = DEFAULT_MIN_SEPARATION_MS,
@@ -2615,8 +2909,9 @@ def run_pipeline(
             working, not a limitation to route around.
         speaker_tracker: an active-speaker/face associator. It receives only exclusive turns
             overlapping the final clip. A non-empty validated result is labelled speaker
-            tracked; an explicitly empty result may fall back to face-only tracking, while a
-            missing diarization input or invalid/failed association is refused visibly.
+            tracked. Empty association refuses production/deliverable rendering; diagnostic
+            profiles may explicitly retain the legacy face-only ambiguity path. Missing
+            diarization or invalid/failed association is refused visibly in every profile.
 
     Raises:
         FileNotFoundError: `source` does not exist.
@@ -2661,6 +2956,10 @@ def run_pipeline(
     if hook_banner is None:
         hook_banner = config.hook_banner
 
+    resolved_screener: CandidateScreener | None = (
+        get_screener(screener) if isinstance(screener, str) else screener
+    )
+
     if profile == "production" and not assemble:
         assemble = True
 
@@ -2669,6 +2968,55 @@ def run_pipeline(
             auto_select = True
         if judge_top_n == 1:
             judge_top_n = max(DEFAULT_JUDGE_TOP_N, max_clips * 2)
+
+    resolved_b_roll: tuple[BRollItem, ...] = ()
+    if b_roll is not None:
+        if isinstance(b_roll, str | Path):
+            b_path = Path(b_roll)
+            if b_path.is_file() and b_path.suffix.lower() == ".json":
+                try:
+                    b_data = json.loads(b_path.read_text(encoding="utf-8"))
+                    if isinstance(b_data, list):
+                        items_list = []
+                        for item in b_data:
+                            if isinstance(item, dict):
+                                items_list.append(
+                                    BRollItem(
+                                        path=Path(item["path"]),
+                                        start_ms=int(item.get("start_ms", 1000)),
+                                        duration_ms=int(item.get("duration_ms", 2500)),
+                                        position=str(item.get("position", "upper")),
+                                        width=int(item.get("width", 920)),
+                                    )
+                                )
+                        resolved_b_roll = tuple(items_list)
+                except Exception as exc:
+                    raise ValueError(f"invalid b-roll JSON file {b_path}: {exc}") from exc
+            elif b_path.is_file():
+                resolved_b_roll = (BRollItem(path=b_path, start_ms=1000, duration_ms=2500),)
+            else:
+                try:
+                    b_data = json.loads(str(b_roll))
+                    if isinstance(b_data, list):
+                        items_list = []
+                        for item in b_data:
+                            if isinstance(item, dict):
+                                items_list.append(
+                                    BRollItem(
+                                        path=Path(item["path"]),
+                                        start_ms=int(item.get("start_ms", 1000)),
+                                        duration_ms=int(item.get("duration_ms", 2500)),
+                                        position=str(item.get("position", "upper")),
+                                        width=int(item.get("width", 920)),
+                                    )
+                                )
+                        resolved_b_roll = tuple(items_list)
+                    else:
+                        raise ValueError("b-roll inline JSON must be a list of objects")
+                except Exception as exc:
+                    raise ValueError(f"unrecognized b-roll input: {b_roll}") from exc
+        else:
+            resolved_b_roll = tuple(b_roll)
 
     identifier = validate_media_id(media_id or source.stem)
     if transcript is not None and transcript.media_id != identifier:
@@ -2684,43 +3032,26 @@ def run_pipeline(
     # --- §3 Stage 0 ----------------------------------------------------------------------
     log.started("ingest")
     source_sha = _file_digest(source)
-    stage0_json = work_dir / "stage0" / "ingest.json"
-    ingested: IngestResult | None = None
-    if (
-        is_stage_complete(work_dir, "stage0_ingest", {"source_sha256": source_sha})
-        and stage0_json.is_file()
-    ):
-        try:
-            saved_data = json.loads(stage0_json.read_text(encoding="utf-8"))
-            saved_ingest = IngestResult.from_dict(saved_data)
-            audio_p = Path(saved_ingest.audio_path)
-            proxy_p = Path(saved_ingest.proxy_path)
-            if (
-                audio_p.is_file()
-                and proxy_p.is_file()
-                and audio_p.stat().st_size > 0
-                and proxy_p.stat().st_size > 0
-            ):
-                probe_stream(proxy_p, "v", ffmpeg=ffmpeg)
-                probe_stream(audio_p, "a", ffmpeg=ffmpeg)
-                ingested = saved_ingest
-                log.finished("ingest", "resumed from checkpoint")
-        except Exception:
-            ingested = None
-
-    if ingested is None:
-        try:
-            ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=ffmpeg)
-        except (IngestError, OSError) as exc:
-            return _ingest_failure_run(identifier, source, work_dir, exc)
-        log.finished("ingest")
-        stage0_json.write_text(ingested.to_json(), encoding="utf-8")
-        save_stage_checkpoint(
-            work_dir,
-            "stage0_ingest",
-            {"source_sha256": ingested.source_sha256},
-            metadata={"audio_path": str(ingested.audio_path)},
-        )
+    try:
+        cache = IngestCache(source, work_dir, identifier, source_sha, ffmpeg)
+        ingested = cache.load()
+        if ingested is None:
+            if cache.reason is not None:
+                log.started("ingest_cache_reuse")
+                retained = cache.preserve()
+                cache.invalidate_extractions()
+                log.finished(
+                    "ingest_cache_reuse",
+                    f"{cache.reason}; preserved at {retained.relative_to(cache.work_dir)}; "
+                    "fresh ingest required",
+                )
+            ingested = ingest(source, work_dir / "stage0", media_id=identifier, ffmpeg=cache.ffmpeg)
+            cache.save(ingested)
+            log.finished("ingest")
+        else:
+            log.finished("ingest", "resumed from checkpoint")
+    except (IngestError, OSError) as exc:
+        return _ingest_failure_run(identifier, source, work_dir, exc)
 
     if transcript is not None:
         if transcript.media_sha256 is None:
@@ -2748,11 +3079,13 @@ def run_pipeline(
                 )
             else:
                 diarization_stage = None
-                stage0_json.write_text(ingested.to_json(), encoding="utf-8")
+                # The base cache has no diarizer weight binding; keep current turns in the run.
 
+    log.started("transcript")
     asr_failure: StageSkipped | None = None
     audio_digest: str | None = None
     producer_id: str | None = None
+    admission_policy: str | None = None
     if transcript is None and asr is not None:
         # Before the 1,547 s, not after it. `TranscriptStore` was only consulted once Stage 1 had
         # already run, so a second run over the same work directory transcribed 545 segments
@@ -2771,8 +3104,13 @@ def run_pipeline(
         model_identity = getattr(asr, "model_identity", None)
         if model_identity:
             producer_id = f"{producer_id}+{model_identity}"
+        admission_policy = getattr(asr, "admission_policy", None)
         reused = TranscriptStore(work_dir / "transcripts").reusable_raw(
-            identifier, audio_digest, producer_id, ingested.source_sha256
+            identifier,
+            audio_digest,
+            producer_id,
+            ingested.source_sha256,
+            admission_policy=admission_policy,
         )
         transcript = reused
         if transcript is None:
@@ -2803,20 +3141,25 @@ def run_pipeline(
     # "one embedding per scene … ~1 fps with a maximum of 64 frames, so segment before
     # embedding". The segmenting is arithmetic over the cuts Stage 0 just found on this video,
     # so it runs now and is real; only the embedding itself waits on the model.
-    log.started("visual_windows")
-    effective_visual_fps = (
-        visual_fps
-        if visual_fps is not None
-        else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
+    known_transcript_failure = (
+        _unresolved_transcript_failure(transcript) if transcript is not None else None
     )
-    windows = plan_scene_windows(
-        identifier,
-        ingested.duration_ms,
-        ingested.shot_cuts_ms,
-        fps=effective_visual_fps,
-        max_frames=visual_max_frames,
-    )
-    log.finished("visual_windows")
+    windows: tuple[SceneWindow, ...] = ()
+    if asr_failure is None and known_transcript_failure is None:
+        log.started("visual_windows")
+        effective_visual_fps = (
+            visual_fps
+            if visual_fps is not None
+            else (DECLARED_SAMPLING_FPS if visual_composer is not None else REFERENCE_FPS)
+        )
+        windows = plan_scene_windows(
+            identifier,
+            ingested.duration_ms,
+            ingested.shot_cuts_ms,
+            fps=effective_visual_fps,
+            max_frames=visual_max_frames,
+        )
+        log.finished("visual_windows")
 
     run = PipelineRun(
         media_id=identifier,
@@ -2836,8 +3179,8 @@ def run_pipeline(
         config=config,
     )
     if asr_failure is not None:
+        log.finished("transcript", asr_failure.reason)
         return replace(run, transcript=asr_failure)
-    log.started("transcript")
     if transcript is None:
         log.finished("transcript", _STAGE_1_ASR.reason)
         return run
@@ -2862,7 +3205,12 @@ def run_pipeline(
     # --- §3 Stage 1 (supplied) + §4.1 -----------------------------------------------------
     store = TranscriptStore(work_dir / "transcripts")
     try:
-        store.write_raw(transcript, audio_sha256=audio_digest, producer=producer_id)
+        store.write_raw(
+            transcript,
+            audio_sha256=audio_digest,
+            producer=producer_id,
+            admission_policy=admission_policy,
+        )
     except RawTranscriptImmutable:
         # Invariant #1: the canonical transcript is never rewritten. A second run over the
         # same work directory reads what is already there rather than overwriting it.
@@ -2880,7 +3228,11 @@ def run_pipeline(
         transcript_gaps=transcript.unaligned,
         rejected_validator_corrections=transcript.rejected_validator_corrections,
         escalation=select_for_validation(scores_from_transcript(transcript)),
+        raw_diagnostics=transcript,
     )
+    if known_transcript_failure is not None:
+        log.finished("transcript", known_transcript_failure.reason)
+        return replace(run, transcript=known_transcript_failure)
     # Stamp the norm with the digest of the raw *file* — the same value `verify_raw_integrity`
     # checked one line above — so the link survives a later release adding a transcript field.
     normalized = normalize_transcript(transcript, source_sha256=store.raw_digest(identifier))
@@ -3028,9 +3380,27 @@ def run_pipeline(
         # candidates and 18 candidates, one judged each time, hook 0.20 both times.
         # `_candidate_priority` orders by discovery rank and knows nothing about editorial
         # quality, so nothing established rank #1 was the *best* candidate.
-        judge_plans = _judgeable_plans(
-            merged, sentences, judge_top_n, min_clip_ms, allow_padding=allow_padding
-        )
+        if resolved_screener is not None:
+            all_plans = _judgeable_plans(
+                merged, sentences, len(merged), min_clip_ms, allow_padding=allow_padding
+            )
+            if all_plans:
+                candidate_pairs = [
+                    (cand, _candidate_slice_text(normalized, cand.in_ms, cand.out_ms))
+                    for cand, _ in all_plans
+                ]
+                screened = resolved_screener.screen(candidate_pairs, top_k=judge_top_n)
+                ordered_plans: list[tuple[MergedCandidate, tuple[int, ...]]] = []
+                for s in screened:
+                    for cand, run_indices in all_plans:
+                        if cand.candidate_id == s.candidate_id:
+                            ordered_plans.append((cand, run_indices))
+                            break
+                judge_plans = tuple(ordered_plans)
+        else:
+            judge_plans = _judgeable_plans(
+                merged, sentences, judge_top_n, min_clip_ms, allow_padding=allow_padding
+            )
         automatic = judge_plans[0][1] if judge_plans else ()
         if not automatic:
             # `--auto-select` ran, examined every candidate and chose nothing. Reported as a
@@ -3097,6 +3467,7 @@ def run_pipeline(
                     config=config,
                     visual_windows=windows,
                     log=log,
+                    b_roll=resolved_b_roll,
                 )
             return replace(
                 run,
@@ -3290,6 +3661,7 @@ def run_pipeline(
                         config=config,
                         visual_windows=windows,
                         log=log,
+                        b_roll=resolved_b_roll,
                     )
                 return replace(
                     run,
@@ -3390,6 +3762,7 @@ def run_pipeline(
             config=config,
             visual_windows=windows,
             log=log,
+            b_roll=resolved_b_roll,
         )
 
     log.started("boundary")
@@ -3590,168 +3963,24 @@ def run_pipeline(
 
     clip_words = tuple(word for sentence in selected for word in sentence.words)
     raw_clip_text = _raw_text_for_words(transcript, clip_words)
-    focus_points: tuple[FocusPoint, ...] = ()
-    split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None
-    source_dimensions: tuple[int, int] | None = None
-    # The clip's single vertical placement, measured before `_steady_camera` replaces the track
-    # with keyframes that carry no face box. `None` means unmeasured, and the crop then sits
-    # where it always sat.
-    face_center_y: int | None = None
-    face_height: int | None = None
-    reframe_mode = Reframe.STATIC_CENTRE
-    if speaker_tracker is not None:
-        if ingested.diarization is None:
-            return replace(
-                run,
-                boundary=boundary,
-                render=StageSkipped(
-                    stage="render",
-                    reason=(
-                        "requested speaker/face association needs measured diarization for "
-                        "the final clip; no validated Stage 0 turns are available"
-                    ),
-                    blocked_by=("Stage 0 measured diarization",),
-                ),
-            )
-        overlapping_turns = tuple(
-            turn
-            for turn in ingested.diarization
-            if turn.start_ms < boundary.final_out_ms and turn.end_ms > boundary.final_in_ms
-        )
-        if not overlapping_turns:
-            return replace(
-                run,
-                boundary=boundary,
-                render=StageSkipped(
-                    stage="render",
-                    reason=(
-                        "requested speaker/face association has no measured diarization turn "
-                        f"overlapping the final clip {boundary.final_in_ms}.."
-                        f"{boundary.final_out_ms} ms"
-                    ),
-                    blocked_by=("overlapping measured diarization",),
-                ),
-            )
-        try:
-            _assert_source_unchanged(source, ingested.source_sha256, "speaker/face association")
-            try:
-                speaker_points: tuple[SpeakerFocusPoint, ...] = cast(
-                    Any, speaker_tracker
-                ).track_speakers(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    overlapping_turns,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-            except TypeError:
-                speaker_points = speaker_tracker.track_speakers(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    overlapping_turns,
-                )
-        except RuntimeError as exc:
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure("render", "speaker/face association", exc),
-            )
-        _assert_source_unchanged(
-            source, ingested.source_sha256, "speaker/face association completion"
-        )
-        try:
-            focus_points = validate_speaker_focus_points(
-                speaker_points,
-                overlapping_turns,
-                boundary.final_in_ms,
-                boundary.final_out_ms,
-            )
-        except (SpeakerAssociationError, TypeError, ValueError) as exc:
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure("render", "speaker/face association", exc),
-            )
-        if focus_points:
-            source_dimensions = proxy_dimensions(source, ffmpeg)
-            speaker_centers: dict[str, list[int]] = {}
-            for pt in speaker_points:
-                speaker_centers.setdefault(pt.speaker, []).append(pt.center_x)
-
-            if two_person_split == "always" and len(speaker_centers) < 2:
-                raise ValueError(
-                    "two-person split screen was requested with --two-person-split=always, "
-                    f"but only {len(speaker_centers)} distinct speaker(s) were tracked"
-                )
-
-            is_rapid = (
-                detect_rapid_speaker_exchange(
-                    overlapping_turns, boundary.final_in_ms, boundary.final_out_ms
-                )
-                if len(speaker_centers) >= 2
-                else False
-            )
-            should_split = (
-                two_person_split == "always" or (two_person_split == "auto" and is_rapid)
-            ) and len(speaker_centers) >= 2
-
-            if should_split:
-                spk_keys = sorted(speaker_centers.keys())
-                c1 = sorted(speaker_centers[spk_keys[0]])[len(speaker_centers[spk_keys[0]]) // 2]
-                c2 = sorted(speaker_centers[spk_keys[1]])[len(speaker_centers[spk_keys[1]]) // 2]
-                top_c, bot_c = (c1, c2) if c1 <= c2 else (c2, c1)
-                width, height = source_dimensions
-                split_crops = compute_two_person_split_crops(width, height, top_c, bot_c)
-                reframe_mode = Reframe.TWO_PERSON_SPLIT
-                focus_points = ()
-            else:
-                width, height = source_dimensions
-                crop_w, _ = vertical_crop_size(width, height)
-                focus_points = layout_policy(
-                    speaker_points,
-                    overlapping_turns,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    dead_zone_px=max(1, crop_w // 10),
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                    max_pan_px=max(1, int(crop_w * 0.6)),
-                    cut_on_max_pan=True,
-                )
-                reframe_mode = Reframe.SPEAKER_TRACKED
-
-    if not focus_points and subject_tracker is not None:
-        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking")
-        try:
-            try:
-                focus_points = subject_tracker.track(
-                    source,
-                    boundary.final_in_ms,
-                    boundary.final_out_ms,
-                    shot_cuts_ms=ingested.shot_cuts_ms,
-                )
-            except TypeError:
-                focus_points = subject_tracker.track(
-                    source, boundary.final_in_ms, boundary.final_out_ms
-                )
-        except RuntimeError as exc:
-            return replace(
-                run,
-                boundary=boundary,
-                render=_operational_failure("render", "requested subject tracking", exc),
-            )
-        _assert_source_unchanged(source, ingested.source_sha256, "subject tracking completion")
-        if focus_points:
-            face_center_y, face_height = median_face_box(focus_points)
-            source_dimensions = proxy_dimensions(source, ffmpeg)
-            focus_points = _steady_camera(
-                focus_points,
-                source,
-                ffmpeg,
-                source_dimensions,
-                shot_cuts_ms=ingested.shot_cuts_ms,
-            )
-            reframe_mode = Reframe.FACE_TRACKED
+    camera = _resolve_camera(
+        source,
+        ingested,
+        boundary,
+        speaker_tracker=speaker_tracker,
+        subject_tracker=subject_tracker,
+        two_person_split=two_person_split,
+        profile=profile,
+        ffmpeg=ffmpeg,
+    )
+    if isinstance(camera, StageSkipped):
+        return replace(run, boundary=boundary, render=camera)
+    focus_points = camera.focus_points
+    split_crops = camera.split_crops
+    source_dimensions = camera.source_dimensions
+    face_center_y = camera.face_center_y
+    face_height = camera.face_height
+    reframe_mode = camera.mode
 
     crop_target = {
         Reframe.STATIC_CENTRE: "static_centre",
@@ -3833,145 +4062,123 @@ def run_pipeline(
         final_plan,
     ) = _delivery_artifact_paths(work_dir, clip.clip_id)
 
-    # Check if this clip was already rendered as a review candidate and we now have approved QC:
+    # Legacy QC is metadata, never authority. Signed promotion is a separate consumption
+    # operation after review; generation can only freeze private candidates (D-277).
     review_candidate_dir = work_dir / "review" / clip.clip_id
-    if (
-        review_candidate_dir.is_dir()
-        and qc is not None
-        and qc.human_reviewed
-        and qc.reviewed_sha256
-    ):
-        candidate_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
-        if candidate_mp4.is_file():
-            cand_sha = hashlib.sha256(candidate_mp4.read_bytes()).hexdigest().lower()
-            if cand_sha == qc.reviewed_sha256.lower():
-                _assert_no_existing_artifacts(work_dir, identifier, select_sentences)
-                _assert_source_unchanged(source, ingested.source_sha256, "candidate promotion")
-                qc_record = QcRecord(
-                    reviewer=qc.reviewed_by or "reviewer",
-                    reviewed_at=qc.reviewed_at or "2026-09-02T19:00:00Z",
-                    mp4_sha256=qc.reviewed_sha256,
-                    seconds_watched=max(1.0, (clip.out_ms - clip.in_ms) / 1000.0),
-                    verdict="approved",
-                )
-                source_fps = frame_rate(source, ffmpeg)
-                cand_cut_pts = cut_points_ms(
-                    tuple(word for sentence in selected for word in sentence.words),
-                    clip.in_ms,
-                )
-                cand_source_cuts = [
-                    cut_ms - clip.in_ms
-                    for cut_ms in ingested.shot_cuts_ms
-                    if clip.in_ms <= cut_ms <= clip.out_ms
-                ]
-                if config.punch_in_cadence_ms == 0:
-                    cand_planned_punch_ins: tuple[tuple[int, float], ...] = ()
-                    cand_reconcile_punch_ins: tuple[tuple[int, float], ...] = ()
-                elif eased_push or profile == "deliverable" or config.eased_push:
-                    spans = shot_spans(
-                        cand_cut_pts,
-                        clip.out_ms - clip.in_ms,
-                        source_cuts_ms=cand_source_cuts,
-                        min_shot_ms=config.punch_in_cadence_ms,
-                    )
-                    cand_planned_punch_ins = eased_push_schedule(spans)
-                    cand_reconcile_punch_ins = ()
-                else:
-                    cand_planned_punch_ins = punch_in_schedule(
-                        cand_cut_pts,
-                        clip.out_ms - clip.in_ms,
-                        avoid_ms=cand_source_cuts,
-                        min_shot_ms=config.punch_in_cadence_ms,
-                    )
-                    cand_reconcile_punch_ins = cand_planned_punch_ins
-                promote_candidate(
-                    work_dir=work_dir,
-                    candidate_id=clip.clip_id,
-                    qc_record=qc_record,
-                    source=source,
-                    ffmpeg=ffmpeg,
-                    planned_punch_ins=cand_reconcile_punch_ins,
-                    source_shot_cuts_ms=ingested.shot_cuts_ms,
-                    fps=source_fps,
-                    min_face_share=min_face_share,
-                )
-                log.finished("render", "promoted from review candidate without re-rendering")
-                log.finished("delivery")
-                measured_json = review_candidate_dir / f"{clip.clip_id}.measured.json"
-                cand_meas = (
-                    ClipMeasurement.from_json(measured_json.read_text(encoding="utf-8"))
-                    if measured_json.is_file()
-                    else None
-                )
-                rendered = RenderResult(
-                    clip_id=clip.clip_id,
-                    path=str(final_render),
-                    width=cand_meas.video.width if cand_meas else 1080,
-                    height=cand_meas.video.height if cand_meas else 1920,
-                    requested_duration_ms=clip.out_ms - clip.in_ms,
-                    measured_duration_ms=(
-                        cand_meas.video.duration_ms if cand_meas else (clip.out_ms - clip.in_ms)
-                    ),
-                    reframe=reframe_mode or Reframe.STATIC_CENTRE,
-                    encoder=Encoder.X264,
-                    captions_burned_in=True,
-                    ffmpeg_version=(
-                        cand_meas.tool_metadata.get("ffmpeg_version", "unknown")
-                        if cand_meas
-                        else "unknown"
-                    ),
-                    brand_kit=brand_kit,
-                )
-                return replace(
-                    run,
-                    clip=replace(clip, qc=qc),
-                    render=rendered,
-                    delivery=Delivery(
-                        srt_path=str(final_srt),
-                        edl_path=str(final_edl),
-                        editing_json_path=str(final_json),
-                        measured_path=str(final_measured),
-                        edit_plan_path=str(
-                            work_dir / clip.clip_id / f"{clip.clip_id}.edit_plan.json"
-                        ),
-                    ),
-                    billed_calls=tuple(billed_calls),
-                )
+    is_review_render = True
 
-    is_review_render = qc is None or not qc.human_reviewed
-    if is_review_render and review_candidate_dir.is_dir():
+    def current_render_request() -> str:
+        binary = ffmpeg or find_ffmpeg()
+        if binary is None:
+            raise ValueError("render request requires the actual FFmpeg executable")
+        clip_inputs = clip.to_dict()
+        clip_inputs.pop("provenance")
+        # QC gates consumption separately; it does not change encoded pixels.
+        clip_inputs.pop("qc")
+        return render_input_digest(
+            {
+                "clip": clip_inputs,
+                "configuration": config,
+                "camera": camera,
+                "sentences": sentences,
+                "selected": selected,
+                "shot_cuts_ms": ingested.shot_cuts_ms,
+                "diarization": ingested.diarization,
+                "assembly_spans": assembly_spans,
+                "profile": profile,
+                "caption_style": resolved_caption_style,
+                "hook_banner": hook_banner,
+                "hook_text": hook_text,
+                "keyword_emphasis": keyword_emphasis,
+                "silence_threshold_ms": silence_threshold_ms,
+                "silence_target_gap_ms": silence_target_gap_ms,
+                "excise_fillers": excise_fillers,
+                "filler_tokens": frozenset(filler_tokens) if filler_tokens is not None else None,
+                "eased_push": eased_push,
+                "two_person_split": two_person_split,
+                "brand_kit": brand_kit,
+                "music_bed": Path(music_bed_path) if music_bed_path else None,
+                "music_ducking_volume": music_ducking_volume,
+                "b_roll": resolved_b_roll,
+                "first_frame_gate": first_frame_gate,
+                "min_face_share": min_face_share,
+                "fonts": FONTS_DIR,
+                "ffmpeg": binary,
+            }
+        )
+
+    try:
+        render_request_sha256 = current_render_request()
+        if clip.provenance is None:
+            raise ValueError("render request requires clip provenance")
+        clip = replace(
+            clip,
+            provenance=replace(clip.provenance, render_request_sha256=render_request_sha256),
+        )
+        run = replace(run, clip=clip)
+    except (OSError, ValueError, TypeError) as exc:
+        reason = "render request identity refused: " + _safe_exception_text(str(exc), budget=768)
+        log.finished("render", reason)
+        return replace(
+            run,
+            render=StageSkipped(
+                stage="render", reason=reason, blocked_by=("render request identity",)
+            ),
+        )
+    if is_review_render and os.path.lexists(review_candidate_dir):
         cand_mp4 = review_candidate_dir / f"{clip.clip_id}.mp4"
-        if cand_mp4.is_file():
-            log.finished("render", "retained existing review candidate")
-            log.finished("delivery", "awaiting human review")
-            measured_json = review_candidate_dir / f"{clip.clip_id}.measured.json"
-            cand_meas = (
-                ClipMeasurement.from_json(measured_json.read_text(encoding="utf-8"))
-                if measured_json.is_file()
-                else None
+        try:
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "retained candidate inspection"
             )
+            clip.assert_renderable(for_review=True)
+            retained_candidate = inspect_existing_review_candidate(
+                review_candidate_dir, clip=clip, ffmpeg=ffmpeg
+            )
+            if current_render_request() != render_request_sha256:
+                raise CandidateCacheError("render request changed during retained media inspection")
+            _assert_source_unchanged(
+                source, ingested.source_sha256, "retained candidate completion"
+            )
+        except (CandidateCacheError, ValueError, OSError) as exc:
+            reason = (
+                "existing private candidate refused: "
+                + _safe_exception_text(str(exc), budget=768)
+                + "; evidence preserved; use a new revision or work directory"
+            )
+            log.finished("render", reason)
+            log.started("delivery")
+            log.finished("delivery", reason)
+            return replace(
+                run,
+                render=StageSkipped(
+                    stage="render", reason=reason, blocked_by=("private candidate integrity",)
+                ),
+                delivery=StageSkipped(
+                    stage="delivery", reason=reason, blocked_by=("private candidate integrity",)
+                ),
+                billed_calls=tuple(billed_calls),
+            )
+        else:
+            log.finished("render", "rechecked existing private review candidate")
+            log.started("delivery")
+            log.finished("delivery", "awaiting human review")
             rendered = RenderResult(
                 clip_id=clip.clip_id,
                 path=str(cand_mp4),
-                width=cand_meas.video.width if cand_meas else 1080,
-                height=cand_meas.video.height if cand_meas else 1920,
-                requested_duration_ms=clip.out_ms - clip.in_ms,
-                measured_duration_ms=(
-                    cand_meas.video.duration_ms if cand_meas else (clip.out_ms - clip.in_ms)
-                ),
+                width=retained_candidate.measurement.video.width,
+                height=retained_candidate.measurement.video.height,
+                requested_duration_ms=retained_candidate.edit_plan.time_mapping.output_duration_ms,
+                measured_duration_ms=retained_candidate.measurement.video.duration_ms,
                 reframe=reframe_mode or Reframe.STATIC_CENTRE,
                 encoder=Encoder.X264,
                 captions_burned_in=True,
-                ffmpeg_version=(
-                    cand_meas.tool_metadata.get("ffmpeg_version", "unknown")
-                    if cand_meas
-                    else "unknown"
-                ),
+                ffmpeg_version=retained_candidate.measurement.tool_metadata["ffmpeg_version"],
                 brand_kit=brand_kit,
             )
             return replace(
                 run,
-                clip=clip,
+                clip=retained_candidate.clip,
                 render=rendered,
                 delivery=StageSkipped(
                     stage="delivery",
@@ -4001,7 +4208,7 @@ def run_pipeline(
 
     bundle_root = work_dir / "review" if is_review_render else work_dir
     try:
-        bundle = ArtifactBundle.create(bundle_root, clip.clip_id)
+        bundle = ArtifactBundle.create(bundle_root, clip.clip_id, private=True)
     except BundleError as exc:
         return replace(
             run,
@@ -4236,7 +4443,7 @@ def run_pipeline(
             silence_target_gap_ms=silence_target_gap_ms,
             punch_in_cadence_ms=config.punch_in_cadence_ms,
             eased_push=eased_push or config.eased_push,
-            two_person_split="auto",
+            two_person_split=two_person_split,
             keyword_emphasis=keyword_emphasis,
             fps=fps,
         )
@@ -4250,10 +4457,8 @@ def run_pipeline(
         else:
             time_mapping = SourceTimeMapping.continuous(clip.in_ms, clip.out_ms)
 
-        spk_turns = (
-            tuple((turn.start_ms, turn.end_ms, turn.speaker) for turn in ingested.diarization)
-            if ingested.diarization is not None
-            else ()
+        spk_turns = tuple(
+            (turn.start_ms, turn.end_ms, turn.speaker) for turn in camera.speaker_turns
         )
         visual_edit_plan = VisualEditPlan(
             version=CURRENT_PLAN_VERSION,
@@ -4297,11 +4502,15 @@ def run_pipeline(
             brand_kit=brand_kit,
             music_bed_path=(Path(music_bed_path) if music_bed_path else None),
             music_ducking_volume=music_ducking_volume,
+            b_roll=resolved_b_roll,
             for_review=is_review_render,
             assembly_spans=assembly_spans,
             plan=visual_edit_plan,
+            per_shot_boxes=camera.per_shot_boxes,
         )
         _assert_source_unchanged(source, ingested.source_sha256, "Stage 6 render completion")
+        if current_render_request() != render_request_sha256:
+            raise RenderError("render request changed during native rendering")
     except (IngestError, RenderError, BundleError, OSError, ValueError, BrandKitError) as exc:
         try:
             bundle.discard()
@@ -4438,6 +4647,8 @@ def run_pipeline(
             )
 
         _assert_source_unchanged(source, ingested.source_sha256, "delivery publication")
+        if current_render_request() != render_request_sha256:
+            raise DeliveryError("render request changed before private candidate freeze")
         bundle.publish()
     except (
         DeliveryError,
@@ -4708,6 +4919,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--omni-asr-checkpoint",
+        type=Path,
+        help=(
+            "a fused fine-tuned OmniASR-7B checkpoint on HawEdit's code allowlist (exact name, "
+            "size and SHA-256) to draft with instead of the LoRA champion; also "
+            "HAWEDIT_CHAMPION_CHECKPOINT. CTC-3B and every timing stay untouched (D-331)"
+        ),
+    )
+    parser.add_argument(
         "--stock-decoder",
         action="store_true",
         help=(
@@ -4945,6 +5165,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="background music volume level under dialogue during ducking (default: 0.25)",
     )
     parser.add_argument(
+        "--b-roll",
+        type=str,
+        default=None,
+        help="path to B-roll cutaway media file or JSON specification (Task 5, ADR D-273)",
+    )
+    parser.add_argument(
         "--confidential", action="store_true", help="mark the source as confidential"
     )
     parser.add_argument(
@@ -4965,6 +5191,14 @@ def build_parser() -> argparse.ArgumentParser:
             f"how many Stage 3 survivors Stage 4 scores before the best passing one is cut "
             f"(default {DEFAULT_JUDGE_TOP_N}; each is one billed request; requires "
             f"--auto-select)"
+        ),
+    )
+    parser.add_argument(
+        "--screener",
+        choices=("none", "gemini-flash", "jev"),
+        default="none",
+        help=(
+            "pre-screen candidate spans using fast System One models before Stage 4 judging (D-275)"
         ),
     )
     parser.add_argument(
@@ -5067,7 +5301,13 @@ def main(argv: list[str] | None = None) -> int:
         return _run_from_args(args, report_stream)
 
 
-def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> PipelineRun:
+def _build_and_run(
+    args: argparse.Namespace,
+    on_event: EventSink = discard,
+    *,
+    judge_transport: Transport | None = None,
+    screener_transport: ScreenerTransport | None = None,
+) -> PipelineRun:
     """Validate `args`, build every §3 producer they name, and run the pipeline.
 
     Everything `_run_from_args` used to do between parsing and reporting, extracted so a second
@@ -5077,6 +5317,9 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
     durable sink and it needs the same exceptions this raises (`_run_from_args` still catches
     them; nothing about what is raised or when changed here, only where the try/except now
     sits). D-A2.
+
+    Injected judge and screener transports are separate routes. Guarded judging refuses
+    implicit screening egress; supplying callbacks does not itself authenticate spending.
 
     The body is `main`'s, not this branch's: `main` kept editing this logic in place while this
     branch had moved it, so the merge took `main`'s newer validation wholesale and re-added only
@@ -5093,6 +5336,15 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
 
     if args.stock_decoder and not args.omni_asr:
         raise ValueError("--stock-decoder applies only to a Stage 1 run; it needs --omni-asr")
+
+    # D-331: a fused champion is a third decoder choice, never combined with the other two.
+    if (args.omni_asr_checkpoint or os.environ.get("HAWEDIT_CHAMPION_CHECKPOINT", "").strip()) and (
+        args.omni_asr_adapter or args.stock_decoder
+    ):
+        raise ValueError(
+            "--omni-asr-checkpoint (or HAWEDIT_CHAMPION_CHECKPOINT) cannot be combined with "
+            "--omni-asr-adapter or --stock-decoder; pick one decoder"
+        )
 
     if args.face_reframe:
         # First, ahead of every other check: an obsolete flag is a fact about the invocation
@@ -5128,6 +5380,8 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         raise ValueError(
             "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr"
         )
+    if args.omni_asr_checkpoint and not args.omni_asr:
+        raise ValueError("--omni-asr-checkpoint requires --omni-asr")
     if args.gemini and args.vertex_project:
         raise ValueError("--gemini and --vertex-project are mutually exclusive cloud routes")
     if (args.gemini or args.vertex_project) and args.verdict:
@@ -5179,6 +5433,20 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
     if args.judge_top_n is not None and args.judge_top_n < 1:
         raise ValueError("--judge-top-n must be at least 1")
 
+    if getattr(args, "screener", "none") != "none" and not args.auto_select:
+        raise ValueError(
+            "--screener requires --auto-select; with --sentences the span is already chosen"
+        )
+    if (
+        judge_transport is not None
+        and getattr(args, "screener", "none") != "none"
+        and screener_transport is None
+    ):
+        raise ValueError(
+            "Guarded generation requires a separately authorized screener transport; "
+            "the judge policy does not authorize an independent Flash or TypeSafe route"
+        )
+
     if args.min_clip_seconds is not None and args.min_clip_seconds <= 0:
         raise ValueError("--min-clip-seconds must be greater than 0")
     if args.qc_record and not (args.sentences or args.auto_select):
@@ -5208,6 +5476,11 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
     ):
         raise ValueError("governance flags apply only with a Gemini or Vertex route")
 
+    screener = (
+        get_screener(getattr(args, "screener", None), transport=screener_transport)
+        if screener_transport is not None
+        else getattr(args, "screener", None)
+    )
     transcript = (
         RawTranscript.from_json(args.transcript.read_text(encoding="utf-8"))
         if args.transcript
@@ -5233,16 +5506,21 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
                 args.vertex_project,
                 location=args.vertex_location,
                 governance=governance,
+                transport=judge_transport,
             )
             if args.vertex_project
-            else GeminiJudge(governance=governance)
+            else GeminiJudge(governance=governance, transport=judge_transport)
         )
         path_a = PathADiscovery(client=judge)
         discover = path_a.discover
 
     canonical_asr = None
     if args.omni_asr:
-        from hawedit.asr import create_omni_asr_producer, resolve_champion_adapter
+        from hawedit.asr import (
+            create_omni_asr_producer,
+            resolve_champion_adapter,
+            resolve_champion_checkpoint,
+        )
 
         # The champion drafts everything unless the operator deliberately says otherwise. Its
         # absence raises rather than falling back to the base decoder: the owner's Champion
@@ -5250,12 +5528,18 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         # that the base emits hallucinations the champion does not. An explicit --stock-decoder
         # is still allowed, because a deliberate choice is not a divert.
         adapter = args.omni_asr_adapter
-        if adapter is None and not args.stock_decoder:
+        # A fused champion (flag or HAWEDIT_CHAMPION_CHECKPOINT) replaces the LoRA default; the
+        # preflight above already refused it beside an adapter or --stock-decoder. D-331.
+        checkpoint = args.omni_asr_checkpoint
+        if checkpoint is None and adapter is None and not args.stock_decoder:
+            checkpoint = resolve_champion_checkpoint()
+        if adapter is None and checkpoint is None and not args.stock_decoder:
             adapter = resolve_champion_adapter()
         canonical_asr = create_omni_asr_producer(
             args.omni_asr_runtime,
             distro=args.wsl_distro,
             lora_adapter=adapter,
+            fused_checkpoint=checkpoint,
         )
 
     assert_devices_available(
@@ -5422,6 +5706,8 @@ def _build_and_run(args: argparse.Namespace, on_event: EventSink = discard) -> P
         min_separation_ms=getattr(args, "min_separation_ms", DEFAULT_MIN_SEPARATION_MS),
         max_text_similarity=getattr(args, "max_text_similarity", DEFAULT_MAX_TEXT_SIMILARITY),
         episode_id=getattr(args, "episode_id", None),
+        screener=screener,
+        b_roll=getattr(args, "b_roll", None),
     )
 
 
@@ -5522,25 +5808,27 @@ def _print_report(run: PipelineRun) -> None:
             f"stage 3 {ran['candidates']} candidate(s) [{by_path}] · "
             f"{len(run.rejected)} rejected{f' [{rejected}]' if rejected else ''}{in_target}"
         )
-    # Stage 1 scores its own output and nothing said so. Measured on the real 38-minute
-    # source: `select_for_validation` escalated 294 of 545 segments — 54% of the transcript —
-    # because the LLM and CTC arms disagree past the CER threshold, and the run printed a clean
-    # fourteen-line report. The finding existed only in `--json`, which is not what the
-    # documented invocation produces. §1: fail visible, not silent.
-    if run.escalation:
-        escalated = sum(1 for decision in run.escalation if decision.escalate)
-        if escalated:
-            share = 100 * escalated / len(run.escalation)
-            # The first *escalated* decision, not the first decision. Measured on the real
-            # 20-minute episode: `escalation[0].escalate` is False and its reason reads
-            # "confident (mean logprob -5.699) and the models agree", so the report paired an
-            # alarming count with a reassuring explanation of a segment that was never flagged.
-            # A reader takes that as "91% flagged, but the models agree, so it is fine".
-            first_flagged = next(decision for decision in run.escalation if decision.escalate)
-            print(
-                f"stage 1 {escalated}/{len(run.escalation)} segment(s) ({share:.0f}%) escalated "
-                f"for human validation — {first_flagged.reason}"
+    routing = run.to_dict()
+    original = routing["escalation"]
+    diagnostic = routing["escalation_diagnostics"]
+    summary = original if original is not None else diagnostic["summary"] if diagnostic else None
+    if summary is None:
+        print("stage 1 original ASR routing unavailable")
+    else:
+        description = (
+            "routed to ASR validator (original evidence)"
+            if original is not None
+            else (
+                "flagged in selected-output replay; original routing unknown"
+                if diagnostic["input_evidence"] == "selected-output-replay"
+                else "flagged in unbound reported decisions; original routing unknown"
             )
+        )
+        reason = f" - {summary['segments'][0]['reason']}" if summary["segments"] else ""
+        print(
+            f"stage 1 {summary['escalated']}/{summary['scored_segments']} segment(s) "
+            f"{description}{reason}"
+        )
     if run.sentences:
         print(f"§4.2    {len(run.sentences)} sentence(s)")
     if run.clip is not None:

@@ -1,0 +1,6 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\studio_uploads.py:401: error: Returning Any from function declared to return "Path"  [no-any-return]
+tests\test_studio_uploads.py:274: error: Module "hawedit.studio_uploads" does not explicitly export attribute "write_text_atomic"  [attr-defined]
+Found 2 errors in 2 files (checked 254 source files)

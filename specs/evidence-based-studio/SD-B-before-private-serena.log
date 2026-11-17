@@ -1,0 +1,10 @@
+Could not find containing symbol for src\hawedit\pipeline.py:258:5. Returning file symbol instead
+Could not find containing symbol for tests\test_checkpoint.py:23:43. Returning file symbol instead
+Could not find containing symbol for tests\test_episode.py:27:43. Returning file symbol instead
+Could not find containing symbol for tests\test_events.py:25:56. Returning file symbol instead
+Could not find containing symbol for tests\test_pipeline.py:79:4. Returning file symbol instead
+Could not find containing symbol for tests\test_render_boundary_revision.py:24:42. Returning file symbol instead
+Could not find containing symbol for tests\test_render_caption_revision.py:21:56. Returning file symbol instead
+Could not find containing symbol for tests\test_run_cost.py:24:44. Returning file symbol instead
+Could not find containing symbol for tests\test_screener.py:16:29. Returning file symbol instead
+Mapped 5 actual private-staging symbols

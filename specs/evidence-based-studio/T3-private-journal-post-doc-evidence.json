@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "status": "unaccepted-post-gate-documentation-evidence",
+  "observed_at_utc": "2026-10-02T20:30:00.2730831Z",
+  "source_package_sha256": "637e9acc148c7b9000605df4c2a4006abd7b5268b6e9617641f509e7a6b6c302",
+  "canonical_gate_evidence": "T3-private-journal-test-evidence.json",
+  "canonical_gate_evidence_sha256": "956934dbb90035d77cacfa08aed5821342b62df31298c1da978923a5bb653ab3",
+  "gate_source_and_tests_unchanged": true,
+  "passed_claim_cases": 67,
+  "failed_error_skipped_claim_cases": 0,
+  "claims_report_sha256": "d6a4ef2301a8b2468be5fa7b62974142a675529b5bdef3657cd291a5fc8b2fac",
+  "claims_log_sha256": "5f43590fd0f9c4c637364ad95b24fe83886d1b3e30707faf9bdeb524ea0b8110",
+  "current_document_sha256": {
+    "README.md": "2a4cb0c3d9b91d36a55fd62b489f2e738b4a0ade4d9b8b792e71575cb0637104",
+    "PROGRESS.md": "5bc31090efe76461451c94b0794e17b257cd5149fe82102b199696bb04611aa8",
+    "DECISIONS.md": "62f193ce67be1dc2ad56fe0229a166e640e0995fb1294fbce4bc1f83983ab94a",
+    "specs/evidence-based-studio/readiness.md": "23617b736d8a1c77910e39b64dedfa6d273f733543b78ffdb49d61dbb88d10dd",
+    "specs/evidence-based-studio/security-review-packet.md": "44a05b7a8bdb798bf1605014d4b7fddf4303ff5631b2f86c88112afa9b914064",
+    "specs/evidence-based-studio/private-journal-research.md": "3437e1a61e1010cfe46859b2c17f95bc32442c110f8b351a14e1bd2facf2f21e",
+    "specs/evidence-based-studio/private-storage-adoption-research.md": "6d6953f1cfb3d8bdc70fba8691def2238ac4ccac34b11d4b642f78a03a0f3e18",
+    "specs/evidence-based-studio/spec.md": "7874d8fd3e29367685f1f03cd452bd14fc1e00631b7203f3ae14232131cf9b37",
+    "specs/evidence-based-studio/impact-map.md": "2201f159ddc72ca67abe2c7078d570911c15b67769d0eb128dc5006b1f65fc5f",
+    "specs/evidence-based-studio/plan.md": "d35ab8f5fa0ed8a74bb48365dc31b7769eb3b4b2a419519a5e493efa272697a0",
+    "specs/evidence-based-studio/tasks.md": "6107d46d1c26cbe582733a8e13d4ac16ae0c810d7bae6e2a5ca1fc7a0a5e16e3"
+  },
+  "limits": [
+    "PROGRESS terminal evidence paragraph added after canonical collection; frozen tested-doc hashes remain in the gate manifest.",
+    "Post-document claims are a focused check, not a new full green gate or same-SHA CI.",
+    "Task rows remain WIP/unticked; all whole-program acceptance obligations remain active."
+  ]
+}

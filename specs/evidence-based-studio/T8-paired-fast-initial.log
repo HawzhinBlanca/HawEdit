@@ -1,0 +1,36 @@
+==> lint
+src\hawedit\comparison_kit.py:64:39: UP038 Use `X | Y` in `isinstance` call instead of `(X, Y)`
+   |
+62 |     if type(n) is not int or n <= 0:
+63 |         raise ComparisonKitError(f"Sample size n must be positive, got {n}")
+64 |     if isinstance(p_hat, bool) or not isinstance(p_hat, (int, float)) or not (0.0 <= p_hat <= 1.0):
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ UP038
+65 |         raise ComparisonKitError(f"p_hat must be within [0.0, 1.0], got {p_hat}")
+66 |     if (
+   |
+   = help: Convert to `X | Y`
+
+src\hawedit\comparison_kit.py:68:16: UP038 Use `X | Y` in `isinstance` call instead of `(X, Y)`
+   |
+66 |     if (
+67 |         isinstance(confidence, bool)
+68 |         or not isinstance(confidence, (int, float))
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ UP038
+69 |         or not 0.0 < confidence < 1.0
+70 |     ):
+   |
+   = help: Convert to `X | Y`
+
+src\hawedit\comparison_kit.py:252:24: UP038 Use `X | Y` in `isinstance` call instead of `(X, Y)`
+    |
+250 |             if value is not None and (
+251 |                 isinstance(value, bool)
+252 |                 or not isinstance(value, (int, float))
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ UP038
+253 |                 or not math.isfinite(value)
+254 |                 or value < 0
+    |
+    = help: Convert to `X | Y`
+
+Found 3 errors.
+No fixes available (3 hidden fixes can be enabled with the `--unsafe-fixes` option).

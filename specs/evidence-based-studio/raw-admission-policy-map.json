@@ -1,0 +1,14 @@
+[
+  {
+    "path": "src/hawedit/studio_admission.py",
+    "symbol": "_policy",
+    "definition": "[{\"name_path\": \"_policy\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_admission.py\", \"body_location\": {\"start_line\": 78, \"end_line\": 95}}]",
+    "references": "[{\"name_path\": \"inspect_studio_journal\", \"kind\": \"Function\", \"relative_path\": \"src\\\\hawedit\\\\studio_admission.py\", \"body_location\": {\"start_line\": 364, \"end_line\": 407}, \"content_around_reference\": \"... 383:        raise ValueError(\\\"Raw journal deadline must be finite, positive and at most10 seconds\\\")\\n  > 384:    _policy(policy)\\n... 385:    budget = _Budget(max_rows, max_bytes, time.perf_counter() + max_seconds)\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_admission.py",
+    "symbol": "_validate",
+    "definition": "[{\"name_path\": \"_validate\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/studio_admission.py\", \"body_location\": {\"start_line\": 241, \"end_line\": 361}}]",
+    "references": "[{\"name_path\": \"inspect_studio_journal/ids\", \"kind\": \"Variable\", \"relative_path\": \"src\\\\hawedit\\\\studio_admission.py\", \"body_location\": {\"start_line\": 396, \"end_line\": 396}, \"content_around_reference\": \"... 395:        digest, tables = _raw(connection, budget)\\n  > 396:        ids = _validate(tables, submissions, policy, budget)\\n... 397:        storage.verify()\"}]"
+  }
+]

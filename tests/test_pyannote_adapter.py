@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from hawedit.pyannote_adapter import (
     PyannoteDiarizer,
     convert_annotation_to_segments,
 )
+from test_pyannote_checkpoint import provision_checkpoint
 
 
 @dataclass
@@ -111,12 +113,16 @@ def test_the_adapter_never_imports_the_pyannote_cloud_sdk() -> None:
 
 def test_absent_weights_are_refused_by_naming_blocker_four(tmp_path: Path) -> None:
     """AC-3: When weights are unprovisioned, refuse by naming BLOCKED.md #4."""
-    fake_audio = tmp_path / "test.wav"
-    fake_audio.write_bytes(b"RIFFdummy")
+    audio = tmp_path / "test.wav"
+    with wave.open(str(audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\0" * 32000)
 
-    diarizer = PyannoteDiarizer()
+    diarizer = PyannoteDiarizer(model_dir=tmp_path / "absent-community1")
     with pytest.raises(DiarizationUnavailable, match=r"BLOCKED\.md #4"):
-        diarizer.diarize(fake_audio)
+        diarizer.diarize(audio)
 
 
 def test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused() -> None:
@@ -125,12 +131,17 @@ def test_a_checkpoint_revision_the_acceptance_kit_did_not_pin_is_refused() -> No
         PyannoteDiarizer(revision="unpinned_revision_123")
 
 
-def test_missing_pyannote_is_reported_as_a_missing_extra(tmp_path: Path) -> None:
+def test_missing_pyannote_is_reported_as_a_missing_extra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC-8: Missing pyannote.audio surfaces as DiarizationUnavailable naming the extra."""
     fake_audio = tmp_path / "test.wav"
-    fake_audio.write_bytes(b"RIFFdummy")
-    model_dir = tmp_path / "model_weights"
-    model_dir.mkdir()
+    with wave.open(str(fake_audio), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\0" * 32000)
+    model_dir = provision_checkpoint(tmp_path, monkeypatch)
 
     diarizer = PyannoteDiarizer(model_dir=model_dir)
 

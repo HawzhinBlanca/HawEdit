@@ -1,0 +1,19 @@
+"""pytest plugin (research only): keep a copy of every clip the face probe is asked to measure."""
+
+import os
+import shutil
+from pathlib import Path
+
+import hawedit.measure as m
+
+_orig = m.probe_face_tracking
+_dest = Path(os.environ["KEEP_DEST"])
+
+
+def _keep(video_path, *args, **kwargs):  # type: ignore[no-untyped-def]
+    _dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy(video_path, _dest / Path(video_path).name)
+    return _orig(video_path, *args, **kwargs)
+
+
+m.probe_face_tracking = _keep

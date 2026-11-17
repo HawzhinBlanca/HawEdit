@@ -1638,6 +1638,43 @@ def test_a_punch_in_recentres_itself_when_the_crop_tightens() -> None:
     assert "out_h" in chain and "in_h-out_h" in chain, chain
 
 
+def test_crop_filter_with_per_shot_boxes_emits_sendcmd_and_adapts_wide_shot() -> None:
+    """When a clip spans multiple camera shots with varying face sizes, crop_filter
+    switches crop dimensions at the shot boundary via sendcmd and adjusts the eye line (D-330).
+    """
+    shots = (
+        (0, 5000, 520, 320),  # Shot 1: close-up, face ~320px
+        (5000, 12000, 360, 140),  # Shot 2: wide shot, face ~140px
+    )
+    chain = crop_filter(
+        1920,
+        1080,
+        focus_x=960,
+        per_shot_boxes=shots,
+        clip_in_ms=0,
+    )
+    assert chain.startswith("sendcmd=c='"), chain
+    assert "5.000 crop w" in chain
+    assert "5.000 crop h" in chain
+    # Base 1080p vertical crop width is 606.
+    # Wide shot (h=140) triggers zoom toward TARGET_FACE_HEIGHT_SHARE (0.15):
+    # share = 140/1080 = 0.1296 -> zoom = 0.15/0.1296 = 1.157 -> crop w 522, crop h 932
+    assert "5.000 crop w 522" in chain
+    assert "5.000 crop h 932" in chain
+    # Stepped eye line is present in y expression
+    assert "lt(t\\,5.000)" in chain
+
+    # If face is smaller (e.g. h=90), zoom hits MAX_VERTICAL_ZOOM (1.5x cap):
+    # 606/1.5 = 404, 1080/1.5 = 720
+    wide_shots = (
+        (0, 5000, 520, 320),
+        (5000, 12000, 360, 90),
+    )
+    chain_capped = crop_filter(1920, 1080, focus_x=960, per_shot_boxes=wide_shots, clip_in_ms=0)
+    assert "5.000 crop w 404" in chain_capped
+    assert "5.000 crop h 720" in chain_capped
+
+
 @pytest.mark.parametrize(
     ("duration", "zoom", "message"),
     [(0, 1.25, "duration must be positive"), (12_000, 0.8, "zoom must be at least 1.0")],

@@ -110,6 +110,10 @@ def _release_source(root: Path) -> Path:
     )
     (project / "assets" / "fonts" / "NotoNaskhArabic-Regular.ttf").write_bytes(b"font")
     (project / "assets" / "fonts" / "OFL.txt").write_text("OFL", encoding="utf-8")
+    for name in ("Vazirmatn.ttf", "Vazirmatn.ttf.provenance.json", "Vazirmatn-COPYRIGHT.txt"):
+        (project / "assets" / "fonts" / name).write_bytes(
+            (ROOT / "assets" / "fonts" / name).read_bytes()
+        )
     (project / "models" / "sources.json").write_text("{}\n", encoding="utf-8")
     (project / "models" / "revisions.json").write_text("{}\n", encoding="utf-8")
     (project / "models" / "integrity.json").write_text(
@@ -128,6 +132,7 @@ def _release_source(root: Path) -> Path:
         "host-models-windows-py311.txt",
         "host-models-windows-py312.txt",
         "host-gpu-windows-py311.txt",
+        "host-studio-windows-py311.txt",
     ):
         (project / "requirements" / target).write_text("# fixture lock\n", encoding="utf-8")
     (project / "security").mkdir()
@@ -156,6 +161,9 @@ where = ["src"]
 "share/hawedit/assets/fonts" = [
     "assets/fonts/NotoNaskhArabic-Regular.ttf",
     "assets/fonts/OFL.txt",
+    "assets/fonts/Vazirmatn.ttf",
+    "assets/fonts/Vazirmatn.ttf.provenance.json",
+    "assets/fonts/Vazirmatn-COPYRIGHT.txt",
 ]
 "share/hawedit/models" = [
     "models/sources.json",
@@ -172,6 +180,7 @@ where = ["src"]
     "requirements/host-models-windows-py311.txt",
     "requirements/host-models-windows-py312.txt",
     "requirements/host-gpu-windows-py311.txt",
+    "requirements/host-studio-windows-py311.txt",
 ]
 "share/hawedit/security" = ["security/wsl-asr-vex.json"]
 "share/hawedit/scripts" = ["scripts/fetch-ffmpeg.sh"]
@@ -333,6 +342,7 @@ def test_release_builds_twice_and_publishes_verified_provenance(
     assert set(packages) == {
         "hawedit-release-fixture",
         "Noto Naskh Arabic",
+        "Vazirmatn",
         "base-dep",
         "optional-dep",
     }
@@ -355,6 +365,16 @@ def test_release_builds_twice_and_publishes_verified_provenance(
     optional_id = packages["optional-dep"]["SPDXID"]
     assert ("SPDXRef-DOCUMENT", "DESCRIBES", root) in relationships
     assert (root, "CONTAINS", font_id) in relationships
+    assert (root, "CONTAINS", packages["Vazirmatn"]["SPDXID"]) in relationships
+    assert packages["Vazirmatn"]["checksums"] == [
+        {
+            "algorithm": "SHA256",
+            "checksumValue": hashlib.sha256(
+                (ROOT / "assets/fonts/Vazirmatn.ttf").read_bytes()
+            ).hexdigest(),
+        }
+    ]
+    assert packages["Vazirmatn"]["licenseDeclared"] == "OFL-1.1"
     assert (root, "DEPENDS_ON", base_id) in relationships
     assert (optional_id, "OPTIONAL_DEPENDENCY_OF", root) in relationships
     assert packages["Noto Naskh Arabic"]["checksums"] == [

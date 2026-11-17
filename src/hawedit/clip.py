@@ -938,6 +938,7 @@ class Provenance:
     crop_constants: dict[str, float | int]
     ffmpeg: dict[str, str]
     profile: str = "production"
+    render_request_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _strict_json_string(self.git_commit, "provenance.git_commit")
@@ -945,6 +946,11 @@ class Provenance:
         _strict_json_string(self.judge_prompt_sha256, "provenance.judge_prompt_sha256")
         _strict_json_string(self.judge_response_id, "provenance.judge_response_id")
         _strict_json_string(self.profile, "provenance.profile")
+        if self.render_request_sha256 is not None and (
+            type(self.render_request_sha256) is not str
+            or _SHA256_HEX_RE.fullmatch(self.render_request_sha256) is None
+        ):
+            raise ValueError("provenance.render_request_sha256 must be lowercase SHA-256")
         if not isinstance(self.thresholds, dict) or not self.thresholds:
             raise ValueError("provenance.thresholds must be a non-empty dictionary of floats")
         if not isinstance(self.vad_scene, dict) or not self.vad_scene:
@@ -955,7 +961,7 @@ class Provenance:
             raise ValueError("provenance.ffmpeg must be a non-empty dictionary of strings")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "git_commit": self.git_commit,
             "revisions_digest": self.revisions_digest,
             "judge_prompt_sha256": self.judge_prompt_sha256,
@@ -966,6 +972,9 @@ class Provenance:
             "ffmpeg": dict(self.ffmpeg),
             "profile": self.profile,
         }
+        if self.render_request_sha256 is not None:
+            result["render_request_sha256"] = self.render_request_sha256
+        return result
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Provenance:
@@ -984,7 +993,7 @@ class Provenance:
                     "ffmpeg",
                 }
             ),
-            optional=frozenset({"profile"}),
+            optional=frozenset({"profile", "render_request_sha256"}),
         )
         raw_thresholds = fields["thresholds"]
         if not isinstance(raw_thresholds, dict) or not raw_thresholds:
@@ -1016,6 +1025,13 @@ class Provenance:
             ffmpeg={k: str(v) for k, v in raw_ffmpeg.items()},
             profile=_strict_optional_json_string(fields.get("profile"), "provenance.profile")
             or "production",
+            render_request_sha256=(
+                _strict_json_string(
+                    fields["render_request_sha256"], "provenance.render_request_sha256"
+                )
+                if "render_request_sha256" in fields
+                else None
+            ),
         )
 
     @classmethod

@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-02T20:11:27.9715607Z",
+  "scope": "Native host inventory, no speed/quality measurement",
+  "runtime": {
+    "python": "3.12.10",
+    "sqlite": "3.49.1",
+    "libraries": {
+      "pytest": "9.1.1",
+      "ruff": "0.9.6",
+      "mypy": "1.15.0",
+      "dbos": "2.29.0"
+    }
+  },
+  "computer": {
+    "Name": "HAWAPC01",
+    "TotalPhysicalMemory": 274741166080,
+    "Manufacturer": "To Be Filled By O.E.M.",
+    "Model": "To Be Filled By O.E.M."
+  },
+  "os": {
+    "Caption": "Microsoft Windows 11 Pro",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200"
+  },
+  "cpu": [
+    {
+      "Name": "AMD Ryzen Threadripper 3990X 64-Core Processor ",
+      "NumberOfCores": 64,
+      "NumberOfLogicalProcessors": 128
+    }
+  ],
+  "display": [
+    {
+      "Name": "NVIDIA GeForce RTX 3090 Ti",
+      "DriverVersion": "32.0.16.1088"
+    },
+    {
+      "Name": "NVIDIA GeForce RTX 3090 Ti",
+      "DriverVersion": "32.0.16.1088"
+    }
+  ]
+}

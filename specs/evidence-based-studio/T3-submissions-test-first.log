@@ -1,0 +1,15 @@
+
+=================================== ERRORS ====================================
+______________ ERROR collecting tests/test_studio_submissions.py ______________
+ImportError while importing test module 'C:\Users\Wareen\Desktop\HawEdit\tests\test_studio_submissions.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_studio_submissions.py:20: in <module>
+    from hawedit.studio_submissions import (
+E   ModuleNotFoundError: No module named 'hawedit.studio_submissions'
+=========================== short test summary info ===========================
+ERROR tests/test_studio_submissions.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!

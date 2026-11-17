@@ -1,0 +1,522 @@
+...........FFFFFFF.....FF                                                [100%]
+================================== FAILURES ===================================
+______ test_studio_upload_accepts_actual_supported_containers[.mp4-mp4] _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act0')
+suffix = '.mp4', muxer = 'mp4'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+______ test_studio_upload_accepts_actual_supported_containers[.mov-mov] _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act1')
+suffix = '.mov', muxer = 'mov'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+______ test_studio_upload_accepts_actual_supported_containers[.m4v-mp4] _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act2')
+suffix = '.m4v', muxer = 'mp4'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+____ test_studio_upload_accepts_actual_supported_containers[.mkv-matroska] ____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act3')
+suffix = '.mkv', muxer = 'matroska'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+_____ test_studio_upload_accepts_actual_supported_containers[.webm-webm] ______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act4')
+suffix = '.webm', muxer = 'webm'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+______ test_studio_upload_accepts_actual_supported_containers[.avi-avi] _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act5')
+suffix = '.avi', muxer = 'avi'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+_____ test_studio_upload_accepts_actual_supported_containers[.ts-mpegts] ______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_upload_accepts_act6')
+suffix = '.ts', muxer = 'mpegts'
+
+    @pytest.mark.parametrize(
+        ("suffix", "muxer"),
+        [
+            (".mp4", "mp4"),
+            (".mov", "mov"),
+            (".m4v", "mp4"),
+            (".mkv", "matroska"),
+            (".webm", "webm"),
+            (".avi", "avi"),
+            (".ts", "mpegts"),
+        ],
+    )
+    def test_studio_upload_accepts_actual_supported_containers(
+        tmp_path: Path,
+        suffix: str,
+        muxer: str,
+    ) -> None:
+        root = create_private_test_root(tmp_path)
+        media = tmp_path / ("actual-container" + suffix)
+        codecs = ["-c", "copy"]
+        if suffix == ".webm":
+            codecs = ["-c:v", "libvpx-vp9", "-c:a", "libopus", "-threads", "1"]
+        subprocess.run(
+            [
+                str(find_ffmpeg()),
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(MEDIA),
+                *codecs,
+                "-f",
+                muxer,
+                str(media),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        data = media.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("creator-video" + suffix, len(data))
+        source = store.receive(ticket["upload_id"], io.BytesIO(data), len(data))
+>       assert source["state"] == "ready"
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests\test_studio_storage.py:293: KeyError
+____ test_studio_native_server_uploads_use_private_startup_storage[False] _____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_native_server_uplo0')
+configured = False
+
+    @pytest.mark.parametrize("configured", [False, True])
+    def test_studio_native_server_uploads_use_private_startup_storage(
+        tmp_path: Path,
+        configured: bool,
+    ) -> None:
+        # Execute the actual startup/handler in a child; no worker, model or legacy submission.
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        env = dict(os.environ, PYTHONUNBUFFERED="1", LOCALAPPDATA=str(tmp_path), HOME=str(tmp_path))
+        env.pop("HAWEDIT_STUDIO_STORAGE_ROOT", None)
+        env.pop("HAWEDIT_UPLOAD_MAX_BYTES", None)
+        root = tmp_path / ("HawEditStudio" if os.name == "nt" else ".hawedit-studio")
+        if configured:
+            root = tmp_path / "configured-private-studio"
+            env["HAWEDIT_STUDIO_STORAGE_ROOT"] = str(root)
+        program = (
+            "import sys; from pathlib import Path; import hawedit.web as w; "
+            "assert w.UPLOAD_STORE is None; "
+            "w.JOB_MANAGER = w.JobManager(Path(sys.argv[2])); "
+            "w.run_web_server(int(sys.argv[1]))"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", program, str(port), str(tmp_path / "test-only-history")],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        base = f"http://127.0.0.1:{port}"
+        try:
+            deadline = time.monotonic() + 20
+            while True:
+                assert process.poll() is None, "Native studio startup failed"
+                try:
+                    with urlopen(base + "/", timeout=1) as response:
+                        assert response.status == 200 and b"HawEdit" in response.read()
+                    break
+                except URLError:
+                    assert time.monotonic() < deadline, "Native studio startup timed out"
+                    time.sleep(0.05)
+            data = MEDIA.read_bytes()
+            payload = json.dumps({"filename": "real-selected-video.mp4", "size": len(data)}).encode()
+            with urlopen(
+                Request(
+                    base + "/api/uploads", data=payload, headers={"Content-Type": "application/json"}
+                ),
+                timeout=10,
+            ) as response:
+                assert response.status == 201
+                upload_id = json.load(response)["upload_id"]
+            with urlopen(
+                Request(base + f"/api/uploads/{upload_id}", data=data, method="PUT"), timeout=30
+            ) as response:
+                assert response.status == 201
+                source = json.load(response)
+            with urlopen(base + f"/api/uploads/{upload_id}", timeout=10) as response:
+>               assert json.load(response)["source_id"] == source["source_id"] == upload_id
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               KeyError: 'source_id'
+
+tests\test_studio_storage.py:411: KeyError
+_____ test_studio_native_server_uploads_use_private_startup_storage[True] _____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7038/test_studio_native_server_uplo1')
+configured = True
+
+    @pytest.mark.parametrize("configured", [False, True])
+    def test_studio_native_server_uploads_use_private_startup_storage(
+        tmp_path: Path,
+        configured: bool,
+    ) -> None:
+        # Execute the actual startup/handler in a child; no worker, model or legacy submission.
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        env = dict(os.environ, PYTHONUNBUFFERED="1", LOCALAPPDATA=str(tmp_path), HOME=str(tmp_path))
+        env.pop("HAWEDIT_STUDIO_STORAGE_ROOT", None)
+        env.pop("HAWEDIT_UPLOAD_MAX_BYTES", None)
+        root = tmp_path / ("HawEditStudio" if os.name == "nt" else ".hawedit-studio")
+        if configured:
+            root = tmp_path / "configured-private-studio"
+            env["HAWEDIT_STUDIO_STORAGE_ROOT"] = str(root)
+        program = (
+            "import sys; from pathlib import Path; import hawedit.web as w; "
+            "assert w.UPLOAD_STORE is None; "
+            "w.JOB_MANAGER = w.JobManager(Path(sys.argv[2])); "
+            "w.run_web_server(int(sys.argv[1]))"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", program, str(port), str(tmp_path / "test-only-history")],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        base = f"http://127.0.0.1:{port}"
+        try:
+            deadline = time.monotonic() + 20
+            while True:
+                assert process.poll() is None, "Native studio startup failed"
+                try:
+                    with urlopen(base + "/", timeout=1) as response:
+                        assert response.status == 200 and b"HawEdit" in response.read()
+                    break
+                except URLError:
+                    assert time.monotonic() < deadline, "Native studio startup timed out"
+                    time.sleep(0.05)
+            data = MEDIA.read_bytes()
+            payload = json.dumps({"filename": "real-selected-video.mp4", "size": len(data)}).encode()
+            with urlopen(
+                Request(
+                    base + "/api/uploads", data=payload, headers={"Content-Type": "application/json"}
+                ),
+                timeout=10,
+            ) as response:
+                assert response.status == 201
+                upload_id = json.load(response)["upload_id"]
+            with urlopen(
+                Request(base + f"/api/uploads/{upload_id}", data=data, method="PUT"), timeout=30
+            ) as response:
+                assert response.status == 201
+                source = json.load(response)
+            with urlopen(base + f"/api/uploads/{upload_id}", timeout=10) as response:
+>               assert json.load(response)["source_id"] == source["source_id"] == upload_id
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               KeyError: 'source_id'
+
+tests\test_studio_storage.py:411: KeyError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.mp4-mp4]
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.mov-mov]
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.m4v-mp4]
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.mkv-matroska]
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.webm-webm]
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.avi-avi]
+FAILED tests/test_studio_storage.py::test_studio_upload_accepts_actual_supported_containers[.ts-mpegts]
+FAILED tests/test_studio_storage.py::test_studio_native_server_uploads_use_private_startup_storage[False]
+FAILED tests/test_studio_storage.py::test_studio_native_server_uploads_use_private_startup_storage[True]

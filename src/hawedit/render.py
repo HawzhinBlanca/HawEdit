@@ -42,7 +42,6 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -63,7 +62,7 @@ from hawedit.captions import (
 from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
 from hawedit.measure import AudioMeasurement
-from hawedit.silence import SilencePlan, silence_trim_filter
+from hawedit.silence import SilencePlan, remap_timestamp, silence_trim_filter
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -78,6 +77,7 @@ __all__ = [
     "SPEECH_CHAIN_FILTERS",
     "VERTICAL_HEIGHT",
     "VERTICAL_WIDTH",
+    "BRollItem",
     "Encoder",
     "LoudnessStats",
     "ProvenanceViolation",
@@ -560,7 +560,6 @@ class Encoder(Enum):
     NVENC = "h264_nvenc"
 
 
-@lru_cache(maxsize=8)
 def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
     """Can this ffmpeg actually encode with `encoder`? Attempted, not looked up.
 
@@ -572,8 +571,8 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
 
     This is §4.3.2's lesson applied to encoders: "a build accepting the option may still lack
     the backing library". The only answer worth having comes from trying it, so this encodes
-    one frame to a real file and checks that bytes came out. Cached — the answer cannot change
-    within a process, and the probe costs an ffmpeg launch.
+    one frame to a real file and checks that bytes came out. Availability is probed on each
+    request: executable bytes, driver readiness and available resources can change in-process.
 
     **The probe encodes at the size Stage 6 actually outputs, and that is not a detail.** It
     used to use 64x64, and on hawapc01 — the machine §6 says to use NVENC on — that reported
@@ -587,29 +586,32 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
     """
     with tempfile.TemporaryDirectory() as work:
         probe = Path(work) / "probe.mp4"
-        result = subprocess.run(
-            [
-                str(ffmpeg),
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                f"color=c=black:s={ENCODER_PROBE_SIZE[0]}x{ENCODER_PROBE_SIZE[1]}:d=0.1",
-                "-frames:v",
-                "1",
-                "-c:v",
-                encoder.value,
-                "-pix_fmt",
-                "yuv420p",
-                "-y",
-                str(probe),
-            ],
-            capture_output=True,
-            check=False,
-            timeout=30.0,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    str(ffmpeg),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=black:s={ENCODER_PROBE_SIZE[0]}x{ENCODER_PROBE_SIZE[1]}:d=0.1",
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    encoder.value,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-y",
+                    str(probe),
+                ],
+                capture_output=True,
+                check=False,
+                timeout=30.0,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
         # ffmpeg can exit 0 having written nothing when the encoder fails to initialise, so
         # the exit code alone is not the answer either.
         return result.returncode == 0 and probe.exists() and probe.stat().st_size > 0
@@ -953,7 +955,12 @@ def _interpolated(points: Sequence[tuple[float, int]], fallback: int) -> str:
     """
     if not points:
         return str(fallback)
-    ordered = sorted(points)
+    raw_ordered = sorted(points, key=lambda item: item[0])
+    ordered: list[tuple[float, int]] = []
+    for t, val in raw_ordered:
+        if ordered and t <= ordered[-1][0]:
+            t = round(ordered[-1][0] + 0.001, 3)
+        ordered.append((t, val))
     expression = str(ordered[-1][1])
     for index in range(len(ordered) - 2, -1, -1):
         start_s, here = ordered[index]
@@ -982,6 +989,7 @@ def crop_filter(
     face_center_y: int | None = None,
     face_height: int | None = None,
     punch_ins: Sequence[tuple[int, float]] = (),
+    per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = (),
     lanczos: bool = False,
     unsharp: bool = False,
     target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
@@ -1001,58 +1009,56 @@ def crop_filter(
         unsharp: apply light luma unsharp sharpening post-scaling (Task T2.10).
         target_face_height_share: target face proportion for vertical framing composition.
         max_vertical_zoom: maximum upscale zoom allowed when tightening crop.
+        per_shot_boxes: (start_ms, end_ms, center_y, face_height) per camera shot interval (D-330).
 
     Raises:
         ValueError: the source is smaller than the crop it would need.
     """
-    crop_w, crop_h = vertical_crop_size(source_width, source_height, target_width, target_height)
-    # Before the horizontal expression is built, because every clamp in it is against `crop_w`
-    # and a tightened crop has a different one.
+    base_crop_w, base_crop_h = vertical_crop_size(
+        source_width, source_height, target_width, target_height
+    )
+
+    init_face_y = (
+        per_shot_boxes[0][2]
+        if (per_shot_boxes and per_shot_boxes[0][2] is not None)
+        else face_center_y
+    )
+    init_face_h = (
+        per_shot_boxes[0][3]
+        if (per_shot_boxes and per_shot_boxes[0][3] is not None)
+        else face_height
+    )
     crop_w, crop_h, y = vertical_framing(
         source_height,
-        crop_w,
-        crop_h,
-        face_center_y,
-        face_height,
+        base_crop_w,
+        base_crop_h,
+        init_face_y,
+        init_face_h,
         target_face_height_share=target_face_height_share,
         max_vertical_zoom=max_vertical_zoom,
     )
 
-    if focus_points:
-        ordered = sorted(focus_points)
-        positions = [
-            max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
-        ]
-        times = [(at_ms - clip_in_ms) / 1000 for at_ms, _ in ordered]
-        # Interpolated, not stepped. A straight line between neighbouring keyframes is a pan;
-        # a step between them is a glitch. `reframe.stabilize` supplies equal-valued neighbours
-        # for the holds, so this sits still wherever the camera is meant to sit still.
-        x: int | str = _interpolated(
-            list(zip(times, positions, strict=True)),
-            (source_width - crop_w) // 2,
-        )
-    elif focus_x is None:
-        x = (source_width - crop_w) // 2
-    else:
-        # Clamp rather than raise: a face detector reporting a centre near the frame edge is
-        # correct about the face and merely asking for a crop that does not fit. Sliding it
-        # into frame keeps the subject; refusing would drop the clip.
-        x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
-
     scale_flags = ":flags=lanczos" if lanczos else ""
     unsharp_filter = ",unsharp=5:5:0.5:5:5:0.0" if unsharp else ""
+    scale_part = f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
 
-    if not punch_ins:
-        scale_part = f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
+    if not punch_ins and len(per_shot_boxes) <= 1:
+        if focus_points:
+            ordered = sorted(focus_points)
+            positions = [
+                max(0, min(center - crop_w // 2, source_width - crop_w)) for _, center in ordered
+            ]
+            times = [(at_ms - clip_in_ms) / 1000 for at_ms, _ in ordered]
+            x: int | str = _interpolated(
+                list(zip(times, positions, strict=True)),
+                (source_width - crop_w) // 2,
+            )
+        elif focus_x is None:
+            x = (source_width - crop_w) // 2
+        else:
+            x = max(0, min(focus_x - crop_w // 2, source_width - crop_w))
         return f"crop={crop_w}:{crop_h}:{x}:{y},{scale_part}"
 
-    # A punch-in changes the crop *size*, and ffmpeg evaluates `w`/`h` once at configuration —
-    # only `x`/`y` are per-frame. So the size changes by command rather than by expression: all
-    # four of crop's options carry the `T` flag, and that was proven on real footage before being
-    # designed around, the way D-249 learned to with `-crf`.
-    #
-    # `x` and `y` are rewritten in terms of ffmpeg's own `out_w`/`out_h` so the crop re-centres
-    # itself the instant its size changes.
     centre_x: int | str = (
         _interpolated(
             [((at_ms - clip_in_ms) / 1000, centre) for at_ms, centre in focus_points],
@@ -1062,22 +1068,71 @@ def crop_filter(
         else (source_width // 2 if focus_x is None else focus_x)
     )
     x_expr = f"min(max({centre_x}-out_w/2\\,0)\\,in_w-out_w)"
-    if face_center_y is not None:
-        y_expr = f"min(max({face_center_y}-{FACE_COMPOSITION_LINE}*out_h\\,0)\\,in_h-out_h)"
+
+    shot_dims: list[tuple[int, int, int]] = []
+    if per_shot_boxes:
+        for _s_in, _s_out, s_y, s_h in per_shot_boxes:
+            eff_y = s_y if s_y is not None else face_center_y
+            eff_h = s_h if s_h is not None else face_height
+            sw, sh, _ = vertical_framing(
+                source_height,
+                base_crop_w,
+                base_crop_h,
+                eff_y,
+                eff_h,
+                target_face_height_share=target_face_height_share,
+                max_vertical_zoom=max_vertical_zoom,
+            )
+            shot_dims.append((sw, sh, eff_y if eff_y is not None else source_height // 2))
+    else:
+        shot_dims.append(
+            (crop_w, crop_h, face_center_y if face_center_y is not None else source_height // 2)
+        )
+
+    if len(shot_dims) > 1 and len({d[2] for d in shot_dims}) > 1:
+        expr = str(shot_dims[-1][2])
+        for idx in range(len(shot_dims) - 2, -1, -1):
+            cut_t = max(0.0, (per_shot_boxes[idx + 1][0] - clip_in_ms) / 1000.0)
+            expr = f"if(lt(t\\,{cut_t:.3f})\\,{shot_dims[idx][2]}\\,{expr})"
+        y_center_expr = expr
+    else:
+        y_center_expr = str(shot_dims[0][2])
+
+    if face_center_y is not None or (per_shot_boxes and per_shot_boxes[0][2] is not None):
+        y_expr = f"min(max({y_center_expr}-{FACE_COMPOSITION_LINE}*out_h\\,0)\\,in_h-out_h)"
     else:
         centre_y = source_height // 2
         y_expr = f"min(max({centre_y}-out_h/2\\,0)\\,in_h-out_h)"
 
+    commands_dict: dict[int, tuple[int, int]] = {}
+
+    if len(per_shot_boxes) > 1:
+        for idx in range(1, len(per_shot_boxes)):
+            cut_ms = max(0, per_shot_boxes[idx][0] - clip_in_ms)
+            commands_dict[cut_ms] = (shot_dims[idx][0], shot_dims[idx][1])
+
+    for at_ms, factor in punch_ins:
+        covering_idx = 0
+        if per_shot_boxes:
+            for s_idx, (s_in, s_out, _, _) in enumerate(per_shot_boxes):
+                if s_in - clip_in_ms <= at_ms < s_out - clip_in_ms:
+                    covering_idx = s_idx
+                    break
+                covering_idx = s_idx
+        base_w, base_h, _ = shot_dims[covering_idx]
+        pw = max(2, int(base_w / factor)) // 2 * 2
+        ph = max(2, int(base_h / factor)) // 2 * 2
+        commands_dict[at_ms] = (pw, ph)
+
+    sorted_cmds = sorted(commands_dict.items(), key=lambda item: item[0])
     commands = ";".join(
-        f"{at_ms / 1000:.3f} crop w {max(2, int(crop_w / factor)) // 2 * 2};"
-        f"{at_ms / 1000:.3f} crop h {max(2, int(crop_h / factor)) // 2 * 2}"
-        for at_ms, factor in punch_ins
+        f"{at_ms / 1000:.3f} crop w {w};{at_ms / 1000:.3f} crop h {h}"
+        for at_ms, (w, h) in sorted_cmds
+        if at_ms > 0
     )
-    return (
-        f"sendcmd=c='{commands}',"
-        f"crop={crop_w}:{crop_h}:{x_expr}:{y_expr},"
-        f"scale={target_width}:{target_height}{scale_flags}{unsharp_filter}"
-    )
+
+    sendcmd_part = f"sendcmd=c='{commands}'," if commands else ""
+    return f"{sendcmd_part}crop={crop_w}:{crop_h}:{x_expr}:{y_expr},{scale_part}"
 
 
 def blurred_fill_filter(
@@ -1352,6 +1407,37 @@ def assert_asset_provenance(asset_path: Path) -> None:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BRollItem:
+    """A contextual B-roll cutaway item (image or video) overlaid on the reel (Task 5, ADR D-273).
+
+    Parameters:
+        path: Path to the media asset (image or video).
+        start_ms: Offset in milliseconds from the start of the rendered clip.
+        duration_ms: Duration in milliseconds for the cutaway overlay (default 2500 ms).
+        position: 'center', 'upper', or 'top' (default 'upper').
+        width: Rendered width in pixels on the 1080x1920 canvas (default 920).
+    """
+
+    path: Path
+    start_ms: int
+    duration_ms: int = 2500
+    position: str = "upper"
+    width: int = 920
+
+    def __post_init__(self) -> None:
+        if not self.path.is_file():
+            raise FileNotFoundError(f"b-roll media file not found: {self.path}")
+        if self.start_ms < 0:
+            raise ValueError(f"start_ms must be non-negative, got {self.start_ms}")
+        if self.duration_ms <= 0:
+            raise ValueError(f"duration_ms must be positive, got {self.duration_ms}")
+        if self.width <= 0 or self.width > VERTICAL_WIDTH:
+            raise ValueError(f"width must be in (0, {VERTICAL_WIDTH}], got {self.width}")
+        if self.position not in ("upper", "center", "top"):
+            raise ValueError(f"position must be 'upper', 'center', or 'top', got {self.position!r}")
+
+
 def render_clip(
     clip: Clip,
     source: Path,
@@ -1378,9 +1464,12 @@ def render_clip(
     brand_kit: BrandKit | None = None,
     music_bed_path: Path | None = None,
     music_ducking_volume: float = 0.25,
+    b_roll: Sequence[BRollItem] = (),
     for_review: bool = False,
     assembly_spans: Sequence[AssemblySpan] | None = None,
     plan: VisualEditPlan | None = None,
+    per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = (),
+    target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1403,6 +1492,9 @@ def render_clip(
         if deliverable:
             raise ProvenanceViolation("production profile forbids unvetted background music bed")
         assert_asset_provenance(music_bed_path)
+
+    for b_item in b_roll:
+        assert_asset_provenance(b_item.path)
 
     if plan is not None:
         if plan.clip_id != clip.clip_id:
@@ -1532,6 +1624,16 @@ def render_clip(
             unsharp=deliverable,
         )
     else:
+        eff_per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = per_shot_boxes
+        if per_shot_boxes and silence_plan is not None and silence_plan.total_removed_ms > 0:
+            remapped_boxes: list[tuple[int, int, int | None, int | None]] = []
+            for sin, sout, sy, sh in per_shot_boxes:
+                rin = remap_timestamp(sin, silence_plan) + clip.in_ms
+                rout = remap_timestamp(sout, silence_plan) + clip.in_ms
+                if rout > rin:
+                    remapped_boxes.append((rin, rout, sy, sh))
+            eff_per_shot_boxes = remapped_boxes
+
         video_filter = crop_filter(
             source_width,
             source_height,
@@ -1540,9 +1642,11 @@ def render_clip(
             face_center_y=face_center_y,
             face_height=face_height,
             punch_ins=punch_ins,
+            per_shot_boxes=eff_per_shot_boxes,
             clip_in_ms=clip.in_ms,
             lanczos=deliverable,
             unsharp=deliverable,
+            target_face_height_share=target_face_height_share,
         )
 
     # Keep the container suffix: ffmpeg infers its muxer from the path. NamedTemporaryFile is
@@ -1596,19 +1700,35 @@ def render_clip(
 
     sub_f = subtitle_filter(ass_path, fonts_dir)
     extra_inputs: list[str] = []
+    has_logo = brand_kit is not None and brand_kit.logo_path is not None
+    has_b_roll = len(b_roll) > 0
+    has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
+    has_music = music_bed_path is not None
+    has_assembly = assembly_spans is not None and len(assembly_spans) > 0
 
-    if brand_kit is not None and brand_kit.logo_path is not None:
+    current_input_idx = 1
+    logo_input_idx: int | None = None
+    if has_logo and brand_kit is not None and brand_kit.logo_path is not None:
         extra_inputs.extend(["-i", str(brand_kit.logo_path)])
-    if music_bed_path is not None:
+        logo_input_idx = current_input_idx
+        current_input_idx += 1
+
+    b_roll_inputs: list[tuple[int, BRollItem]] = []
+    if has_b_roll:
+        for b_item in b_roll:
+            extra_inputs.extend(["-i", str(b_item.path)])
+            b_roll_inputs.append((current_input_idx, b_item))
+            current_input_idx += 1
+
+    music_input_idx: int | None = None
+    if has_music and music_bed_path is not None:
         if not music_bed_path.is_file():
             raise FileNotFoundError(f"music bed file not found: {music_bed_path}")
         extra_inputs.extend(["-i", str(music_bed_path)])
+        music_input_idx = current_input_idx
+        current_input_idx += 1
 
-    has_logo = brand_kit is not None and brand_kit.logo_path is not None
-    has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
-    has_music = music_bed_path is not None
-
-    if has_logo or has_silence or has_music or has_assembly:
+    if has_logo or has_silence or has_music or has_assembly or has_b_roll:
         if has_assembly and assembly_spans is not None:
             from hawedit.assembly import assembled_splice_filter
 
@@ -1616,27 +1736,66 @@ def render_clip(
             v_in = "[v_concat]"
             a_in = "[a_concat]"
         elif has_silence and silence_plan is not None:
-            trim_prefix = f"{silence_trim_filter(silence_plan.retained_intervals_ms)};"
-            v_in = "[v_tightened]"
-            a_in = "[a_tightened]"
+            stf = silence_trim_filter(silence_plan.retained_intervals_ms)
+            if stf:
+                trim_prefix = f"{stf};[v_tightened]fps={clip_fps}[v_cfr];"
+                v_in = "[v_cfr]"
+                a_in = "[a_tightened]"
+            else:
+                trim_prefix = ""
+                v_in = "[0:v]"
+                a_in = "[0:a]"
         else:
             trim_prefix = ""
             v_in = "[0:v]"
             a_in = "[0:a]"
 
-        if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-            v_base = f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+        if has_b_roll:
+            v_base = f"{v_in}{video_filter}[v_cut]"
+            v_current = "[v_cut]"
+            broll_steps = ""
+            for idx, (b_in_idx, b_item) in enumerate(b_roll_inputs):
+                b_dur_s = b_item.duration_ms / 1000.0
+                b_st_s = b_item.start_ms / 1000.0
+                b_end_s = b_st_s + b_dur_s
+                fade_d = min(0.2, b_dur_s / 3.0)
+                b_y = (
+                    "120"
+                    if b_item.position == "top"
+                    else ("(H-h)/2" if b_item.position == "center" else "280")
+                )
+                b_out_tag = f"broll_out_{idx}"
+                v_next = f"[v_brolled_{idx}]"
+                broll_prep = (
+                    f"[{b_in_idx}:v]format=rgba,loop=loop=-1:size=2,"
+                    f"scale={b_item.width}:-2,setpts=PTS-STARTPTS+{b_st_s}/TB,"
+                    f"fade=t=in:st={b_st_s:.3f}:d={fade_d:.3f}:alpha=1,"
+                    f"fade=t=out:st={b_end_s - fade_d:.3f}:d={fade_d:.3f}:alpha=1[{b_out_tag}];"
+                )
+                broll_overlay = (
+                    f"{v_current}[{b_out_tag}]overlay=x=(W-w)/2:y={b_y}:"
+                    f"enable='between(t,{b_st_s:.3f},{b_end_s:.3f})':eof_action=repeat{v_next};"
+                )
+                broll_steps += f"{broll_prep}{broll_overlay}"
+                v_current = v_next
+            v_sub_chain = f"{v_current}{sub_f}[v_sub]"
+            full_video = f"{v_base};{broll_steps}{v_sub_chain}"
         else:
-            v_base = f"{v_in}{video_filter},{sub_f}[v_sub]"
+            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                v_base = f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+            else:
+                v_base = f"{v_in}{video_filter},{sub_f}[v_sub]"
+            full_video = v_base
 
         v_current = "[v_sub]"
         logo_steps = ""
         if has_logo and brand_kit is not None and brand_kit.logo_path is not None:
+            assert logo_input_idx is not None
             logo_x, logo_y = logo_overlay_coordinates(
                 brand_kit.logo_position, brand_kit.logo_margin
             )
             logo_prep = (
-                f"[1:v]scale={brand_kit.logo_width}:-2,format=rgba,"
+                f"[{logo_input_idx}:v]scale={brand_kit.logo_width}:-2,format=rgba,"
                 f"colorchannelmixer=aa={brand_kit.logo_opacity:.2f}[logo];"
             )
             logo_overlay = (
@@ -1648,7 +1807,7 @@ def render_clip(
         v_pb = f"{v_current}{pb_f}[v_out]" if pb_f is not None else f"{v_current}null[v_out]"
 
         if has_music:
-            music_input_idx = 2 if has_logo else 1
+            assert music_input_idx is not None
             dur_s = effective_duration_ms / 1000.0
             sc_filter = "sidechaincompress=threshold=0.03:ratio=6:attack=80:release=400"
             mix_filter = "amix=inputs=2:weights=1.0 1.0:dropout_transition=2"
@@ -1663,7 +1822,7 @@ def render_clip(
         else:
             a_chain = f"{a_in}{af_chain}[a_out]"
 
-        full_complex = f"{trim_prefix}{v_base};{logo_steps}{v_pb};{a_chain}"
+        full_complex = f"{trim_prefix}{full_video};{logo_steps}{v_pb};{a_chain}"
         stream_filter_args = [
             "-filter_complex",
             full_complex,

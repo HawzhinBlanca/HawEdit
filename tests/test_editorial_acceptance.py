@@ -930,7 +930,7 @@ def test_acceptance_requires_current_evidence_and_reports_insufficient_sample() 
     assert no_commit_report.acceptance_status == "refused_unverified_evidence"
     assert any("commit SHA" in d for d in no_commit_report.deficiencies)
 
-    # Case F: All required evidence present and verified on sufficient sample
+    # Case F: Caller assertions are not actual verified evidence, even with sufficient sample
     valid_report = evaluate_scoped_acceptance(
         commit_sha=valid_commit,
         scorecard=sufficient_scorecard,
@@ -938,15 +938,16 @@ def test_acceptance_requires_current_evidence_and_reports_insufficient_sample() 
         human_review_verified=True,
         ci_verified=True,
     )
-    assert valid_report.acceptance_status == "accepted"
+    assert valid_report.acceptance_status == "refused_unverified_evidence"
     assert valid_report.is_sample_sufficient is True
-    assert valid_report.evidence_intact is True
-    assert len(valid_report.deficiencies) == 0
-    valid_report.assert_accepted()
+    assert valid_report.evidence_intact is False
+    assert any("caller assertions" in d for d in valid_report.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="not authorization"):
+        valid_report.assert_accepted()
 
     # Serialized dictionary preserves all fields
     report_dict = valid_report.to_dict()
-    assert report_dict["acceptance_status"] == "accepted"
+    assert report_dict["acceptance_status"] == "refused_unverified_evidence"
     assert report_dict["commit_sha"] == valid_commit
     assert report_dict["scorecard"]["total_proposed_clips"] == 200
 
@@ -1067,7 +1068,7 @@ def test_sustained_acceptance_requires_fresh_holdout_and_use_window() -> None:
     assert auto_rating.is_sustained is False
     assert any("Automatic rating claim prohibited" in d for d in auto_rating.deficiencies)
 
-    # Case G: All sustained criteria satisfied
+    # Case G: Supplied day counts and flags do not prove sustained criteria
     sustained_report = evaluate_sustained_acceptance(
         scoped_report=base_accepted_report,
         fresh_holdout_scorecard=sufficient_scorecard,
@@ -1078,13 +1079,15 @@ def test_sustained_acceptance_requires_fresh_holdout_and_use_window() -> None:
         rating_claim="10/10 verified",
     )
     assert isinstance(sustained_report, SustainedAcceptanceReport)
-    assert sustained_report.is_sustained is True
-    assert sustained_report.sustained_status == "sustained"
-    assert len(sustained_report.deficiencies) == 0
-    sustained_report.assert_sustained()
+    assert sustained_report.is_sustained is False
+    assert sustained_report.sustained_status == "refused_unverified_evidence"
+    assert any("caller assertions" in d for d in sustained_report.deficiencies)
+    with pytest.raises(EditorialAcceptanceError, match="not authorization"):
+        sustained_report.assert_sustained()
 
     payload = sustained_report.to_dict()
-    assert payload["is_sustained"] is True
-    assert payload["sustained_status"] == "sustained"
+    assert payload["is_sustained"] is False
+    assert payload["sustained_status"] == "refused_unverified_evidence"
     assert payload["use_window_days"] == 30
-    assert payload["rating_claim"] == "10/10 verified"
+    assert payload["rating_claim"] is None
+    assert payload["requested_rating_claim"] == "10/10 verified"

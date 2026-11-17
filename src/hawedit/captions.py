@@ -28,12 +28,14 @@ a viewer must see what was said, spelled as the speaker's transcript spells it.
 from __future__ import annotations
 
 import re
+import stat
+import threading
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from functools import lru_cache
-from itertools import pairwise
+from itertools import islice, pairwise
 from pathlib import Path
 from typing import Any, Final
 
@@ -43,6 +45,7 @@ from hawedit.sentences import Sentence, assert_deliverable_order
 from hawedit.transcripts import Word
 
 __all__ = [
+    "ASS_ENCODING_AUTO",
     "BROADCAST_THEME",
     "DEFAULT_BOTTOM_CAPTION_BAND",
     "DEFAULT_MAX_CHARS_PER_LINE",
@@ -67,6 +70,7 @@ __all__ = [
     "REPORT_THEME",
     "RESTRAINED_MOBILE_FONT_SIZE",
     "RESTRAINED_MOBILE_THEME",
+    "RTL_MARK",
     "SPEAKER_TAG_FONT_SIZE",
     "SPEAKER_TAG_MS",
     "SPEAKER_TAG_THEME",
@@ -245,7 +249,7 @@ class CaptionTheme:
             f"{self.border_style},"
             f"{self.outline:g},{self.shadow:g},{align},{self.margin_l},"
             f"{self.margin_r},"
-            f"{mv},1"
+            f"{mv},{ASS_ENCODING_AUTO}"
         )
 
     def plate_style_row(
@@ -269,7 +273,8 @@ class CaptionTheme:
         return (
             f"Style: {name},{font_name},{font_size},{p},{s},"
             f"{self.outline_colour},{plate_colour},{int(self.bold)},0,0,0,100,100,0,0,"
-            f"3,{plate_padding:g},0,{align},{self.margin_l},{self.margin_r},{mv},1"
+            f"3,{plate_padding:g},0,{align},{self.margin_l},{self.margin_r},{mv},"
+            f"{ASS_ENCODING_AUTO}"
         )
 
 
@@ -296,6 +301,14 @@ REPORT_THEME: Final = CaptionTheme()
 # 108 lands in that band while leaving the widest popup (22 characters, ~620 px) comfortably
 # inside the 920 px the left and right margins leave for it.
 VIRAL_FONT_SIZE: Final = 108
+
+# Base direction, D-334. libass lays a line out left-to-right unless the Style's Encoding is -1
+# (auto-detect), and auto-detect reads the first strong character — so a Sorani line that opens
+# on a Latin brand name is still detected left-to-right unless it starts with U+200F. Rendered on
+# HawaPC01 with ffmpeg 8.1.1: Encoding 1 drew `WORD_HIGHLIGHT` words in reversed order and every
+# style's sentence-final full stop at the sentence start. specs/kurdish-rtl-base-direction.
+ASS_ENCODING_AUTO: Final = -1
+RTL_MARK: Final = "\u200f"
 
 # The opening card. A social clip is scrolled past in the first second or it is not watched, and
 # Stage 4 already writes a Kurdish title for every verdict — `title_ckb` — which the render threw
@@ -406,20 +419,21 @@ RESTRAINED_MOBILE_THEME: Final = CaptionTheme(
     margin_v=380,
 )
 
-HOOK_BANNER_FONT_SIZE: Final = 54
-HOOK_BANNER_MARGIN_V: Final = 120
+HOOK_BANNER_FONT_SIZE: Final = 58
+HOOK_BANNER_MARGIN_V: Final = 140
 HOOK_BANNER_THEME: Final = CaptionTheme(
-    primary="&H0000FFFF",  # Kurdish Gold
-    secondary="&H0000FFFF",
+    primary="&H0000D4FF",  # High-contrast Kurdish Gold (&H00D4FF in BGR = RGB FF D4 00)
+    secondary="&H0000D4FF",
     bold=True,
-    outline=14.0,  # plate padding with border_style=3
-    shadow=0.0,
-    back_colour="&HB0121212",  # 70% dark plate
+    outline=4.0,
+    shadow=2.5,
+    outline_colour="&H00000000",
+    back_colour="&H80000000",
     margin_l=60,
     margin_r=60,
     margin_v=HOOK_BANNER_MARGIN_V,
     alignment=8,
-    border_style=3,
+    border_style=1,
 )
 
 
@@ -893,7 +907,9 @@ def wrap_title_lines(title: str, max_chars: int = DEFAULT_MAX_CHARS_PER_LINE) ->
     return lines
 
 
-_WIDTH_CACHE: dict[tuple[str, str, int, int], int] = {}
+_WIDTH_CACHE: dict[tuple[object, ...], int] = {}
+_MAX_WIDTH_CACHE = 1024
+_WIDTH_LOCK = threading.Lock()
 
 
 def _default_fonts_dir() -> Path:
@@ -902,6 +918,47 @@ def _default_fonts_dir() -> Path:
     checkout = Path(__file__).resolve().parents[2] / "assets" / "fonts"
     installed = Path(sys.prefix) / "share" / "hawedit" / "assets" / "fonts"
     return checkout if checkout.is_dir() else installed
+
+
+def _measurement_stamp(path: Path, *, directory: bool = False) -> tuple[object, ...]:
+    info = path.stat()
+    expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    if not expected:
+        raise CaptionVerificationError("caption width measurement requires regular local resources")
+    return (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _measurement_context(binary: Path, fonts: Path) -> tuple[Path, Path, tuple[object, ...]]:
+    resolved_binary = binary.resolve(strict=True)
+    resolved_fonts = fonts.resolve(strict=True)
+    binary_stamp = _measurement_stamp(resolved_binary)
+    directory_stamp = _measurement_stamp(resolved_fonts, directory=True)
+    entries = list(islice(resolved_fonts.iterdir(), 257))
+    if len(entries) > 256:
+        raise CaptionVerificationError("caption width measurement font inventory exceeds its bound")
+    font_stamps = tuple(
+        _measurement_stamp(path.resolve(strict=True))
+        for path in sorted(entries)
+        if path.suffix.lower() in {".ttf", ".otf", ".ttc"}
+    )
+    if not font_stamps:
+        raise CaptionVerificationError("caption width measurement requires local font files")
+    return resolved_binary, resolved_fonts, (binary_stamp, directory_stamp, font_stamps)
+
+
+def _decoded_ink_width(raw: bytes, *, width: int, height: int) -> int:
+    if len(raw) != width * height:
+        raise CaptionVerificationError(
+            "caption width measurement decoded extent differs from canvas"
+        )
+    min_x, max_x = width, -1
+    for row_start in range(0, len(raw), width):
+        row = raw[row_start : row_start + width]
+        if any(row):
+            first_x = next(i for i, value in enumerate(row) if value > 0)
+            last_x = width - 1 - next(i for i, value in enumerate(reversed(row)) if value > 0)
+            min_x, max_x = min(min_x, first_x), max(max_x, last_x)
+    return max_x - min_x + 1 if max_x >= min_x else 0
 
 
 def measure_rendered_caption_width(
@@ -917,23 +974,49 @@ def measure_rendered_caption_width(
     """Measure the horizontal ink extent in pixels of rendered Kurdish text at PlayRes.
 
     Renders the candidate string through libass via FFmpeg with `shaping=complex` onto a
-    blank background and measures the bounding width of non-zero pixels. Cached in-memory
-    to make incremental line-breaking checks near instantaneous.
+    blank background and measures the bounding width of non-zero pixels. A bounded
+    process-local cache binds the complete context to observed resource stat identities;
+    this is not an immutable resource lease or publication evidence. Failed measurements
+    refuse instead of returning character-count estimates.
     """
+    if (
+        not isinstance(text, str)
+        or len(text.encode("utf-8")) > 8192
+        or not isinstance(font_name, str)
+        or not font_name.strip()
+        or len(font_name) > 256
+        or any(char in font_name for char in "\r\n,")
+        or type(font_size) is not int
+        or not 1 <= font_size <= 512
+        or type(canvas_width) is not int
+        or not 1 <= canvas_width <= 8192
+        or type(canvas_height) is not int
+        or not 1 <= canvas_height <= 8192
+        or canvas_width * canvas_height > 8_388_608
+    ):
+        raise CaptionVerificationError("caption width measurement parameters exceed their bounds")
     cleaned = text.strip()
     if not cleaned:
         return 0
 
-    cache_key = (cleaned, font_name, font_size, canvas_width)
-    cached = _WIDTH_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
     binary = ffmpeg or find_ffmpeg()
     if binary is None:
-        return int(len(cleaned) * font_size * 0.25)
+        raise CaptionVerificationError("caption width measurement requires a configured renderer")
 
     resolved_fonts = fonts_dir or _default_fonts_dir()
+    if not isinstance(binary, Path) or not isinstance(resolved_fonts, Path):
+        raise CaptionVerificationError("caption width measurement requires local resource paths")
+    try:
+        binary, resolved_fonts, context = _measurement_context(binary, resolved_fonts)
+    except OSError as exc:
+        raise CaptionVerificationError(
+            "caption width measurement resources are unavailable"
+        ) from exc
+    cache_key = (cleaned, font_name, font_size, canvas_width, canvas_height, context)
+    with _WIDTH_LOCK:
+        cached = _WIDTH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     import subprocess
     import tempfile
@@ -950,11 +1033,15 @@ def measure_rendered_caption_width(
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
-        "-1,0,0,0,100,100,0,0,1,2.0,0.0,2,0,0,0,1\n\n"
+        f"-1,0,0,0,100,100,0,0,1,2.0,0.0,2,0,0,0,{ASS_ENCODING_AUTO}\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        f"Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{escaped}\n"
+        f"Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{RTL_MARK}{escaped}\n"
     )
+    try:
+        assert_ass_fonts_cover_kurdish(ass_content, resolved_fonts)
+    except (OSError, FontCoverageError) as exc:
+        raise CaptionVerificationError("caption width measurement font binding refused") from exc
 
     with tempfile.TemporaryDirectory() as td:
         ass_path = Path(td) / "measure.ass"
@@ -981,25 +1068,18 @@ def measure_rendered_caption_width(
         ]
         try:
             res = subprocess.run(cmd, check=True, capture_output=True, timeout=30.0)
-            raw = res.stdout
-            min_x = canvas_width
-            max_x = -1
-            for row_start in range(0, len(raw), canvas_width):
-                row = raw[row_start : row_start + canvas_width]
-                if any(row):
-                    first_x = next(i for i, b in enumerate(row) if b > 0)
-                    last_x = (
-                        canvas_width - 1 - next(i for i, b in enumerate(reversed(row)) if b > 0)
-                    )
-                    if first_x < min_x:
-                        min_x = first_x
-                    if last_x > max_x:
-                        max_x = last_x
-            width = max_x - min_x + 1 if max_x >= min_x else 0
-        except (subprocess.CalledProcessError, ValueError, OSError):
-            width = int(len(cleaned) * font_size * 0.25)
+            width = _decoded_ink_width(res.stdout, width=canvas_width, height=canvas_height)
+            if width == 0:
+                raise CaptionVerificationError("caption width measurement decoded no visible ink")
+            if _measurement_context(binary, resolved_fonts)[2] != context:
+                raise CaptionVerificationError("caption width measurement resources changed")
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise CaptionVerificationError("caption width measurement renderer failed") from exc
 
-    _WIDTH_CACHE[cache_key] = width
+    with _WIDTH_LOCK:
+        if len(_WIDTH_CACHE) >= _MAX_WIDTH_CACHE:
+            _WIDTH_CACHE.pop(next(iter(_WIDTH_CACHE)))
+        _WIDTH_CACHE[cache_key] = width
     return width
 
 
@@ -1008,6 +1088,11 @@ def wrap_caption_lines(
     max_chars: int = DEFAULT_MAX_CHARS_PER_LINE,
     *,
     max_width_px: int | None = None,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
 ) -> tuple[tuple[Word, ...], ...]:
     """Break a caption into lines at word boundaries from the alignment.
 
@@ -1029,7 +1114,14 @@ def wrap_caption_lines(
                 current = [word]
                 continue
             candidate_text = " ".join(w.w for w in [*current, word])
-            cand_w = measure_rendered_caption_width(candidate_text)
+            cand_w = measure_rendered_caption_width(
+                candidate_text,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
+            )
             if cand_w > max_width_px:
                 lines.append(tuple(current))
                 current = [word]
@@ -1063,6 +1155,11 @@ def chunk_caption_events(
     max_width_px: int | None = None,
     max_ms: int = POPUP_MAX_MS,
     max_gap_ms: int = POPUP_MAX_GAP_MS,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
 ) -> tuple[tuple[Word, ...], ...]:
     """Split one sentence into popup-sized groups, each of which is its own caption event.
 
@@ -1100,7 +1197,14 @@ def chunk_caption_events(
         if current:
             if max_width_px is not None:
                 candidate_text = " ".join(w.w for w in [*current, word])
-                cand_w = measure_rendered_caption_width(candidate_text)
+                cand_w = measure_rendered_caption_width(
+                    candidate_text,
+                    font_name=font_name,
+                    font_size=font_size,
+                    fonts_dir=fonts_dir,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
                 exceeds_width = cand_w > max_width_px
             else:
                 exceeds_width = width + addition > max_chars
@@ -1396,6 +1500,8 @@ def compute_rtl_word_positions(
     canvas_width: int = 1080,
     fonts_dir: Path | None = None,
     ffmpeg: Path | None = None,
+    *,
+    canvas_height: int = 1920,
 ) -> list[tuple[Word, int]]:
     """Calculate the horizontal center pixel (X coordinate) for each word in an RTL sentence.
 
@@ -1418,6 +1524,7 @@ def compute_rtl_word_positions(
         ffmpeg=ffmpeg,
         fonts_dir=fonts_dir,
         canvas_width=canvas_width,
+        canvas_height=canvas_height,
     )
 
     positions: list[tuple[Word, int]] = []
@@ -1430,6 +1537,7 @@ def compute_rtl_word_positions(
             ffmpeg=ffmpeg,
             fonts_dir=fonts_dir,
             canvas_width=canvas_width,
+            canvas_height=canvas_height,
         )
         w_word = measure_rendered_caption_width(
             _escape_ass_text(word.w),
@@ -1438,6 +1546,7 @@ def compute_rtl_word_positions(
             ffmpeg=ffmpeg,
             fonts_dir=fonts_dir,
             canvas_width=canvas_width,
+            canvas_height=canvas_height,
         )
         x_center = round((canvas_width + w_full) / 2 - w_prefix + (w_word / 2))
         positions.append((word, x_center))
@@ -1509,8 +1618,13 @@ def build_ass(
                 f"not contain."
             )
 
-    if style in (CaptionStyle.BROADCAST_STUDIO, CaptionStyle.KINETIC_POP) and theme is REPORT_THEME:
+    if style is CaptionStyle.BROADCAST_STUDIO and theme is REPORT_THEME:
         theme = BROADCAST_THEME
+    elif style is CaptionStyle.KINETIC_POP:
+        if theme is REPORT_THEME:
+            theme = replace(BROADCAST_THEME, margin_v=480)
+        elif margin_v is None:
+            theme = replace(theme, margin_v=480)
     if margin_v is not None:
         theme = replace(theme, margin_v=margin_v)
 
@@ -1696,7 +1810,7 @@ def build_ass(
             ),
             *(
                 [
-                    HOOK_BANNER_THEME.plate_style_row(
+                    HOOK_BANNER_THEME.style_row(
                         "HookBanner",
                         font_name,
                         HOOK_BANNER_FONT_SIZE,
@@ -1823,6 +1937,11 @@ def build_ass(
                 max_words=b_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
@@ -1859,6 +1978,11 @@ def build_ass(
                 max_words=k_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for chunk_idx, chunk in enumerate(chunks):
                 following = (
@@ -1878,6 +2002,17 @@ def build_ass(
                     else ("KurdishPlate" if is_plate else "Kurdish")
                 )
 
+                align_tag = "\\an8" if is_top else "\\an2"
+                y_pos = DEFAULT_TOP_MARGIN_V if is_top else (play_res_y - theme.margin_v)
+                positions = compute_rtl_word_positions(
+                    chunk,
+                    font_name=font_name,
+                    font_size=font_size,
+                    canvas_width=play_res_x,
+                    fonts_dir=fonts_dir,
+                    canvas_height=play_res_y,
+                )
+
                 for w_idx, active_word in enumerate(chunk):
                     w_start = active_word.start_ms
                     w_end = active_word.end_ms
@@ -1889,8 +2024,7 @@ def build_ass(
                     if w_end <= w_start:
                         continue
 
-                    parts = []
-                    for j, word_item in enumerate(chunk):
+                    for j, (word_item, x_pos) in enumerate(positions):
                         escaped = _escape_ass_text(word_item.w)
                         if j == w_idx:
                             cat = (
@@ -1903,14 +2037,17 @@ def build_ass(
                                 if (cat is not EmphasisCategory.DEFAULT and cat in CATEGORY_COLORS)
                                 else "&H0000FFFF"
                             )
-                            parts.append(
-                                f"{{\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}{escaped}{{\\c&H00FFFFFF&\\fscx100\\fscy100}}"
+                            word_text = (
+                                f"{{{align_tag}\\pos({x_pos},{y_pos})"
+                                f"\\t(0,60,\\fscx118\\fscy118)\\t(60,130,\\fscx100\\fscy100)\\c{color_code}&}}"
+                                f"{escaped}{{\\c&H00FFFFFF&\\fscx100\\fscy100}}"
                             )
                         else:
-                            parts.append(f"{{\\c&H00FFFFFF&}}{escaped}")
+                            word_text = (
+                                f"{{{align_tag}\\pos({x_pos},{y_pos})\\c&H00FFFFFF&}}{escaped}"
+                            )
 
-                    chunk_text = " ".join(parts)
-                    events.append(event(w_start, w_end, chunk_text, style_name=style_name))
+                        events.append(event(w_start, w_end, word_text, style_name=style_name))
             continue
 
         if style is CaptionStyle.VIRAL_POPUP:
@@ -1920,6 +2057,11 @@ def build_ass(
                 max_words=v_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
@@ -1955,6 +2097,11 @@ def build_ass(
                 max_words=r_words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
@@ -1977,6 +2124,7 @@ def build_ass(
                     font_size=font_size,
                     canvas_width=play_res_x,
                     fonts_dir=fonts_dir,
+                    canvas_height=play_res_y,
                 )
                 t_0 = chunk[0].start_ms
                 time_points = sorted(
@@ -2011,6 +2159,11 @@ def build_ass(
                 sentence.words,
                 max_chars=max_chars_per_line,
                 max_width_px=max_line_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
             )
             style_name = choose_style(sentence.start_ms, sentence.end_ms)
             events.append(
@@ -2029,6 +2182,11 @@ def build_ass(
             max_words=max_words_per_event,
             max_chars=max_chars_per_line,
             max_width_px=max_popup_width_px,
+            font_name=font_name,
+            font_size=font_size,
+            fonts_dir=fonts_dir,
+            canvas_width=play_res_x,
+            canvas_height=play_res_y,
         )
         for index, chunk in enumerate(chunks):
             # Hold a popup until the next one starts when the hole between them is short: a
@@ -2042,7 +2200,13 @@ def build_ass(
             style_name = choose_style(chunk[0].start_ms, end_ms)
             events.append(event(chunk[0].start_ms, end_ms, render(chunk), style_name=style_name))
 
-    return header + "\n" + "\n".join(events) + "\n"
+    return header + "\n" + "\n".join(_mark_right_to_left(e) for e in events) + "\n"
+
+
+def _mark_right_to_left(event: str) -> str:
+    """Start every visual line of one `Dialogue:` event with `RTL_MARK` (D-334)."""
+    *fields, text = event.split(",", 9)
+    return ",".join(fields) + "," + RTL_MARK + text.replace("\\N", "\\N" + RTL_MARK)
 
 
 def find_ffmpeg() -> Path | None:
@@ -2233,7 +2397,43 @@ def compare_golden_render(reference: Path, candidate: Path, ffmpeg: Path | None 
         )
 
 
-_ASS_OVERRIDE_TAGS: Final = re.compile(r"\{[^}]*\}")
+# Also drops `RTL_MARK`: it is layout, not text, and every reader below cleans through this.
+_ASS_OVERRIDE_TAGS: Final = re.compile(r"\{[^}]*\}|\u200f")
+
+
+def _collapse_repeated_token_blocks(tokens: list[str], max_block_size: int = 8) -> list[str]:
+    """Collapse contiguous repeated token blocks emitted by animated subtitle styles.
+
+    For example, animated chunk ['A', 'B', 'C'] emitted 3 times as
+    ['A', 'B', 'C', 'A', 'B', 'C', 'A', 'B', 'C'] collapses to ['A', 'B', 'C'].
+    """
+    if not tokens:
+        return []
+    result: list[str] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        matched_block_len = 0
+        matched_repeats = 0
+        for k in range(min(max_block_size, (n - i) // 2), 0, -1):
+            block = tokens[i : i + k]
+            repeats = 1
+            while (
+                i + (repeats + 1) * k <= n
+                and tokens[i + repeats * k : i + (repeats + 1) * k] == block
+            ):
+                repeats += 1
+            if repeats > 1:
+                matched_block_len = k
+                matched_repeats = repeats
+                break
+        if matched_block_len > 0:
+            result.extend(tokens[i : i + matched_block_len])
+            i += matched_block_len * matched_repeats
+        else:
+            result.append(tokens[i])
+            i += 1
+    return result
 
 
 def verify_caption_text(
@@ -2291,9 +2491,30 @@ def verify_caption_text(
                     found_tokens.append(normalize_sorani(clean_w))
 
         if expected_tokens != found_tokens:
-            raise CaptionVerificationError(
-                f"wrong text: expected {expected_tokens!r} but found {found_tokens!r}"
-            )
+            # Check 1: Deduplicate consecutive identical dialogue lines (e.g. KINETIC_POP)
+            deduped_lines: list[str] = []
+            for d_line in dialogue_lines:
+                if not deduped_lines or d_line != deduped_lines[-1]:
+                    deduped_lines.append(d_line)
+
+            deduped_tokens: list[str] = []
+            for d_line in deduped_lines:
+                for w in d_line.split():
+                    clean_w = _PUNCT_CLEANER.sub("", w).strip()
+                    if clean_w:
+                        deduped_tokens.append(normalize_sorani(clean_w))
+
+            if expected_tokens == deduped_tokens:
+                found_tokens = deduped_tokens
+            else:
+                # Check 2: Collapse contiguous repeating word blocks (e.g. RTL_WORD_HIGHLIGHT)
+                collapsed_tokens = _collapse_repeated_token_blocks(found_tokens)
+                if expected_tokens == collapsed_tokens:
+                    found_tokens = collapsed_tokens
+                else:
+                    raise CaptionVerificationError(
+                        f"wrong text: expected {expected_tokens!r} but found {found_tokens!r}"
+                    )
 
     # 2. Broken joining check
     for d_line in all_lines:

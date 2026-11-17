@@ -23,32 +23,55 @@ claims still require the package-managed assets and labelled Sorani audio.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
 import os
+import shutil
+import stat
 import subprocess
+import tempfile
 import time
 import wave
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Final, Protocol, runtime_checkable
+from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
+from hawedit import omni_assets as _omni_assets
+from hawedit.asr_completion import (
+    BEAM_RETRY_NBEST,
+    COMPLETION_POLICY_ID,
+    DecodeIncomplete,
+    NoNaturalEos,
+    loop_suspect,
+    transcribe_completed,
+)
 from hawedit.captions import find_ffmpeg
 from hawedit.corpus import CorpusItem
-from hawedit.escalation import SegmentScore, select_for_validation
+from hawedit.escalation import EscalationDecision, SegmentScore, select_for_validation
 from hawedit.forced_alignment import align_words
 from hawedit.models import ModelStore, assert_transformers_config_safe, verified_checkpoint_access
 from hawedit.omni_assets import (
     CANONICAL_CTC_CARD,
     CANONICAL_LLM_CARD,
+    OMNI_ASSETS,
+    FusedCheckpointAsset,
+    _hash_open_stream,
+    _open_regular_nofollow,
     assert_canonical_omni_cards,
     assert_effective_omni_cards,
     assert_omni_card_integrity,
     freeze_fairseq2_asset_overrides,
     open_verified_omni_assets,
+)
+from hawedit.qwen_completion import (
+    QWEN_COMPLETION_POLICY_ID,
+    assert_qwen_runtime,
+    transcribe_qwen_completed,
 )
 from hawedit.registry import ASR_ROLES, ModelEntry, resolve_role
 from hawedit.transcripts import (
@@ -56,6 +79,7 @@ from hawedit.transcripts import (
     RawTranscript,
     RejectedValidatorCorrection,
     SegmentConfidence,
+    SegmentOrigin,
     UnalignedSpeech,
     Word,
 )
@@ -69,9 +93,11 @@ from hawedit.wsl_setup import (
 
 __all__ = [
     "CHAMPION_ADAPTER_ENV",
+    "CHAMPION_CHECKPOINT_ENV",
     "LONG_AUDIO_THRESHOLD_S",
     "ASRAdapter",
     "ASRResult",
+    "AsrProductionFailure",
     "CanonicalTranscriptProducer",
     "ChampionUnavailable",
     "Hardware",
@@ -88,6 +114,7 @@ __all__ = [
     "create_omni_asr_producer",
     "long_audio_failure_rate",
     "resolve_champion_adapter",
+    "resolve_champion_checkpoint",
     "validate_adapter",
 ]
 
@@ -95,7 +122,16 @@ __all__ = [
 # stay under it, so anything past this is by definition outside the designed operating range
 # and its failure rate is a property worth measuring rather than an accident.
 LONG_AUDIO_THRESHOLD_S: Final = 40.0
+# Owner rule (D-331): Stage 1 drafts, aligns and validates on GPU 1 only by default. GPU 0 stays
+# visible (gpu_runtime refuses CUDA_VISIBLE_DEVICES) but unused; HAWEDIT_ASR_*_DEVICE override.
+DEFAULT_ASR_DEVICE: Final = "cuda:1"
 VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
+_CONTEXT_MAX_GAP_MS: Final = 1_000
+_CONTEXT_MAX_SPAN_MS: Final = 18_000
+ASR_COMPLETION_POLICY_ID: Final = COMPLETION_POLICY_ID + "+" + QWEN_COMPLETION_POLICY_ID
+CONTEXT_GROUPING_POLICY_ID: Final = (
+    f"vad-context-v1-gap{_CONTEXT_MAX_GAP_MS}-span{_CONTEXT_MAX_SPAN_MS}"
+)
 
 
 class IncomparableHardware(ValueError):
@@ -155,10 +191,18 @@ class SegmentTranscript:
     ctc_text: str
     words: tuple[Word, ...]
     mean_logprob: float
+    # D-332: how the draft text was decoded, and why a greedy draft was retried.
+    decode_mode: str = "greedy"
+    retry_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not self.text_raw.strip():
             raise ValueError("OmniASR returned an empty speech segment")
+        if (self.decode_mode, self.retry_reason is None) not in (
+            ("greedy", True),
+            ("beam5_retry", False),
+        ):
+            raise ValueError("segment decode_mode must be greedy, or beam5_retry with a reason")
         if not isinstance(self.ctc_text, str):
             raise ValueError("CTC hypothesis must be a string")
         if not self.words:
@@ -212,6 +256,8 @@ CHAMPION_ADAPTER_CANDIDATES: Final = (
     r"\\wsl$\Ubuntu\home\ai\cortex_champion_model",
 )
 CHAMPION_ADAPTER_ENV: Final = "HAWEDIT_CHAMPION_ADAPTER"
+# A fused champion checkpoint (D-331). Unset means the LoRA champion above stays the default.
+CHAMPION_CHECKPOINT_ENV: Final = "HAWEDIT_CHAMPION_CHECKPOINT"
 
 
 class ChampionUnavailable(RuntimeError):
@@ -257,24 +303,262 @@ def resolve_champion_adapter(
     )
 
 
-def adapter_fingerprint(adapter_dir: Path) -> str:
-    """Stable identity of a PEFT adapter bundle, for the reuse key and the artifact's claim.
+# A fused trainer checkpoint replaces the stock LLM weights, so only CTC-3B and the canonical
+# tokenizer are held from the stock asset set. D-331.
+_FUSED_HELD_ASSETS: Final = tuple(
+    asset for asset in OMNI_ASSETS if asset.filename != "omniASR-LLM-7B-v2.pt"
+)
+# The fused v12 checkpoint was trained with the canonical written-v2 tokenizer (10288 ids).
+FUSED_VOCAB_SIZE: Final = 10288
+# Stat identity -> measured SHA-256: a 15.6 GB checkpoint is hashed once per process, not per load.
+_FUSED_DIGESTS: dict[tuple[int, ...], str] = {}
 
-    Two files decide what the adapter *does*: the weights, and the config that says where they
-    attach. Both are hashed, so retraining the same rank onto the same modules still yields a
-    different identity and a re-transcription rather than yesterday's words.
+
+def fused_checkpoint_asset(checkpoint: Path) -> FusedCheckpointAsset:
+    """The code-allowlisted entry this path names, or an honest halt. Cheap: no hashing.
+
+    Admission is by ``FUSED_CHECKPOINT_ASSETS`` only (filename and exact size here; the worker
+    checks the SHA-256 of the held bytes before any loader). Files beside the checkpoint, such
+    as ``SHA256SUMS``, are never an authority: whoever writes the ``.pt`` can write them too.
     """
-    config = adapter_dir / "adapter_config.json"
-    weights = adapter_dir / "adapter_model.safetensors"
-    for required in (config, weights):
-        if not required.is_file():
-            raise FileNotFoundError(
-                f"{adapter_dir} is not a PEFT adapter bundle: {required.name} is missing"
+    try:
+        info = checkpoint.lstat()
+    except OSError as exc:
+        raise ChampionUnavailable(f"fused champion checkpoint is missing: {checkpoint}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise ChampionUnavailable(f"fused champion checkpoint is not a regular file: {checkpoint}")
+    allowlist = _omni_assets.FUSED_CHECKPOINT_ASSETS  # read at call time; tests patch it
+    matches = [asset for asset in allowlist if asset.filename == checkpoint.name]
+    if len(matches) != 1 or matches[0].size != info.st_size:
+        raise ChampionUnavailable(
+            f"{checkpoint} ({info.st_size} bytes) is not on HawEdit's fused checkpoint "
+            "allowlist (exact filename, size and SHA-256); refusing to load it"
+        )
+    return matches[0]
+
+
+@contextmanager
+def _held_fused_checkpoint(checkpoint: Path, asset: FusedCheckpointAsset) -> Iterator[str]:
+    """Verify the allowlisted size and SHA-256 of the held bytes, then load only through them."""
+    stream, before = _open_regular_nofollow(checkpoint, require_single_link=True)
+    with stream:
+        if before.st_size != asset.size:
+            raise ChampionUnavailable(
+                f"fused champion {checkpoint} is {before.st_size} bytes, not the allowlisted "
+                f"{asset.size}; refusing to load it"
             )
-    digest = hashlib.sha256()
-    for path in (config, weights):
-        digest.update(path.read_bytes())
-    return digest.hexdigest()[:16]
+        key = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        digest = _FUSED_DIGESTS.get(key)
+        if digest is None:
+            _, digest = _hash_open_stream(stream, before, checkpoint)
+            _FUSED_DIGESTS[key] = digest
+        if digest != asset.sha256:
+            raise ChampionUnavailable(
+                f"fused champion {checkpoint} hashes to {digest}, not the allowlisted "
+                f"{asset.sha256}; refusing to load it"
+            )
+        fd_root = next((Path(p) for p in ("/proc/self/fd", "/dev/fd") if Path(p).is_dir()), None)
+        if fd_root is None:
+            raise RuntimeError(
+                "Verified fused checkpoint descriptors need Linux; use the WSL ASR runtime"
+            )
+        aliases = Path(tempfile.mkdtemp(prefix="hawedit-fused-"))
+        try:
+            aliases.chmod(0o700)
+            alias = aliases / checkpoint.name
+            alias.symlink_to(fd_root / str(stream.fileno()))
+            aliases.chmod(0o500)
+            yield alias.as_uri()
+        finally:
+            aliases.chmod(0o700)
+            shutil.rmtree(aliases)
+        after = os.fstat(stream.fileno())
+        if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != key:
+            raise RuntimeError("Fused champion checkpoint changed during verified access")
+
+
+def resolve_champion_checkpoint(env: Mapping[str, str] | None = None) -> Path | None:
+    """The fused champion named by ``HAWEDIT_CHAMPION_CHECKPOINT``, or ``None`` when unset.
+
+    Set means required: a missing or non-allowlisted ``.pt`` raises ``ChampionUnavailable``
+    rather than drafting with the LoRA champion or the base decoder instead (D-260, D-331).
+    """
+    environ = os.environ if env is None else env
+    raw = environ.get(CHAMPION_CHECKPOINT_ENV, "").strip()
+    if not raw:
+        return None
+    checkpoint = Path(raw)
+    fused_checkpoint_asset(checkpoint)
+    return checkpoint
+
+
+def adapter_fingerprint(adapter_dir: Path) -> str:
+    """Versioned config/weights/tokenizer identity, not licence or loader authorization."""
+    with _open_adapter_bundle(adapter_dir) as (fingerprint, _streams):
+        return fingerprint
+
+
+@contextmanager
+def _open_adapter_bundle(adapter_dir: Path) -> Iterator[tuple[str, dict[str, BinaryIO]]]:
+    """Retain the exact hashed inputs until consumption and drift checks finish."""
+    root = adapter_dir.absolute()
+    root_info = root.lstat()
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+    def identity(info: os.stat_result) -> tuple[int, ...]:
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            info.st_nlink,
+        )
+
+    def plain(info: os.stat_result, *, directory: bool = False) -> None:
+        regular = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+        if (
+            not regular
+            or getattr(info, "st_file_attributes", 0) & reparse
+            or (not directory and info.st_nlink != 1)
+        ):
+            raise RuntimeError("Adapter identity requires non-linked regular bundle inputs")
+
+    plain(root_info, directory=True)
+    for name in ("adapter_config.json", "adapter_model.safetensors"):
+        plain((root / name).lstat())
+
+    def tokenizer_name() -> str:
+        names = []
+        for index, path in enumerate(root.iterdir()):
+            if index >= 4096:
+                raise RuntimeError("Adapter identity directory exceeds the entry bound")
+            if path.match("*.model"):
+                names.append(path.name)
+                if len(names) > 1:
+                    raise RuntimeError("Adapter identity requires exactly one tokenizer (*.model)")
+        if len(names) != 1:
+            raise RuntimeError("Adapter identity requires exactly one tokenizer (*.model)")
+        return names[0]
+
+    tokenizer = tokenizer_name()
+    members = (
+        ("configuration", "adapter_config.json", 4 * 1024**2),
+        ("weights", "adapter_model.safetensors", 32 * 1024**3),
+        ("tokenizer", tokenizer, 16 * 1024**2),
+    )
+    records = []
+    deadline = time.monotonic() + 120
+    # Keep all input descriptors open until the complete set has been rechecked.
+    with ExitStack() as stack:
+        opened_members = []
+        for role, name, ceiling in members:
+            path = root / name
+            before = path.lstat()
+            plain(before)
+            if not 0 < before.st_size <= ceiling:
+                raise RuntimeError("Adapter identity input exceeds its size bounds")
+            descriptor = os.open(
+                path,
+                os.O_RDONLY
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
+            try:
+                stream = os.fdopen(descriptor, "rb")
+            except BaseException:
+                os.close(descriptor)
+                raise
+            stack.enter_context(stream)
+            opened = os.fstat(stream.fileno())
+            plain(opened)
+            # Windows CRT/path ctime meanings differ; compare ctime only within each source.
+            if identity(before)[:5] + (before.st_nlink,) != identity(opened)[:5] + (
+                opened.st_nlink,
+            ):
+                raise RuntimeError("Adapter identity input changed while opening")
+            opened_members.append((role, name, path, before, opened, stream))
+        for role, name, _path, _before, opened, stream in opened_members:
+            digest = hashlib.sha256()
+            count = 0
+            while chunk := stream.read(1024**2):
+                count += len(chunk)
+                if count > opened.st_size or time.monotonic() > deadline:
+                    raise RuntimeError("Adapter identity input exceeds hashing bounds")
+                digest.update(chunk)
+            if count != opened.st_size:
+                raise RuntimeError("Adapter identity input changed while hashing")
+            records.append(
+                {"role": role, "name": name, "size_bytes": count, "sha256": digest.hexdigest()}
+            )
+            stream.seek(0)
+
+        def assert_unchanged() -> None:
+            for _role, _name, path, before, opened, stream in opened_members:
+                if identity(os.fstat(stream.fileno())) != identity(opened) or identity(
+                    path.lstat()
+                ) != identity(before):
+                    raise RuntimeError("Adapter identity input changed during verified access")
+            if tokenizer_name() != tokenizer or identity(root.lstat()) != identity(root_info):
+                raise RuntimeError("Adapter identity bundle changed during verified access")
+
+        assert_unchanged()
+        manifest = {"schema": 2, "kind": "hawedit-peft-bundle", "files": records}
+        fingerprint = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        yield (
+            fingerprint,
+            {name: stream for _role, name, _path, _before, _opened, stream in opened_members},
+        )
+        assert_unchanged()
+
+
+@contextmanager
+def _verified_adapter_aliases(adapter_dir: Path) -> Iterator[tuple[Path, str]]:
+    """PEFT-compatible names pointing only at held original descriptors (D-285)."""
+    fd_root = next((Path(p) for p in ("/proc/self/fd", "/dev/fd") if Path(p).is_dir()), None)
+    if fd_root is None:
+        raise RuntimeError(
+            "Verified champion descriptor aliases need Linux; use the WSL ASR runtime"
+        )
+    with _open_adapter_bundle(adapter_dir) as (fingerprint, streams):
+        aliases = Path(tempfile.mkdtemp(prefix="hawedit-champion-"))
+        try:
+            aliases.chmod(0o700)
+            for name, stream in streams.items():
+                (aliases / name).symlink_to(fd_root / str(stream.fileno()))
+            aliases.chmod(0o500)
+            yield aliases, fingerprint
+        finally:
+            aliases.chmod(0o700)
+            shutil.rmtree(aliases)
+
+
+def _qwen_audio_input(audio_path: Path) -> str | tuple[Any, int]:
+    """Use Qwen's tuple API only for Stage 1's bounded canonical PCM (D-303)."""
+    try:
+        with wave.open(str(audio_path), "rb") as audio:
+            if (
+                audio.getnchannels(),
+                audio.getsampwidth(),
+                audio.getframerate(),
+                audio.getcomptype(),
+            ) != (1, 2, 16_000, "NONE"):
+                return str(audio_path)
+            frames = audio.getnframes()
+            if not 0 < frames <= LONG_AUDIO_THRESHOLD_S * 16_000:
+                return str(audio_path)
+            pcm = audio.readframes(frames)
+    except (OSError, EOFError, wave.Error):
+        return str(audio_path)
+    if len(pcm) != frames * 2:
+        return str(audio_path)
+    import numpy as np
+
+    return np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768.0, 16_000
 
 
 class QwenSoraniValidator:
@@ -286,7 +570,7 @@ class QwenSoraniValidator:
         self,
         model_dir: Path,
         *,
-        device: str = "cuda:1",
+        device: str = DEFAULT_ASR_DEVICE,
         model_id: str = VALIDATOR_MODEL_ID,
     ) -> None:
         resolve_role(model_id, frozenset({"asr_validator"}), "the ASR validator")
@@ -346,7 +630,9 @@ class QwenSoraniValidator:
             raise ValueError(
                 f"validator segment is {duration_s:.3f}s; expected 0..{LONG_AUDIO_THRESHOLD_S:.0f}s"
             )
-        results = self._load().transcribe(audio=str(audio_path))
+        assert_qwen_runtime()
+        model = self._load()
+        results = transcribe_qwen_completed(model, _qwen_audio_input(audio_path))
         if len(results) != 1 or not str(results[0].text).strip():
             raise RuntimeError("Sorani validator returned no transcription for one speech segment")
         return str(results[0].text)
@@ -369,21 +655,30 @@ class OmniAsrBackend:
     def __init__(
         self,
         *,
-        llm_device: str = "cuda:0",
-        ctc_device: str = "cuda:1",
+        llm_device: str = DEFAULT_ASR_DEVICE,
+        ctc_device: str = DEFAULT_ASR_DEVICE,
         language: str = "ckb_Arab",
         llm_card: str = CANONICAL_LLM_CARD,
         ctc_card: str = CANONICAL_CTC_CARD,
         lora_adapter: Path | None = None,
+        fused_checkpoint: Path | None = None,
     ) -> None:
         assert_canonical_omni_cards(llm_card, ctc_card)
+        if lora_adapter is not None and fused_checkpoint is not None:
+            raise ValueError(
+                "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, "
+                "not both"
+            )
         self.llm_device = os.environ.get("HAWEDIT_ASR_LLM_DEVICE", llm_device)
         self.ctc_device = os.environ.get("HAWEDIT_ASR_CTC_DEVICE", ctc_device)
         self.language = language
         self.llm_card = llm_card
         self.ctc_card = ctc_card
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
+        self.fused_checkpoint = Path(fused_checkpoint) if fused_checkpoint is not None else None
         self._pipelines: tuple[Any, Any] | None = None
+        self._ctc_pipeline: Any | None = None
+        self._loaded_adapter_identity: str | None = None
 
     @property
     def adapter_name(self) -> str | None:
@@ -396,67 +691,74 @@ class OmniAsrBackend:
         does not make. `asr.py`'s rule is that a measurement carries the adapter that produced
         it; this is where it carries it.
         """
-        if self.lora_adapter is None:
-            return None
-        return f"lora:{adapter_fingerprint(self.lora_adapter)}"
+        if self.fused_checkpoint is not None:
+            current: str | None = f"fused:{fused_checkpoint_asset(self.fused_checkpoint).sha256}"
+        elif self.lora_adapter is not None:
+            current = f"lora:{adapter_fingerprint(self.lora_adapter)}"
+        else:
+            current = None
+        if (
+            self._pipelines is not None or self._ctc_pipeline is not None
+        ) and current != self._loaded_adapter_identity:
+            raise RuntimeError("Cached ASR adapter identity changed after model construction")
+        return current
 
     def _load(self) -> tuple[Any, Any]:
+        expected_identity = self.adapter_name
         if self._pipelines is None:
-            if self.lora_adapter is not None:
-                # The adapted path is kept whole rather than fused into the verified
-                # loader below. `_load_adapted_llm` builds the model through fairseq2's
-                # asset store and hands the pipeline a pre-adapted model; the verified
-                # path builds its own and passes `model=`/`tokenizer=`. Fusing them means
-                # applying PEFT to a model loaded under a held descriptor - the right end
-                # state, and not reachable from this machine: there is no adapter bundle
-                # here to run it against, and an untested guess is worse than a stated gap.
-                #
-                # NARROWING, named so it is a decision and not an accident: an adapted run
-                # does not yet carry the verify-to-load binding. Only --omni-asr-adapter
-                # reaches this branch; the default path in the else below is verified.
+            # Both default champion and explicit stock routes consume held canonical files,
+            # never a freshly reopened URL-cache pathname or environment-overridden card.
+            with ExitStack() as stack:
+                opened_assets = stack.enter_context(self._open_held_assets())
+                adapter_aliases = None
+                fused_uri = None
+                if self.fused_checkpoint is not None:
+                    allowed = fused_checkpoint_asset(self.fused_checkpoint)
+                    if f"fused:{allowed.sha256}" != expected_identity:
+                        raise RuntimeError("ASR fused identity changed before model construction")
+                    fused_uri = stack.enter_context(
+                        _held_fused_checkpoint(self.fused_checkpoint, allowed)
+                    )
+                if self.lora_adapter is not None:
+                    adapter_aliases, fingerprint = stack.enter_context(
+                        _verified_adapter_aliases(self.lora_adapter)
+                    )
+                    if f"lora:{fingerprint}" != expected_identity:
+                        raise RuntimeError("ASR adapter identity changed before model construction")
+                assert_omni_card_integrity()
+                freeze_fairseq2_asset_overrides()
                 try:
+                    import torch
+                    from fairseq2.assets import AssetCard, get_asset_store
+                    from fairseq2.data.tokenizers.hub import load_tokenizer
+                    from fairseq2.models.hub import load_model
                     from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
                 except ImportError as exc:
                     raise RuntimeError(
                         "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
                     ) from exc
-                llm = (
-                    ASRInferencePipeline(model_card=self.llm_card, device=self.llm_device)
-                    if self.lora_adapter is None
-                    else self._load_adapted_llm(self.lora_adapter)
+                assert_effective_omni_cards(get_asset_store())
+                by_name = {opened.asset.filename: opened for opened in opened_assets}
+                tokenizer_card = AssetCard(
+                    "hawedit_omniASR_tokenizer_written_v2",
+                    {
+                        "tokenizer_family": "char_tokenizer",
+                        "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                    },
                 )
-                self._pipelines = (
-                    llm,
-                    ASRInferencePipeline(model_card=self.ctc_card, device=self.ctc_device),
-                )
-            else:
-                # fairseq2 trusts an existing URL-keyed cache entry and model-card ``@user``
-                # fields can override the official URI. Hash the three canonical files before
-                # importing a pipeline that can deserialize either model, and use the trailing
-                # ``@`` card names above to disable environment lookup.
-                with open_verified_omni_assets() as opened_assets:
-                    assert_omni_card_integrity()
-                    freeze_fairseq2_asset_overrides()
-                    try:
-                        import torch
-                        from fairseq2.assets import AssetCard, get_asset_store
-                        from fairseq2.data.tokenizers.hub import load_tokenizer
-                        from fairseq2.models.hub import load_model
-                        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
-                    except ImportError as exc:
-                        raise RuntimeError(
-                            "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
-                        ) from exc
-                    assert_effective_omni_cards(get_asset_store())
-                    by_name = {opened.asset.filename: opened for opened in opened_assets}
-                    tokenizer_card = AssetCard(
-                        "hawedit_omniASR_tokenizer_written_v2",
-                        {
-                            "tokenizer_family": "char_tokenizer",
-                            "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
-                        },
+                tokenizer = load_tokenizer(tokenizer_card)
+                llm_pipeline = None
+                if fused_uri is not None:
+                    llm_pipeline = self._load_fused_llm(
+                        by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                        checkpoint_uri=fused_uri,
                     )
-                    tokenizer = load_tokenizer(tokenizer_card)
+                elif adapter_aliases is not None:
+                    llm_pipeline = self._load_adapted_llm(
+                        adapter_aliases,
+                        checkpoint_uri=by_name["omniASR-LLM-7B-v2.pt"].file_uri,
+                    )
+                else:
                     llm_model = load_model(
                         AssetCard(
                             "hawedit_omniASR_LLM_7B_v2",
@@ -469,35 +771,105 @@ class OmniAsrBackend:
                         device=torch.device(self.llm_device),
                         dtype=torch.bfloat16,
                     )
-                    ctc_model = load_model(
-                        AssetCard(
-                            "hawedit_omniASR_CTC_3B_v2",
-                            {
-                                "model_family": "wav2vec2_asr",
-                                "model_arch": "3b_v2",
-                                "checkpoint": by_name["omniASR-CTC-3B-v2.pt"].file_uri,
-                            },
-                        ),
-                        device=torch.device(self.ctc_device),
-                        dtype=torch.bfloat16,
+                ctc_pipeline = self._ctc_pipeline
+                if ctc_pipeline is None:
+                    ctc_pipeline = self._make_ctc_pipeline(
+                        tokenizer, by_name["omniASR-CTC-3B-v2.pt"].file_uri
                     )
-                    self._pipelines = (
-                        ASRInferencePipeline(
-                            model_card=None,
-                            model=llm_model,
-                            tokenizer=tokenizer,
-                            device=self.llm_device,
-                        ),
-                        ASRInferencePipeline(
-                            model_card=None,
-                            model=ctc_model,
-                            tokenizer=tokenizer,
-                            device=self.ctc_device,
-                        ),
+                if llm_pipeline is None:
+                    llm_pipeline = ASRInferencePipeline(
+                        model_card=None,
+                        model=llm_model,
+                        tokenizer=tokenizer,
+                        device=self.llm_device,
                     )
+                pipelines = (llm_pipeline, ctc_pipeline)
+            # A context-exit drift/cleanup failure must not leave an admitted cache.
+            if self.adapter_name != expected_identity:
+                raise RuntimeError("ASR adapter identity changed during model construction")
+            self._loaded_adapter_identity = expected_identity
+            self._pipelines = pipelines
+            self._ctc_pipeline = ctc_pipeline
         return self._pipelines
 
-    def _load_adapted_llm(self, adapter_dir: Path) -> Any:
+    def _open_held_assets(self) -> Any:
+        # A fused run never reads the stock LLM weights, so it does not hold or hash them.
+        if self.fused_checkpoint is not None:
+            return open_verified_omni_assets(assets=_FUSED_HELD_ASSETS)
+        return open_verified_omni_assets()
+
+    def _make_ctc_pipeline(self, tokenizer: Any, checkpoint_uri: str) -> Any:
+        import torch
+        from fairseq2.assets import AssetCard
+        from fairseq2.models.hub import load_model
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+        model = load_model(
+            AssetCard(
+                "hawedit_omniASR_CTC_3B_v2",
+                {
+                    "model_family": "wav2vec2_asr",
+                    "model_arch": "3b_v2",
+                    "checkpoint": checkpoint_uri,
+                },
+            ),
+            device=torch.device(self.ctc_device),
+            dtype=torch.bfloat16,
+        )
+        return ASRInferencePipeline(
+            model_card=None, model=model, tokenizer=tokenizer, device=self.ctc_device
+        )
+
+    def _load_ctc(self) -> Any:
+        expected_identity = self.adapter_name
+        if self._pipelines is not None:
+            return self._pipelines[1]
+        if self._ctc_pipeline is None:
+            with self._open_held_assets() as opened_assets:
+                assert_omni_card_integrity()
+                freeze_fairseq2_asset_overrides()
+                try:
+                    from fairseq2.assets import AssetCard, get_asset_store
+                    from fairseq2.data.tokenizers.hub import load_tokenizer
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "canonical ASR needs the 'asr' extra: pip install -e '.[asr]'"
+                    ) from exc
+                assert_effective_omni_cards(get_asset_store())
+                by_name = {opened.asset.filename: opened for opened in opened_assets}
+                tokenizer = load_tokenizer(
+                    AssetCard(
+                        "hawedit_omniASR_tokenizer_written_v2",
+                        {
+                            "tokenizer_family": "char_tokenizer",
+                            "tokenizer": by_name["omniASR_tokenizer_written_v2.model"].file_uri,
+                        },
+                    )
+                )
+                ctc_pipeline = self._make_ctc_pipeline(
+                    tokenizer, by_name["omniASR-CTC-3B-v2.pt"].file_uri
+                )
+            if self.adapter_name != expected_identity:
+                raise RuntimeError("ASR adapter identity changed during CTC construction")
+            self._loaded_adapter_identity = expected_identity
+            self._ctc_pipeline = ctc_pipeline
+        return self._ctc_pipeline
+
+    def release_draft_model(self) -> None:
+        """D-286: called only after all draft forwards have joined, before validation."""
+        expected_identity = self.adapter_name
+        if self._pipelines is None:
+            return
+        self._ctc_pipeline = self._pipelines[1]
+        self._pipelines = None
+        gc.collect()
+        import torch
+
+        torch.cuda.empty_cache()
+        if self.adapter_name != expected_identity:
+            raise RuntimeError("ASR adapter identity changed during draft release")
+
+    def _load_adapted_llm(self, adapter_dir: Path, *, checkpoint_uri: str) -> Any:
         """Base checkpoint + PEFT adapter, assembled the way the trainer serves it.
 
         fairseq2 does not accept an adapter through `ASRInferencePipeline(model_card=…)`, so the
@@ -510,23 +882,15 @@ class OmniAsrBackend:
           down as a constant. Measured on this machine: the champion bundle's tokenizer reports
           **10288**, exactly the literal its trainer's server hardcodes, so the number is
           derivable and a hardcoded one would only be a guess for the next adapter;
-        * **the base checkpoint** — resolved from the same asset store the unadapted path uses.
+        * **the base checkpoint** — supplied by the held verified canonical asset boundary.
 
         The `Linear` shim and the `LoraConfig` registration are PEFT/fairseq2 glue: PEFT looks
         for `in_features`/`out_features`, fairseq2's projection names them `input_dim`/
         `output_dim`, and without the mapping PEFT cannot see a layer to attach to.
         """
-        import copy
-
         import torch
-        from fairseq2.assets import get_asset_store, load_in_memory_asset_metadata
-        from fairseq2.data.tokenizers import load_tokenizer
-        from fairseq2.models.hub import load_model
         from fairseq2.nn.projection import Linear as Fairseq2Linear
-        from fairseq2.runtime.config_registry import get_config
-        from fairseq2.runtime.dependency import get_dependency_resolver
         from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
-        from omnilingual_asr.models.wav2vec2_llama import Wav2Vec2LlamaConfig
 
         try:
             from peft import LoraConfig, PeftModel
@@ -546,86 +910,93 @@ class OmniAsrBackend:
                 f"{adapter_dir} must hold exactly one tokenizer (*.model) so the adapter is "
                 f"decoded with the tokenizer it was trained against; found {len(tokenizers)}"
             )
-        # The official card's own checkpoint value, not a path this module went looking for.
-        # It is a URL (`https://dl.fbaipublicfiles.com/mms/omniASR-LLM-7B-v2.pt`, measured
-        # 2026-08-12), so handing it straight back to fairseq2 reuses whatever that already has
-        # cached and downloads only if it does not — where a hardcoded `~/.cache/...` path, which
-        # is what the trainer's own server uses, is a guess about someone else's disk layout.
-        official = get_asset_store().retrieve_card(self.llm_card)
-        checkpoint = official.field("checkpoint").as_(str)
-
         Fairseq2Linear.in_features = property(lambda self: self.input_dim)
         Fairseq2Linear.out_features = property(lambda self: self.output_dim)
-        original_post_init = LoraConfig.__post_init__
 
-        def register_fairseq2_linear(config: Any) -> None:
-            original_post_init(config)
-            config._register_custom_module({Fairseq2Linear: LoraLinear})
-
-        LoraConfig.__post_init__ = register_fairseq2_linear
-
-        # Derived names are new names, so they carry no environment tag. `CANONICAL_LLM_CARD`
-        # ends in `@` — fairseq2's marker for "no environment look-up" — and concatenating onto
-        # it put that `@` in the middle: `hawedit_adapted_omniASR_LLM_7B_v2@_tokenizer` parses as
-        # card `hawedit_adapted_omniASR_LLM_7B_v2`, environment `_tokenizer`. That is the *model*
-        # card, whose `tokenizer_ref` is the same string, so `resolve_tokenizer_reference` handed
-        # itself back forever. Measured 2026-08-29 by dumping the spinning frame: `ref_card` was
-        # the identical object to `card`, and the worker burned 3 h 20 m before it was killed.
-        base_name = self.llm_card.split("@", 1)[0]
-        card = f"hawedit_adapted_{base_name}"
-        tokenizer_card = f"{card}_tokenizer"
-        store = get_asset_store()
-        store._metadata_providers = [
-            provider
-            for provider in store._metadata_providers
-            if getattr(provider, "_source", "") != "hawedit_adapted"
-        ]
-        store._metadata_providers.append(
-            load_in_memory_asset_metadata(
-                "hawedit_adapted",
-                [
-                    {
-                        "name": tokenizer_card,
-                        "tokenizer_family": "char_tokenizer",
-                        "tokenizer": str(tokenizers[0].resolve()),
-                    },
-                    {
-                        "name": card,
-                        "model_family": "wav2vec2_llama",
-                        # `7b`, though the official card declares `7b_v2`. This follows the
-                        # recipe the adapter's own trainer serves it with, because an adapter is
-                        # only valid against the module shapes it was trained on and that recipe
-                        # is the one measured to produce it. D-181 records the discrepancy.
-                        "model_arch": "7b",
-                        "checkpoint": checkpoint,
-                        "tokenizer_ref": tokenizer_card,
-                    },
-                ],
-            )
+        base, tokenizer = self._load_trainer_7b(
+            "adapted", checkpoint_uri, tokenizers[0].absolute().as_uri()
         )
-
-        # The *tokenizer* card, not the model card. `load_tokenizer` runs
-        # `resolve_tokenizer_reference`, a `while True` that follows `tokenizer_ref` until a card
-        # has none — and handed the model card it never terminated. Measured 2026-08-29: the
-        # worker spun for 3 h 20 m at 99% of one core inside `deepcopy` in fairseq2's asset
-        # metadata provider, having read 418 MB of a 31.2 GB checkpoint and loaded no model at
-        # all. Asking for the tokenizer by name skips the indirection entirely: that card carries
-        # no `tokenizer_ref`, so the loop exits on its first test. The model card keeps its
-        # `tokenizer_ref` because `load_model` below still resolves through it.
-        tokenizer = load_tokenizer(tokenizer_card)
-        vocab_size = int(tokenizer.vocab_info.size)
-        config = copy.deepcopy(get_config(get_dependency_resolver(), Wav2Vec2LlamaConfig, "7b"))
-        config.llama_config.vocab_size = vocab_size
-        config.wav2vec2_asr_config.target_vocab_size = vocab_size
-
         device = torch.device(self.llm_device)
-        base = load_model(card, device=device, dtype=torch.bfloat16, config=config)
-        adapted = PeftModel.from_pretrained(base, str(adapter_dir))
+        adapter_config = LoraConfig.from_pretrained(str(adapter_dir))
+        adapter_config._register_custom_module({Fairseq2Linear: LoraLinear})
+        adapted = PeftModel.from_pretrained(base, str(adapter_dir), config=adapter_config)
         return ASRInferencePipeline(
             model_card=None,
             model=adapted.base_model.model,
             tokenizer=tokenizer,
             device=device,
+            dtype=torch.bfloat16,
+        )
+
+    def _load_trainer_7b(
+        self,
+        kind: str,
+        checkpoint_uri: str,
+        tokenizer_uri: str,
+        *,
+        expected_vocab: int | None = None,
+    ) -> tuple[Any, Any]:
+        """The trainer's ``7b`` LLM with tokenizer-derived vocabulary (D-181, D-285).
+
+        Shared by the LoRA base and the fused checkpoint (D-331); no PEFT here.
+        """
+        import copy
+
+        import torch
+        from fairseq2.assets import AssetCard
+        from fairseq2.data.tokenizers import load_tokenizer
+        from fairseq2.models.hub import load_model
+        from fairseq2.runtime.config_registry import get_config
+        from fairseq2.runtime.dependency import get_dependency_resolver
+        from omnilingual_asr.models.wav2vec2_llama import Wav2Vec2LlamaConfig
+
+        # Direct cards bypass existing metadata/environment providers. Keep derived names free
+        # of the canonical trailing @, which previously produced a self-referencing tokenizer.
+        base_name = self.llm_card.split("@", 1)[0]
+        card_name = f"hawedit_{kind}_{base_name}"
+        tokenizer_card = AssetCard(
+            f"{card_name}_tokenizer",
+            {"tokenizer_family": "char_tokenizer", "tokenizer": tokenizer_uri},
+        )
+        card = AssetCard(
+            card_name,
+            {
+                "model_family": "wav2vec2_llama",
+                # Preserve the measured trainer recipe, not the official 7b_v2 shape (D-181).
+                "model_arch": "7b",
+                "checkpoint": checkpoint_uri,
+                "tokenizer_ref": tokenizer_card.name,
+            },
+        )
+        # The tokenizer card has no tokenizer_ref, so it cannot recurse through the model card.
+        tokenizer = load_tokenizer(tokenizer_card)
+        vocab_size = int(tokenizer.vocab_info.size)
+        if expected_vocab is not None and vocab_size != expected_vocab:
+            raise RuntimeError(
+                f"the held tokenizer reports {vocab_size} ids but the fused checkpoint was "
+                f"trained with {expected_vocab}; refusing to load mismatched weights"
+            )
+        config = copy.deepcopy(get_config(get_dependency_resolver(), Wav2Vec2LlamaConfig, "7b"))
+        config.llama_config.vocab_size = vocab_size
+        config.wav2vec2_asr_config.target_vocab_size = vocab_size
+        model = load_model(
+            card, device=torch.device(self.llm_device), dtype=torch.bfloat16, config=config
+        )
+        return model, tokenizer
+
+    def _load_fused_llm(self, tokenizer_uri: str, *, checkpoint_uri: str) -> Any:
+        """A fused trainer checkpoint: the LoRA path's ``7b`` load without PEFT (D-331)."""
+        import torch
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+        model, tokenizer = self._load_trainer_7b(
+            "fused", checkpoint_uri, tokenizer_uri, expected_vocab=FUSED_VOCAB_SIZE
+        )
+        return ASRInferencePipeline(
+            model_card=None,
+            model=model,
+            tokenizer=tokenizer,
+            device=torch.device(self.llm_device),
             dtype=torch.bfloat16,
         )
 
@@ -709,34 +1080,124 @@ class OmniAsrBackend:
             blank_id=compact_id[blank],
         )
 
-    def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
-        llm, ctc = self._load()
-        # The two model forwards are independent and live on different GPUs. CTC does not need
-        # the LLM text until the cheap Viterbi projection after both complete.
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="omniasr") as executor:
-            text_future = executor.submit(
-                llm.transcribe,
-                [str(audio_path)],
-                lang=[self.language],
-                batch_size=1,
+    def _transcribe_llm(self, pipeline: Any, audio_path: Path) -> Any:
+        return transcribe_completed(pipeline, audio_path, self.language)
+
+    def _transcribe_llm_beam(self, pipeline: Any, audio_path: Path) -> Any:
+        """The same loaded model, tokenizer and device, decoded with upstream beam 5."""
+        from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+        from omnilingual_asr.models.wav2vec2_llama.config import Wav2Vec2LlamaBeamSearchConfig
+
+        beam = ASRInferencePipeline(
+            model_card=None,
+            model=pipeline.model,
+            tokenizer=pipeline.tokenizer,
+            device=pipeline.device,
+            dtype=pipeline.dtype,
+            beam_search_config=Wav2Vec2LlamaBeamSearchConfig(nbest=BEAM_RETRY_NBEST),
+        )
+        return transcribe_completed(beam, audio_path, self.language, nbest=BEAM_RETRY_NBEST)
+
+    def _greedy_draft(self, pipeline: Any, audio_path: Path, duration_s: float) -> tuple[str, str]:
+        """Greedy as before; returns the text and why it is suspect ("" when clean, D-332)."""
+        try:
+            text = _one_draft(self._transcribe_llm(pipeline, audio_path))
+        except NoNaturalEos as exc:
+            return "", f"no natural EOS ({exc})"
+        return text, loop_suspect(text, duration_s) or ""
+
+    def _beam_retry(
+        self, llm: Any, ctc: Any, audio_path: Path, duration_s: float, reason: str
+    ) -> str:
+        """One beam-5 retry of a suspect segment, else halt (D-332).
+
+        Never trims repeats, splices the attempts or falls back to another model.
+        """
+        with self._ctc_parked(ctc):
+            try:
+                retried = _one_draft(self._transcribe_llm_beam(llm, audio_path))
+                problem = loop_suspect(retried, duration_s)
+            except NoNaturalEos as exc:
+                problem = f"no natural EOS ({exc})"
+        if problem is not None:
+            raise DecodeIncomplete(
+                f"segment {audio_path.name}: greedy attempt: {reason}; beam-5 retry: {problem}"
             )
+        return retried
+
+    @contextmanager
+    def _ctc_parked(self, ctc: Any) -> Iterator[None]:
+        """D-332 option 1: beam 5 beside a resident CTC-3B overflows one 24 GB card.
+
+        Only when both models share a CUDA device, CTC waits on the CPU for the retry and always
+        returns; if it cannot, the run halts rather than aligning on the CPU or another model.
+        """
+        if self.llm_device != self.ctc_device or not self.ctc_device.startswith("cuda"):
+            yield
+            return
+        try:
+            self._park_ctc(ctc)
+            yield
+        finally:
+            try:
+                self._restore_ctc(ctc)
+            except Exception as exc:
+                raise DecodeIncomplete(
+                    f"CTC-3B could not return to {self.ctc_device} after the beam-5 retry; "
+                    "halting rather than continuing with CTC off its device"
+                ) from exc
+
+    def _park_ctc(self, ctc: Any) -> None:
+        import torch
+
+        ctc.model.to("cpu")
+        torch.cuda.empty_cache()
+
+    def _restore_ctc(self, ctc: Any) -> None:
+        ctc.model.to(self.ctc_device)
+
+    def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+        expected_identity = self.adapter_name
+        llm, ctc = self._load()
+        # The two greedy forwards are independent. CTC does not need the LLM text until the
+        # cheap Viterbi projection after both complete.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="omniasr") as executor:
+            text_future = executor.submit(self._greedy_draft, llm, audio_path, duration_s)
             emissions_future = executor.submit(self._ctc_emissions, ctc, audio_path)
-            texts = text_future.result()
+            text, retry_reason = text_future.result()
             log_probs, frame_count, ctc_text = emissions_future.result()
-        if len(texts) != 1 or not str(texts[0]).strip():
-            raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
-        text = str(texts[0])
+        if retry_reason:
+            # After the join, so no CTC forward is running when the retry parks CTC (D-332).
+            text = self._beam_retry(llm, ctc, audio_path, duration_s, retry_reason)
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
-        return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
+        if self.adapter_name != expected_identity:
+            raise RuntimeError("ASR adapter identity changed during segment inference")
+        return SegmentTranscript(
+            text,
+            ctc_text,
+            words,
+            _mean_aligned_logprob(words),
+            "beam5_retry" if retry_reason else "greedy",
+            retry_reason or None,
+        )
 
     def align_segment(self, audio_path: Path, duration_s: float, text: str) -> SegmentTranscript:
         """Align a validator correction with a fresh CTC pass on the same bounded audio."""
         if not text.strip():
             raise ValueError("cannot align an empty validator transcription")
-        _, ctc = self._load()
+        expected_identity = self.adapter_name
+        ctc = self._load_ctc()
         log_probs, frame_count, ctc_text = self._ctc_emissions(ctc, audio_path)
         words = self._align_emissions(ctc, log_probs, frame_count, text, duration_s)
+        if self.adapter_name != expected_identity:
+            raise RuntimeError("ASR adapter identity changed during validator realignment")
         return SegmentTranscript(text, ctc_text, words, _mean_aligned_logprob(words))
+
+
+def _one_draft(texts: Any) -> str:
+    if len(texts) != 1 or not str(texts[0]).strip():
+        raise RuntimeError("OmniASR LLM returned no transcription for one speech segment")
+    return str(texts[0])
 
 
 def _mean_aligned_logprob(words: Sequence[Word]) -> float:
@@ -790,17 +1251,24 @@ class OmniAsrProducer:
         # positionally, so a `*` in front of it turns every one of them into a TypeError. The
         # adapter was keyword-only on this branch and stays that way, which costs nobody.
         lora_adapter: Path | None = None,
+        context_grouping: bool = False,
+        fused_checkpoint: Path | None = None,
     ) -> None:
-        if backend is not None and lora_adapter is not None:
+        if type(context_grouping) is not bool:
+            raise ValueError("ASR context grouping must be a boolean")
+        if backend is not None and (lora_adapter is not None or fused_checkpoint is not None):
             raise ValueError(
                 "pass the adapter to the backend, not to both: a supplied backend already "
                 "decides which weights run, and a second answer here could contradict it"
             )
         if validator is not None and validator_model_dir is not None:
             raise ValueError("provide a validator or validator_model_dir, not both")
-        self.backend = backend or OmniAsrBackend(lora_adapter=lora_adapter)
+        self.backend = backend or OmniAsrBackend(
+            lora_adapter=lora_adapter, fused_checkpoint=fused_checkpoint
+        )
         self.validator = validator
         self.validator_model_dir = validator_model_dir
+        self.context_grouping = context_grouping
 
     @property
     def model_identity(self) -> str | None:
@@ -811,6 +1279,18 @@ class OmniAsrProducer:
         transcript - the same hole D-136 closed for test doubles, one axis over.
         """
         return getattr(self.backend, "adapter_name", None)
+
+    @property
+    def admission_policy(self) -> str | None:
+        """Cache binding for the real canonical backend, not a fidelity attestation."""
+        completion = ASR_COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
+        if self.context_grouping:
+            return (
+                f"{completion}+{CONTEXT_GROUPING_POLICY_ID}"
+                if completion is not None
+                else CONTEXT_GROUPING_POLICY_ID
+            )
+        return completion
 
     def _validator(self) -> SoraniValidator:
         if self.validator is not None:
@@ -829,18 +1309,31 @@ class OmniAsrProducer:
         work_dir: Path,
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
+        expected_identity = self.model_identity
+        expected_policy = self.admission_policy
+        if self.context_grouping:
+            speech_segments = _contextual_speech_regions(speech_segments)
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        initial, unaligned = transcribe_prepared_segments(self.backend, prepared)
-        results, validated_by, rejected_corrections = _validate_hard_segments(
-            initial, self.backend, self._validator
+        initial, unaligned = transcribe_prepared_segments(
+            self.backend, prepared, stop_on_failure=True
         )
+        if type(self.backend) is OmniAsrBackend:
+            self.backend.release_draft_model()
+        results, validated_by, rejected_corrections, origins = _validate_hard_segments(
+            initial, self.backend, self._validator, stop_on_failure=True
+        )
+        if self.model_identity != expected_identity:
+            raise RuntimeError("Native ASR adapter identity changed during inference")
+        if self.admission_policy != expected_policy:
+            raise RuntimeError("Native ASR context policy changed during inference")
         return _assemble_canonical_transcript(
             media_id,
             results,
             unaligned,
-            adapter=getattr(self.backend, "adapter_name", None),
+            adapter=expected_identity,
             validated_by=validated_by,
             rejected_validator_corrections=rejected_corrections,
+            segment_origins=origins,
         )
 
 
@@ -853,6 +1346,65 @@ class _PreparedSpeechSegment:
     @property
     def duration_s(self) -> float:
         return (self.end_ms - self.start_ms) / 1_000
+
+
+@dataclass(frozen=True, slots=True)
+class _ContextSpeechRegion:
+    start_ms: int
+    end_ms: int
+
+
+def _contextual_speech_regions(
+    speech_segments: Sequence[SpeechSegment],
+) -> tuple[_ContextSpeechRegion, ...]:
+    """Keep complete neighboring speech under the input budget, never trim a region."""
+    windows: list[_ContextSpeechRegion] = []
+    previous_end: int | None = None
+    for index, segment in enumerate(speech_segments):
+        start, end = segment.start_ms, segment.end_ms
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or not 0 <= start < end
+            or end - start > int(LONG_AUDIO_THRESHOLD_S * 1_000)
+        ):
+            raise ValueError(f"speech region {index} has invalid interval bounds")
+        if previous_end is not None and start < previous_end:
+            raise ValueError(f"speech region {index} overlaps or precedes the previous interval")
+        if (
+            windows
+            and start - windows[-1].end_ms <= _CONTEXT_MAX_GAP_MS
+            and end - windows[-1].start_ms <= _CONTEXT_MAX_SPAN_MS
+        ):
+            windows[-1] = _ContextSpeechRegion(windows[-1].start_ms, end)
+        else:
+            windows.append(_ContextSpeechRegion(start, end))
+        previous_end = end
+    return tuple(windows)
+
+
+class AsrProductionFailure(RuntimeError):
+    """A production halt with original in-memory diagnostic input, not completed ASR."""
+
+    def __init__(
+        self,
+        stage: str,
+        diagnostic_results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
+        *,
+        unaligned: Sequence[UnalignedSpeech] = (),
+        rejected_validator_corrections: Sequence[RejectedValidatorCorrection] = (),
+    ) -> None:
+        if len(unaligned) + len(rejected_validator_corrections) != 1:
+            raise ValueError("a production ASR halt must name exactly its first failure")
+        self.stage = stage
+        self.diagnostic_results = tuple(diagnostic_results)
+        self.unaligned = tuple(unaligned)
+        self.rejected_validator_corrections = tuple(rejected_validator_corrections)
+        failure = self.unaligned[0] if self.unaligned else self.rejected_validator_corrections[0]
+        super().__init__(
+            f"production ASR halted during {stage} at {failure.start_ms}..{failure.end_ms} ms: "
+            f"{failure.reason}"
+        )
 
 
 def _cut_speech_regions(
@@ -948,11 +1500,13 @@ def _pcm_duration_ms(path: Path) -> int:
 def transcribe_prepared_segments(
     backend: OmniSegmentBackend,
     prepared: Sequence[_PreparedSpeechSegment],
+    *,
+    stop_on_failure: bool = False,
 ) -> tuple[
     tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
     tuple[UnalignedSpeech, ...],
 ]:
-    """Transcribe every Stage 0 region, recording the ones that fail instead of aborting.
+    """Account for diagnostic failures, or halt at the first in production (D-278).
 
     Both producers built this list with a generator expression, so the first raise discarded a
     finished Stage 0 and every other region's inference. Measured 2026-08-09 on a real 38-minute
@@ -969,14 +1523,17 @@ def transcribe_prepared_segments(
     for segment in prepared:
         try:
             item = backend.transcribe_segment(segment.path, segment.duration_s)
-        except Exception as exc:  # broad on purpose: the failure IS part of the transcript
-            failures.append(
-                UnalignedSpeech(
-                    start_ms=segment.start_ms,
-                    end_ms=segment.end_ms,
-                    reason=_failure_reason(exc),
-                )
+        except Exception as exc:
+            failure = UnalignedSpeech(
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                reason=_failure_reason(exc),
             )
+            if stop_on_failure:
+                raise AsrProductionFailure(
+                    "draft/alignment", results, unaligned=(failure,)
+                ) from exc
+            failures.append(failure)
             continue
         results.append((segment, item))
     return tuple(results), tuple(failures)
@@ -990,6 +1547,7 @@ def _assemble_canonical_transcript(
     *,
     validated_by: str | None = None,
     rejected_validator_corrections: Sequence[RejectedValidatorCorrection] = (),
+    segment_origins: tuple[SegmentOrigin, ...] | None = None,
 ) -> RawTranscript:
     if not results:
         raise RuntimeError(
@@ -1029,6 +1587,8 @@ def _assemble_canonical_transcript(
                     mean_logprob=item.mean_logprob,
                     llm_text=item.text_raw,
                     ctc_text=item.ctc_text,
+                    decode_mode=item.decode_mode,
+                    retry_reason=item.retry_reason,
                 )
             )
     return RawTranscript(
@@ -1047,6 +1607,7 @@ def _assemble_canonical_transcript(
         unaligned=tuple(unaligned),
         segment_confidence=tuple(confidences),
         rejected_validator_corrections=tuple(rejected_validator_corrections),
+        segment_origins=segment_origins,
     )
 
 
@@ -1058,14 +1619,59 @@ def _failure_reason(exc: Exception, *, limit: int = 1_024) -> str:
     return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
 
 
+def _segment_origin(
+    segment: _PreparedSpeechSegment,
+    draft: SegmentTranscript,
+    selected: SegmentTranscript,
+    decision: EscalationDecision,
+    outcome: str,
+    *,
+    validator: str | None = None,
+    validator_text: str | None = None,
+    rejection_reason: str | None = None,
+) -> SegmentOrigin:
+    def confidence(item: SegmentTranscript) -> SegmentConfidence:
+        return SegmentConfidence(
+            segment.start_ms,
+            segment.end_ms,
+            item.mean_logprob,
+            item.text_raw,
+            item.ctc_text,
+            item.decode_mode,
+            item.retry_reason,
+        )
+
+    return SegmentOrigin(
+        draft=confidence(draft),
+        selected=confidence(selected),
+        selected_words=tuple(
+            replace(
+                word,
+                start_ms=word.start_ms + segment.start_ms,
+                end_ms=word.end_ms + segment.start_ms,
+            )
+            for word in selected.words
+        ),
+        escalated=decision.escalate,
+        route_reason=decision.reason,
+        outcome=outcome,
+        validator=validator,
+        validator_text=validator_text,
+        rejection_reason=rejection_reason,
+    )
+
+
 def _validate_hard_segments(
     results: Sequence[tuple[_PreparedSpeechSegment, SegmentTranscript]],
     backend: OmniSegmentBackend,
     validator_factory: Callable[[], SoraniValidator],
+    *,
+    stop_on_failure: bool = False,
 ) -> tuple[
     tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
     str | None,
     tuple[RejectedValidatorCorrection, ...],
+    tuple[SegmentOrigin, ...],
 ]:
     """Apply §3's confidence/disagreement router and realign only corrected segments."""
     scores = tuple(
@@ -1080,39 +1686,86 @@ def _validate_hard_segments(
     )
     decisions = select_for_validation(scores)
     if not any(decision.escalate for decision in decisions):
-        return tuple(results), None, ()
+        return (
+            tuple(results),
+            None,
+            (),
+            tuple(
+                _segment_origin(segment, item, item, decision, "not-routed")
+                for (segment, item), decision in zip(results, decisions, strict=True)
+            ),
+        )
 
     validator = validator_factory()
     resolve_role(validator.model_id, frozenset({"asr_validator"}), "the ASR validator")
     routed: list[tuple[_PreparedSpeechSegment, SegmentTranscript]] = []
     rejected: list[RejectedValidatorCorrection] = []
+    origins: list[SegmentOrigin] = []
     accepted_correction = False
     for (segment, item), decision in zip(results, decisions, strict=True):
         if not decision.escalate:
             routed.append((segment, item))
+            origins.append(_segment_origin(segment, item, item, decision, "not-routed"))
             continue
+        failed_stage = "validator transcription"
+        corrected: str | None = None
         try:
             corrected = validator.transcribe_segment(segment.path, segment.duration_s)
+            if not isinstance(corrected, str):
+                corrected = None
+                raise ValueError("ASR validator response must be text")
+            failed_stage = "validator alignment"
             aligned = backend.align_segment(segment.path, segment.duration_s, corrected)
         except Exception as exc:
+            failure = RejectedValidatorCorrection(
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                validator=validator.model_id,
+                reason=_failure_reason(exc),
+            )
+            if stop_on_failure:
+                raise AsrProductionFailure(
+                    failed_stage, results, rejected_validator_corrections=(failure,)
+                ) from exc
             # A rejected correction cannot erase an already admissible canonical alignment.
             # Preserve that alignment and make the failed escalation explicit in the artifact.
             routed.append((segment, item))
-            rejected.append(
-                RejectedValidatorCorrection(
-                    start_ms=segment.start_ms,
-                    end_ms=segment.end_ms,
+            rejected.append(failure)
+            origins.append(
+                _segment_origin(
+                    segment,
+                    item,
+                    item,
+                    decision,
+                    "validator-alignment-refused"
+                    if failed_stage == "validator alignment"
+                    else "validator-transcription-refused",
                     validator=validator.model_id,
-                    reason=_failure_reason(exc),
+                    validator_text=corrected,
+                    rejection_reason=failure.reason,
                 )
             )
             continue
         accepted_correction = True
-        routed.append((segment, aligned))
+        # The draft's decode provenance (D-332) survives a validator correction.
+        selected = replace(aligned, decode_mode=item.decode_mode, retry_reason=item.retry_reason)
+        routed.append((segment, selected))
+        origins.append(
+            _segment_origin(
+                segment,
+                item,
+                selected,
+                decision,
+                "validator-selected",
+                validator=validator.model_id,
+                validator_text=corrected,
+            )
+        )
     return (
         tuple(routed),
         validator.model_id if accepted_correction else None,
         tuple(rejected),
+        tuple(origins),
     )
 
 
@@ -1132,12 +1785,23 @@ class WslOmniAsrProducer:
         wsl_executable: str = "wsl.exe",
         lora_adapter: Path | None = None,
         validator_model_dir: Path | None = None,
+        context_grouping: bool = False,
+        fused_checkpoint: Path | None = None,
     ) -> None:
+        if type(context_grouping) is not bool:
+            raise ValueError("ASR context grouping must be a boolean")
+        if lora_adapter is not None and fused_checkpoint is not None:
+            raise ValueError(
+                "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, "
+                "not both"
+            )
         self.distro = distro
         self.interpreter = interpreter
         self.wsl_executable = wsl_executable
         self.lora_adapter = Path(lora_adapter) if lora_adapter is not None else None
+        self.fused_checkpoint = Path(fused_checkpoint) if fused_checkpoint is not None else None
         self.validator_model_dir = validator_model_dir
+        self.context_grouping = context_grouping
         self._receipt_distro: str | None = None
 
     @property
@@ -1148,9 +1812,21 @@ class WslOmniAsrProducer:
         decision happens *before* the worker is invoked, and an identity that only exists after
         a 1,547 s transcription cannot key anything.
         """
+        if self.fused_checkpoint is not None:
+            # The allowlisted digest, not 15.6 GB of hashing: the worker hashes before loading.
+            return f"fused:{fused_checkpoint_asset(self.fused_checkpoint).sha256}"
         if self.lora_adapter is None:
             return None
         return f"lora:{adapter_fingerprint(self.lora_adapter)}"
+
+    @property
+    def admission_policy(self) -> str:
+        """The source-bound worker uses the same canonical completion contract."""
+        return (
+            f"{ASR_COMPLETION_POLICY_ID}+{CONTEXT_GROUPING_POLICY_ID}"
+            if self.context_grouping
+            else ASR_COMPLETION_POLICY_ID
+        )
 
     def _prefix(self) -> list[str]:
         selected_distro = self._receipt_distro or self.distro
@@ -1204,7 +1880,11 @@ class WslOmniAsrProducer:
         work_dir: Path,
         ffmpeg: Path | None = None,
     ) -> RawTranscript:
+        expected_identity = self.model_identity
+        expected_policy = self.admission_policy
         interpreter, wsl_source = self._runtime()
+        if self.context_grouping:
+            speech_segments = _contextual_speech_regions(speech_segments)
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
         if self.validator_model_dir is not None:
             validator_model_dir = self.validator_model_dir
@@ -1250,7 +1930,11 @@ class WslOmniAsrProducer:
                 # merge, which rebuilt this request for the validator and carried no
                 # adapter field at all.
                 request["lora_adapter"] = self._wsl_path(self.lora_adapter)
-                request["model_identity"] = self.model_identity
+                request["model_identity"] = expected_identity
+            elif self.fused_checkpoint is not None:
+                # Same rule for the fused champion (D-331): absent from stock/LoRA requests.
+                request["fused_checkpoint"] = self._wsl_path(self.fused_checkpoint)
+                request["model_identity"] = expected_identity
             payload = json.dumps(request, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
             try:
                 with request_path.open("x", encoding="utf-8", newline="\n") as stream:
@@ -1270,8 +1954,9 @@ class WslOmniAsrProducer:
                     raise RuntimeError(
                         f"{request_path} already describes a different Stage 1 request "
                         f"({len(json.loads(existing).get('segments', ()))} segments, this run has "
-                        f"{len(prepared)}). Another run is using this work directory, or Stage 0's "
-                        f"speech regions changed. Delete that file to re-transcribe from scratch."
+                        f"{len(prepared)}). Source, speech regions, validator or adapter inputs "
+                        f"changed, or another run uses this directory. Preserve existing Stage 1 "
+                        f"artifacts and use a new work directory after recovery reconciliation."
                     ) from None
 
             wsl_request = self._wsl_path(request_path)
@@ -1285,6 +1970,10 @@ class WslOmniAsrProducer:
                 val = os.environ.get(var)
                 if val:
                     env_args.append(f"{var}={val}")
+            if self.model_identity != expected_identity:
+                raise RuntimeError("Host ASR adapter identity changed before worker execution")
+            if self.admission_policy != expected_policy:
+                raise RuntimeError("Host ASR context policy changed before worker execution")
             result = subprocess.run(
                 [
                     *self._prefix(),
@@ -1302,34 +1991,61 @@ class WslOmniAsrProducer:
                 timeout=max(300.0, 60.0 + 4.0 * len(prepared) * 30.0),
             )
             if result.returncode != 0 or not output_path.is_file():
-                stderr = result.stderr.decode("utf-8", "replace")[-1_200:]
+                # Keep the final cause inside the pipeline's 1,024-character detail budget.
+                stderr = result.stderr.decode("utf-8", "replace")[-900:]
                 raise RuntimeError(
-                    "canonical OmniASR failed in WSL2. Run hawedit-asr-setup first; "
-                    f"worker said: {stderr or 'no transcript was returned'}"
+                    f"canonical OmniASR failed in WSL2 (exit {result.returncode}); "
+                    f"worker diagnostic tail: {stderr or 'no transcript was returned'}"
                 )
             transcript = RawTranscript.from_json(output_path.read_text(encoding="utf-8"))
             if transcript.media_id != media_id:
                 raise RuntimeError(
                     f"WSL OmniASR returned media_id {transcript.media_id!r} for {media_id!r}"
                 )
+            if (
+                transcript.asr.adapter != expected_identity
+                or self.model_identity != expected_identity
+            ):
+                raise RuntimeError("WSL ASR returned foreign or changed adapter identity")
+            if self.admission_policy != expected_policy:
+                raise RuntimeError("WSL ASR context policy changed during inference")
             return transcript
 
 
 def create_omni_asr_producer(
-    runtime: str = "auto", *, distro: str | None = None, lora_adapter: Path | None = None
+    runtime: str = "auto",
+    *,
+    distro: str | None = None,
+    lora_adapter: Path | None = None,
+    fused_checkpoint: Path | None = None,
 ) -> CanonicalTranscriptProducer:
     """Choose direct Linux inference or the WSL bridge without hiding that decision."""
     if runtime not in {"auto", "local", "wsl"}:
         raise ValueError("OmniASR runtime must be one of: auto, local, wsl")
+    if lora_adapter is not None and fused_checkpoint is not None:
+        raise ValueError(
+            "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, not both"
+        )
     if lora_adapter is not None:
-        # Fingerprinting reads both files, so a path that is not an adapter bundle fails here —
+        # Fingerprinting includes all three inputs, so an incomplete bundle fails here —
         # before Stage 0's regions are cut — rather than 1,547 s later inside WSL.
         adapter_fingerprint(Path(lora_adapter))
+    if fused_checkpoint is not None:
+        # Same early refusal for a missing or non-allowlisted .pt (D-331).
+        fused_checkpoint_asset(Path(fused_checkpoint))
     use_wsl = runtime == "wsl" or (runtime == "auto" and os.name == "nt")
+    if fused_checkpoint is not None:
+        return (
+            WslOmniAsrProducer(
+                distro=distro, fused_checkpoint=fused_checkpoint, context_grouping=True
+            )
+            if use_wsl
+            else OmniAsrProducer(fused_checkpoint=fused_checkpoint, context_grouping=True)
+        )
     return (
-        WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter)
+        WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter, context_grouping=True)
         if use_wsl
-        else OmniAsrProducer(lora_adapter=lora_adapter)
+        else OmniAsrProducer(lora_adapter=lora_adapter, context_grouping=True)
     )
 
 

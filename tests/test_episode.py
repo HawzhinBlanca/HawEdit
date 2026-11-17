@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from hawedit.captions import find_ffmpeg
-from hawedit.clip import DiscoveryPath, Sv6d
+from hawedit.clip import DiscoveryPath, Qc, Sv6d
 from hawedit.discovery import Candidate, MergedCandidate
 from hawedit.episode import (
     EpisodeClipSummary,
@@ -370,6 +370,14 @@ def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path
         max_clips=2,
         min_separation_ms=100,
         episode_id="ep-custom-123",
+        qc=Qc(
+            auto_pass=True,
+            flags=(),
+            human_reviewed=True,
+            reviewed_by="unsigned-test-claim",
+            reviewed_at="2026-10-03T00:00:00Z",
+            reviewed_sha256="1" * 64,
+        ),
     )
 
     # Preprocessing (Stage 0 ingest) ran once
@@ -394,20 +402,16 @@ def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path
     # Check honest item records
     assert len(manifest.items) == 3
     rec_by_id = {it.candidate_id: it for it in manifest.items}
-    assert rec_by_id["c1"].status in (
-        EpisodeItemStatus.PUBLISHED.value,
-        EpisodeItemStatus.PENDING_REVIEW.value,
-    )
-    assert rec_by_id["c2"].status in (
-        EpisodeItemStatus.PUBLISHED.value,
-        EpisodeItemStatus.PENDING_REVIEW.value,
-    )
+    assert rec_by_id["c1"].status == EpisodeItemStatus.PENDING_REVIEW.value
+    assert rec_by_id["c2"].status == EpisodeItemStatus.PENDING_REVIEW.value
     assert rec_by_id["c3"].status == EpisodeItemStatus.REJECTED.value
     assert rec_by_id["c3"].rejection_reason is not None
 
-    # Disk deliverables check: all 7 required files exist for both clips
+    # Private candidates retain every measured sidecar and source-derived poster.
     for clip_summary in manifest.clips:
         clip_dir = work_dir / clip_summary.delivery_dir
+        assert clip_summary.delivery_dir == f"review/{clip_summary.clip_id}"
+        assert not (work_dir / clip_summary.clip_id).exists()
         assert clip_dir.is_dir()
         for suffix in (
             ".mp4",
@@ -416,6 +420,7 @@ def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path
             ".edl",
             ".json",
             ".measured.json",
+            ".edit_plan.json",
             ".cover.png",
         ):
             target = clip_dir / f"{clip_summary.clip_id}{suffix}"

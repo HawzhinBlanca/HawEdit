@@ -62,15 +62,15 @@ re-timed to the revised span's `clip_in_ms`, are the correct captions for the re
 from before this field existed have `selected_sentences == ()`; `render_boundary_revision`
 refuses those explicitly rather than rendering silent, empty captions.
 
-**The clip's editorial/output/QC blocks are reused from the original — reused, not re-derived.**
+**The clip's editorial/output blocks are reused; changed footage requires fresh review.**
 `Clip.assert_renderable` (called inside `render_clip`) requires an editorial block (Stage 4's
 judgment) and an output block (title/description/hashtags/crop target); a boundary revision
 changes neither of those, only the cut points, so `Clip.from_dict(report["clip"])` plus
 `dataclasses.replace` for the new `in_ms`/`out_ms`/`boundary` is correct rather than a
-convenience. QC is the one field this module supplies fresh — `Qc(auto_pass=False,
-human_reviewed=True)` — because the interactive approval `commit_boundary_revision` already
-required *is* the human review for this specific change; reusing the original clip's QC record
-would attribute this decision to whoever reviewed a different span.
+convenience. D-322 corrects the earlier equation of proposal approval with rendered-byte
+review: revisions render privately with `Qc(auto_pass=False, human_reviewed=False)` from the
+start. The original QC marker determines whether prior review was invalidated; it does not
+verify a detached signature. Reviewing the final changed bytes is a separate requirement.
 
 **Still a real, named simplification: revisions always render with a static centre crop.**
 Reproducing face-tracked reframing over a boundary that may now cover different footage would
@@ -106,10 +106,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -327,6 +329,56 @@ def interactive_confirm(prompt: str) -> bool:
 _interactive_confirm = interactive_confirm
 
 
+@contextmanager
+def _staged_revision_text(path: Path, text: str) -> Iterator[Path]:
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}-", suffix=".tmp", dir=path.parent)
+    staging = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        yield staging
+    finally:
+        staging.unlink(missing_ok=True)
+
+
+def _publish_revision_text(path: Path, text: str) -> None:
+    with _staged_revision_text(path, text) as staging:
+        os.link(staging, path)
+
+
+def _refuse_existing_revision_artifacts(paths: tuple[Path, ...]) -> None:
+    for path in paths:
+        if os.path.lexists(path):
+            raise RevisionRejected(
+                f"Existing revision artifact {path} requires reconciliation; "
+                "original bytes are preserved. Use a new revision identity."
+            )
+
+
+def _claim_revision_render(revision_path: Path, revision_raw: bytes) -> None:
+    if revision_path.read_bytes() != revision_raw:
+        raise RevisionRejected("Revision changed before render claim; reconciliation required")
+    claim = revision_path.parent / f".{revision_path.stem}.render-claim"
+    try:
+        _publish_revision_text(
+            claim,
+            json.dumps(
+                {
+                    "kind": "private-revision-render-claim-v1",
+                    "revision_id": revision_path.stem,
+                    "revision_sha256": hashlib.sha256(revision_raw).hexdigest(),
+                },
+                sort_keys=True,
+            ),
+        )
+    except FileExistsError as exc:
+        raise RevisionRejected(
+            "Existing revision render claim requires reconciliation; replay refused"
+        ) from exc
+
+
 def commit_boundary_revision(
     work_dir: Path,
     proposal: BoundaryRevisionProposal,
@@ -346,8 +398,8 @@ def commit_boundary_revision(
         revision_id: names the output file (`work_dir/revisions/{revision_id}.json`) and is the
             caller's to choose — explicit rather than a timestamp or random id generated here,
             so a caller can pick a stable name and a test can assert on it without relying on
-            wall-clock time. Two commits under the same id and directory overwrite; that is the
-            caller's idempotency key to manage, the same way `durable_workflow.py`'s `run_id` is.
+            wall-clock time. An existing revision identity is immutable: another commit under
+            that id refuses, including after a failed or completed render (D-321).
         approved_by: who is approving. Required and must be non-blank — `gemini.py`'s
             `Governance.confirmed_by` is the same rule for the same reason: an unattributed
             approval is not a recorded one.
@@ -424,7 +476,10 @@ def commit_boundary_revision(
     revisions_dir = work_dir / "revisions"
     revisions_dir.mkdir(parents=True, exist_ok=True)
     path = revisions_dir / f"{revision_id}.json"
-    write_text_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
+    try:
+        _publish_revision_text(path, json.dumps(record, ensure_ascii=False, indent=2))
+    except FileExistsError as exc:
+        raise RevisionRejected(f"Immutable revision {revision_id!r} already exists") from exc
     return path
 
 
@@ -451,14 +506,16 @@ def render_boundary_revision(
     SRT and EDL all written), `"rendered_without_delivery_sidecars"` if the render succeeded but
     the EDL could not be built (`build_edl` refuses a non-integer NTSC frame rate rather than
     writing timecode that drifts — the same refusal `pipeline.py`'s own delivery step makes),
-    or `"render_failed"` if rendering itself failed — in which case no partial MP4/ASS are left
-    behind. Returns the updated record.
+    or `"render_failed"` if rendering itself failed. Only owned staging is removed;
+    competing or partial final artifacts remain for explicit reconciliation (D-321).
+    Returns the updated record.
 
     Raises:
         FileNotFoundError: no such revision record, or no `report.json`.
         ValueError: the revision's status is not `"approved_pending_render"` (already rendered,
             or was never approved), the run has no clip, or the run predates `selected_sentences`
             being persisted (D-A7) and so cannot be re-rendered from `report.json` alone.
+        RevisionRejected: existing revision artifacts need reconciliation, not replacement.
         RenderError: rendering failed — no ffmpeg, no usable encoder, or the encode itself
             failed. The revision record is updated to `"render_failed"` before this propagates.
         IngestError: the source could not be probed for its frame dimensions.
@@ -467,7 +524,8 @@ def render_boundary_revision(
     revision_path = work_dir / "revisions" / f"{revision_id}.json"
     if not revision_path.is_file():
         raise FileNotFoundError(f"no revision record at {revision_path}")
-    revision: dict[str, Any] = json.loads(revision_path.read_text(encoding="utf-8"))
+    revision_raw = revision_path.read_bytes()
+    revision: dict[str, Any] = json.loads(revision_raw)
     # `None` covers a record written before D-A12 added `"kind"` — old boundary revisions have
     # no such field and remain renderable here, which a caption revision never predates.
     if revision.get("kind") not in (None, "boundary"):
@@ -516,22 +574,14 @@ def render_boundary_revision(
     # gets its own check rather than trusting a status string.
     assert_boundary_invariant(new_boundary)
 
-    approver = str(revision.get("approved_by") or "human_approver")
-    now_iso = datetime.now(UTC).isoformat()
+    prior_reviewed = original_clip.qc is not None and original_clip.qc.human_reviewed
     revised_clip = replace(
         original_clip,
         clip_id=f"{original_clip.clip_id}-{revision_id}",
         in_ms=new_boundary.final_in_ms,
         out_ms=new_boundary.final_out_ms,
         boundary=new_boundary,
-        qc=Qc(
-            auto_pass=False,
-            flags=(),
-            human_reviewed=True,
-            reviewed_by=approver,
-            reviewed_at=now_iso,
-            reviewed_sha256="0" * 64,
-        ),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
     )
 
     revisions_dir = work_dir / "revisions"
@@ -539,38 +589,37 @@ def render_boundary_revision(
     render_path = revisions_dir / f"{revision_id}.mp4"
     srt_path = revisions_dir / f"{revision_id}.srt"
     edl_path = revisions_dir / f"{revision_id}.edl"
+    _refuse_existing_revision_artifacts((ass_path, render_path, srt_path, edl_path))
+    _claim_revision_render(revision_path, revision_raw)
     clip_duration_ms = revised_clip.out_ms - revised_clip.in_ms
 
-    write_text_atomic(
-        ass_path,
-        build_ass(
-            selected,
-            style=CaptionStyle.WORD_HIGHLIGHT,
-            clip_in_ms=revised_clip.in_ms,
-            clip_duration_ms=clip_duration_ms,
-        ),
+    ass_text = build_ass(
+        selected,
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        clip_in_ms=revised_clip.in_ms,
+        clip_duration_ms=clip_duration_ms,
     )
-    width, height = proxy_dimensions(source, ffmpeg)
     try:
-        verify_caption_integrity(
-            ass_path,
-            expected_text=" ".join(s.text for s in selected),
-            fonts_dir=FONTS_DIR,
-        )
-        render_clip(
-            revised_clip,
-            source,
-            ass_path,
-            FONTS_DIR,
-            render_path,
-            source_width=width,
-            source_height=height,
-            ffmpeg=ffmpeg,
-            for_review=True,
-        )
-    except (IngestError, RenderError, ValueError, CaptionVerificationError) as exc:
-        ass_path.unlink(missing_ok=True)
-        render_path.unlink(missing_ok=True)
+        with _staged_revision_text(ass_path, ass_text) as staging:
+            width, height = proxy_dimensions(source, ffmpeg)
+            verify_caption_integrity(
+                staging,
+                expected_text=" ".join(s.text for s in selected),
+                fonts_dir=FONTS_DIR,
+            )
+            render_clip(
+                revised_clip,
+                source,
+                staging,
+                FONTS_DIR,
+                render_path,
+                source_width=width,
+                source_height=height,
+                ffmpeg=ffmpeg,
+                for_review=True,
+            )
+            os.link(staging, ass_path)
+    except (IngestError, RenderError, ValueError, CaptionVerificationError, OSError) as exc:
         revision["status"] = "render_failed"
         revision["render_error"] = str(exc)
         write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
@@ -582,11 +631,6 @@ def render_boundary_revision(
     except OSError:
         pass
 
-    prior_reviewed = revised_clip.qc is not None and revised_clip.qc.human_reviewed
-    revised_clip = replace(
-        revised_clip,
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
-    )
     revision["requires_review"] = True
     revision["prior_qc_invalidated"] = prior_reviewed
 
@@ -602,12 +646,12 @@ def render_boundary_revision(
             fps=frame_rate(source, ffmpeg),
             title=f"{report['media_id']} {revised_clip.clip_id}",
         )
-        write_text_atomic(srt_path, srt)
-        write_text_atomic(edl_path, edl)
+        _publish_revision_text(srt_path, srt)
+        _publish_revision_text(edl_path, edl)
         revision["srt_path"] = str(srt_path)
         revision["edl_path"] = str(edl_path)
         revision["status"] = "rendered"
-    except (DeliveryError, UndeliverableOrder) as exc:
+    except (DeliveryError, UndeliverableOrder, OSError) as exc:
         # The MP4/ASS above are real successes and stay — only the two sidecars are missing, and
         # the status says exactly that rather than either silently dropping them from the
         # record or discarding a render that worked. Same D-072 reasoning `pipeline.py`'s own
@@ -816,7 +860,10 @@ def commit_caption_revision(
     revisions_dir = work_dir / "revisions"
     revisions_dir.mkdir(parents=True, exist_ok=True)
     path = revisions_dir / f"{revision_id}.json"
-    write_text_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
+    try:
+        _publish_revision_text(path, json.dumps(record, ensure_ascii=False, indent=2))
+    except FileExistsError as exc:
+        raise RevisionRejected(f"Immutable revision {revision_id!r} already exists") from exc
     return path
 
 
@@ -836,6 +883,7 @@ def render_caption_revision(
         ValueError: the revision is not a caption revision, its status is not
             `"approved_pending_render"`, the run has no clip or output block, or the run
             predates `selected_sentences` (D-A7).
+        RevisionRejected: existing artifacts require reconciliation or a new identity.
         RenderError: rendering failed. The revision record is updated to `"render_failed"`
             before this propagates.
         IngestError: the source could not be probed for its frame dimensions.
@@ -844,7 +892,8 @@ def render_caption_revision(
     revision_path = work_dir / "revisions" / f"{revision_id}.json"
     if not revision_path.is_file():
         raise FileNotFoundError(f"no revision record at {revision_path}")
-    revision: dict[str, Any] = json.loads(revision_path.read_text(encoding="utf-8"))
+    revision_raw = revision_path.read_bytes()
+    revision: dict[str, Any] = json.loads(revision_raw)
     if revision.get("kind") != "caption":
         raise ValueError(
             f"revision {revision_id!r} has kind {revision.get('kind')!r}, not a caption "
@@ -880,20 +929,12 @@ def render_caption_revision(
     selected = tuple(_sentence_from_dict(s) for s in selected_data)
 
     style = CaptionStyle(revision["proposed_caption_style"])
-    approver = str(revision.get("approved_by") or "human_approver")
-    now_iso = datetime.now(UTC).isoformat()
+    prior_reviewed = original_clip.qc is not None and original_clip.qc.human_reviewed
     revised_clip = replace(
         original_clip,
         clip_id=f"{original_clip.clip_id}-{revision_id}",
         output=replace(original_clip.output, caption_style=style.value),
-        qc=Qc(
-            auto_pass=False,
-            flags=(),
-            human_reviewed=True,
-            reviewed_by=approver,
-            reviewed_at=now_iso,
-            reviewed_sha256="0" * 64,
-        ),
+        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
     )
 
     revisions_dir = work_dir / "revisions"
@@ -901,35 +942,34 @@ def render_caption_revision(
     render_path = revisions_dir / f"{revision_id}.mp4"
     srt_path = revisions_dir / f"{revision_id}.srt"
     edl_path = revisions_dir / f"{revision_id}.edl"
+    _refuse_existing_revision_artifacts((ass_path, render_path, srt_path, edl_path))
+    _claim_revision_render(revision_path, revision_raw)
     clip_duration_ms = revised_clip.out_ms - revised_clip.in_ms
 
-    write_text_atomic(
-        ass_path,
-        build_ass(
-            selected, style=style, clip_in_ms=revised_clip.in_ms, clip_duration_ms=clip_duration_ms
-        ),
+    ass_text = build_ass(
+        selected, style=style, clip_in_ms=revised_clip.in_ms, clip_duration_ms=clip_duration_ms
     )
-    width, height = proxy_dimensions(source, ffmpeg)
     try:
-        verify_caption_integrity(
-            ass_path,
-            expected_text=" ".join(s.text for s in selected),
-            fonts_dir=FONTS_DIR,
-        )
-        render_clip(
-            revised_clip,
-            source,
-            ass_path,
-            FONTS_DIR,
-            render_path,
-            source_width=width,
-            source_height=height,
-            ffmpeg=ffmpeg,
-            for_review=True,
-        )
-    except (IngestError, RenderError, ValueError, CaptionVerificationError) as exc:
-        ass_path.unlink(missing_ok=True)
-        render_path.unlink(missing_ok=True)
+        with _staged_revision_text(ass_path, ass_text) as staging:
+            width, height = proxy_dimensions(source, ffmpeg)
+            verify_caption_integrity(
+                staging,
+                expected_text=" ".join(s.text for s in selected),
+                fonts_dir=FONTS_DIR,
+            )
+            render_clip(
+                revised_clip,
+                source,
+                staging,
+                FONTS_DIR,
+                render_path,
+                source_width=width,
+                source_height=height,
+                ffmpeg=ffmpeg,
+                for_review=True,
+            )
+            os.link(staging, ass_path)
+    except (IngestError, RenderError, ValueError, CaptionVerificationError, OSError) as exc:
         revision["status"] = "render_failed"
         revision["render_error"] = str(exc)
         write_text_atomic(revision_path, json.dumps(revision, ensure_ascii=False, indent=2))
@@ -941,11 +981,6 @@ def render_caption_revision(
     except OSError:
         pass
 
-    prior_reviewed = revised_clip.qc is not None and revised_clip.qc.human_reviewed
-    revised_clip = replace(
-        revised_clip,
-        qc=Qc(auto_pass=False, flags=(), human_reviewed=False),
-    )
     revision["requires_review"] = True
     revision["prior_qc_invalidated"] = prior_reviewed
 
@@ -961,12 +996,12 @@ def render_caption_revision(
             fps=frame_rate(source, ffmpeg),
             title=f"{report['media_id']} {revised_clip.clip_id}",
         )
-        write_text_atomic(srt_path, srt)
-        write_text_atomic(edl_path, edl)
+        _publish_revision_text(srt_path, srt)
+        _publish_revision_text(edl_path, edl)
         revision["srt_path"] = str(srt_path)
         revision["edl_path"] = str(edl_path)
         revision["status"] = "rendered"
-    except (DeliveryError, UndeliverableOrder) as exc:
+    except (DeliveryError, UndeliverableOrder, OSError) as exc:
         revision["status"] = "rendered_without_delivery_sidecars"
         revision["delivery_error"] = str(exc)
 
@@ -1252,6 +1287,18 @@ def propose_render(work_dir: Path, revision_id: str) -> RenderProposal:
             f"revision has status {revision.get('status')!r}, not 'approved_pending_render' — "
             f"only an approved, not-yet-rendered revision can be rendered.",
         )
+    try:
+        _refuse_existing_revision_artifacts(
+            (
+                *tuple(
+                    revision_path.with_suffix(f".{suffix}")
+                    for suffix in ("ass", "mp4", "srt", "edl")
+                ),
+                revision_path.parent / f".{revision_id}.render-claim",
+            )
+        )
+    except RevisionRejected as exc:
+        return RenderProposal(str(work_dir), revision_id, kind, False, str(exc))
     report_path = work_dir / "report.json"
     if not report_path.is_file():
         return RenderProposal(

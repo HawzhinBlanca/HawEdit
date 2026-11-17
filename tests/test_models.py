@@ -892,11 +892,84 @@ def test_gated_checkpoint_with_redacted_digests_is_refused_not_approximated(
     tmp_path: Path,
 ) -> None:
     entry = REGISTRY["pyannote/speaker-diarization-community-1"]
+    trusted = ModelStore()
+    metadata = tmp_path / "metadata"
+    metadata.mkdir()
+    for filename in ("sources.json", "revisions.json"):
+        (metadata / filename).write_bytes((trusted.metadata_root / filename).read_bytes())
+    historical = json.loads((trusted.metadata_root / "integrity.json").read_text("utf-8"))
+    row = historical["models"][entry.model_id]
+    row["status"] = "blocked"
+    row["reason"] = (
+        "The gated Hub API redacts all five LFS SHA-256 values without accepted repository "
+        "access; refusing to invent or trust those digests."
+    )
+    for relative in (
+        "diarization.gif",
+        "embedding/pytorch_model.bin",
+        "plda/plda.npz",
+        "plda/xvec_transform.npz",
+        "segmentation/pytorch_model.bin",
+    ):
+        row["files"][relative] = {
+            "hub_digest_redacted": True,
+            "size_bytes": row["files"][relative]["size_bytes"],
+        }
+    (metadata / "integrity.json").write_text(json.dumps(historical), encoding="utf-8")
     checkpoint = tmp_path / entry.model_id.replace("/", "__")
     checkpoint.mkdir()
     (checkpoint / "placeholder").write_text("not trusted", encoding="utf-8")
     with pytest.raises(CheckpointIntegrityError, match="verification is blocked.*redacts"):
-        ModelStore().verify_checkpoint(entry.model_id, checkpoint)
+        ModelStore(metadata_root=metadata).verify_checkpoint(entry.model_id, checkpoint)
+
+
+def test_community1_manifest_matches_authenticated_pinned_byte_identities() -> None:
+    model_id = "pyannote/speaker-diarization-community-1"
+    store = ModelStore()
+    row = store.integrity()[model_id]
+    assert isinstance(row, dict)
+    assert row["status"] == "verified"
+    assert "reason" not in row
+    assert row["repository"] == model_id
+    revision = "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee"
+    assert row["revision"] == revision == store.revision_for(model_id)
+    measured = {
+        ".gitattributes": ("git-sha1", "7c39301dc01fe65e09b2432a27a18b4ee3e74a37", 1571),
+        "README.md": ("git-sha1", "8356d6634d7b1074581dd36e2225887ec809326e", 9978),
+        "config.yaml": ("git-sha1", "4022db43960736338378fdb6b5a85cfdae198910", 444),
+        "diarization.gif": (
+            "sha256",
+            "0d925ad38995d89009260e493b0ae2e684c3e1397f495265ed841c45c4f73a35",
+            861445,
+        ),
+        "embedding/README.md": ("git-sha1", "d71f943e00016652680bef1e6c49fbc842e0d4c4", 938),
+        "embedding/pytorch_model.bin": (
+            "sha256",
+            "6f10ff60898a1d185fa22e1d11e0bfa8a92efec811f11bca48cb8cafebefd929",
+            26646242,
+        ),
+        "plda/README.md": ("git-sha1", "5c01ad2e673203fe32a82d7a140eb817db9930b7", 220),
+        "plda/plda.npz": (
+            "sha256",
+            "9b77bcd840692710dd3496f62ecfeed8d8e5f002fd991b785079b244eab7d255",
+            133852,
+        ),
+        "plda/xvec_transform.npz": (
+            "sha256",
+            "325f1ce8e48f7e55e9c8aa47e05d2766b7c48c4b25b8de8dd751e7a4cc5fbe8f",
+            134376,
+        ),
+        "segmentation/pytorch_model.bin": (
+            "sha256",
+            "7ad24338d844fb95985486eb1a464e32d229f6d7a03c9abe60f978bacf3f816e",
+            5906507,
+        ),
+    }
+    assert row["files"] == {
+        path: {"algorithm": algorithm, "digest": digest, "size_bytes": size}
+        for path, (algorithm, digest, size) in measured.items()
+    }
+    store.assert_checkpoint_provisionable(model_id, model_id, revision)
 
 
 def test_installed_integrity_manifest_location_is_stable() -> None:

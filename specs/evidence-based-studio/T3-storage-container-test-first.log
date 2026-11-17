@@ -1,0 +1,26 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______________ test_studio_upload_refuses_mismatched_container _______________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7037/test_studio_upload_refuses_mis0')
+
+    def test_studio_upload_refuses_mismatched_container(tmp_path: Path) -> None:
+        root = create_private_test_root(tmp_path)
+        transport_stream = tmp_path / "actual-mpegts.ts"
+        subprocess.run(
+            [str(find_ffmpeg()), "-v", "error", "-nostdin", "-i", str(MEDIA),
+             "-c", "copy", "-f", "mpegts", str(transport_stream)],
+            capture_output=True, check=True, timeout=30,
+        )
+        data = transport_stream.read_bytes()
+        assert data
+        store = UploadStore(root)
+        ticket = store.begin("not-an-mp4.mp4", len(data))
+>       with pytest.raises(UploadError, match="container|media"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE UploadError
+
+tests\test_studio_storage.py:223: Failed
+=========================== short test summary info ===========================
+FAILED tests/test_studio_storage.py::test_studio_upload_refuses_mismatched_container
+1 failed in 1.87s

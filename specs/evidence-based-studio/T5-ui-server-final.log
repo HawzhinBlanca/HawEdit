@@ -1,0 +1,33 @@
+AUDIT_STORAGE=C:\Users\Wareen\AppData\Local\Temp\hawedit-ui-after-rjohrten
+SOURCE_PACKAGE_SHA256=66a377dabc4c08b265994e85ab18d66d8a89f90553e7a90cdec0f19ff8ebbd39
+HawEdit Web Dashboard running at http://127.0.0.1:8082/
+127.0.0.1 - - [02/Oct/2026 21:59:57] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:59:57] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:59:57] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:59:57] "GET /api/history HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:59:57] "GET /api/jobs/fixture-review HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:59:57] "GET /api/uploads/bf624fcfc03b479dbe6e630b7f9e12e2 HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:00:05] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:00:05] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:00:05] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:00:05] "GET /api/history HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:00:05] "GET /api/jobs/fixture-review HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:00:05] "GET /api/uploads/bf624fcfc03b479dbe6e630b7f9e12e2 HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:02:35] "HEAD /api/jobs/fixture-review/clips/second/preview HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:02:35] "GET /api/jobs/fixture-review/clips/second/preview HTTP/1.1" 206 -
+127.0.0.1 - - [02/Oct/2026 22:02:48] "GET /api/jobs/fixture-review/clips/second/preview HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:03:26] "HEAD /api/jobs/fixture-review/clips/first/preview HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:03:26] "GET /api/jobs/fixture-review/clips/first/preview HTTP/1.1" 206 -
+127.0.0.1 - - [02/Oct/2026 22:03:26] "HEAD /api/jobs/fixture-review/clips/second/preview HTTP/1.1" 409 -
+127.0.0.1 - - [02/Oct/2026 22:03:42] "HEAD /api/jobs/fixture-review/clips/second/preview HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:03:42] "GET /api/jobs/fixture-review/clips/second/preview HTTP/1.1" 206 -
+127.0.0.1 - - [02/Oct/2026 22:03:42] "GET /api/jobs/fixture-interrupted HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:04:19] "POST /api/uploads HTTP/1.1" 400 -
+127.0.0.1 - - [02/Oct/2026 22:05:36] "POST /api/uploads HTTP/1.1" 201 -
+127.0.0.1 - - [02/Oct/2026 22:05:36] "PUT /api/uploads/c7bad4be30d64db597508fc07654863f HTTP/1.1" 201 -
+127.0.0.1 - - [02/Oct/2026 22:09:38] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:09:38] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:09:38] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:09:38] "GET /api/history HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:09:38] "GET /api/jobs/fixture-interrupted HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:09:38] "GET /api/uploads/c7bad4be30d64db597508fc07654863f HTTP/1.1" 200 -

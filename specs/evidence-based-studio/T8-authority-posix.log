@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/specs/evidence-based-studio/authority_posix_probe.py", line 13, in <module>
+    from tests.test_acceptance_authority import _visual
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/tests/test_acceptance_authority.py", line 8, in <module>
+    import pytest
+ModuleNotFoundError: No module named 'pytest'

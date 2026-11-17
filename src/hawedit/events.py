@@ -27,6 +27,10 @@ at 1, and never repeats.
 events with a plain list; a durable workflow passes a function that writes a row. Neither
 needed a class here, so there is not one.
 
+**A failed write fences the same log.** Sink failure raises a distinct persistence error,
+not a media-ingest error. A recovered file or database does not prove whether the failed
+write committed: this log cannot retry or continue before separate reconciliation.
+
 **The JSONL ledger format lives here too, both halves.** `JsonlEventSink` writes it and
 `read_events` reads it back. They were originally in `durable_workflow.py`, which imports
 `dbos` at module level — so anything wanting to *read* a run's event ledger had to import a
@@ -50,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "EventPersistenceError",
     "EventSink",
     "JsonlEventSink",
     "RunEvent",
@@ -163,6 +168,10 @@ class RunEvent:
 EventSink = Callable[[RunEvent], None]
 
 
+class EventPersistenceError(RuntimeError):
+    """An uncertain event write requires stopping and reconciling the attempt."""
+
+
 def discard(event: RunEvent) -> None:
     """The default sink: a run nobody is watching costs one call per stage."""
 
@@ -191,6 +200,18 @@ class RunEventLog:
         self._sink = sink
         self._clock = clock
         self._sequence = 0
+        self._failure: BaseException | None = None
+
+    def require_persistence(self) -> None:
+        """Refuse admission after any failed write; this does not verify the sink.
+
+        Protected callers must additionally adopt this fence before effects and
+        result acceptance. It is neither a reset nor billing reconciliation.
+        """
+        if self._failure is not None:
+            raise EventPersistenceError(
+                "Run event persistence is uncertain; stop and reconcile this attempt"
+            ) from self._failure
 
     def started(self, stage: str) -> RunEvent:
         return self._emit(stage, RunState.STARTED)
@@ -217,10 +238,10 @@ class RunEventLog:
         candidate_id: str | None = None,
     ) -> RunEvent:
         """Report a billed foundation model call."""
-        self._sequence += 1
+        self.require_persistence()
         event = RunEvent(
             run_id=self.run_id,
-            sequence=self._sequence,
+            sequence=self._sequence + 1,
             at_ms=int(self._clock() * 1000),
             stage=stage,
             state=RunState.BILLED,
@@ -229,31 +250,39 @@ class RunEventLog:
             cost_usd_estimate=cost_usd_estimate,
             candidate_id=candidate_id or "",
         )
-        self._sink(event)
-        return event
+        return self._publish(event)
 
     def _emit(self, stage: str, state: RunState, reason: str = "") -> RunEvent:
-        self._sequence += 1
+        self.require_persistence()
         event = RunEvent(
             run_id=self.run_id,
-            sequence=self._sequence,
+            sequence=self._sequence + 1,
             at_ms=int(self._clock() * 1000),
             stage=stage,
             state=state,
             reason=reason,
         )
-        self._sink(event)
+        return self._publish(event)
+
+    def _publish(self, event: RunEvent) -> RunEvent:
+        self._sequence = event.sequence
+        try:
+            self._sink(event)
+        except BaseException as exc:
+            self._failure = exc
+            if not isinstance(exc, Exception):
+                raise
+            self.require_persistence()
         return event
 
 
 class JsonlEventSink:
     """Appends every `RunEvent` to one file, flushed immediately.
 
-    Flushed per line, not buffered, because the property this exists for is that a crash mid-
-    run leaves every event already emitted durably on disk — a buffered sink would lose exactly
-    the events a crash-recovery reader most needs, the ones nearest the crash. `read_events` is
-    the reader, and it tolerates a torn last line: a real crash can land mid-`write`, and the
-    line before it must still parse.
+    Flushed per line so another reader can observe emitted events while the run is in flight.
+    This legacy sink does not fsync and therefore does not promise power-loss durability or
+    protected attempt persistence. `read_events` tolerates a plausibly torn final JSON write,
+    but refuses complete corrupt records rather than hiding later progress.
     """
 
     def __init__(self, path: Path) -> None:
@@ -269,22 +298,39 @@ class JsonlEventSink:
 
 
 def read_events(path: Path) -> tuple[RunEvent, ...]:
-    """Read one run's event ledger back, tolerating a line a crash left half-written.
+    """Read valid records, tolerating only a plausibly incomplete final JSON write.
 
     Raises:
         FileNotFoundError: no run wrote to `path`.
+        ValueError: corrupt encoding or record; preserve the original for reconciliation.
     """
     events: list[RunEvent] = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                events.append(RunEvent.from_dict(json.loads(line)))
-            except (json.JSONDecodeError, KeyError, ValueError):
-                # A torn last line — a crash landed between the `write` and the newline it
-                # writes together with the payload. Every earlier line already parsed and is
-                # kept; this one is the record of exactly how far the run got, which the
-                # skip/complete stage records in `run.to_dict()` already say more reliably.
-                break
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                message = (
+                    f"Event ledger {path.name} has a corrupt record at line {number}; "
+                    "preserve it for reconciliation"
+                )
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    # No newline means the iterator reached the currently visible EOF.
+                    # Ambiguous syntax remains a refusal, not proof of a truncated write.
+                    incomplete = exc.msg.startswith("Unterminated string") or exc.pos >= len(
+                        line.rstrip()
+                    )
+                    if not line.endswith("\n") and incomplete:
+                        break
+                    raise ValueError(message) from exc
+                try:
+                    events.append(RunEvent.from_dict(payload))
+                except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError(message) from exc
+    except UnicodeError as exc:
+        raise ValueError(
+            f"Event ledger {path.name} has invalid UTF-8; preserve it for reconciliation"
+        ) from exc
     return tuple(events)

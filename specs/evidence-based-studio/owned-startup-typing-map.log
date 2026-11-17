@@ -1,0 +1,7 @@
+{"symbol": "StudioLease/__init__", "definitions": 1, "references": 0}
+{"symbol": "StudioLease/release", "definitions": 1, "references": 5}
+{"symbol": "_OwnedEngine/_begin", "definitions": 1, "references": 1}
+{"symbol": "_OwnedEngine/_commit", "definitions": 1, "references": 1}
+{"symbol": "_OwnedEngine/verify", "definitions": 1, "references": 2}
+{"symbol": "test_same_connection_refuses_custom_decoders_before_queries", "definitions": 1, "references": 0}
+{"symbol": "test_same_connection_inspection_preserves_vm_handler_and_connection_policy", "definitions": 1, "references": 0}

@@ -1,0 +1,113 @@
+..................FF...                                                  [100%]
+================================== FAILURES ===================================
+_________ test_studio_submission_deep_snapshot_is_contextual_refusal __________
+
+prepared = PreparedGeneration(source_id='0ed14f1ee82a45bb820b8e66dc2d3bfd', source_sha256='ed038e743a6b1ee167290741ceda926ac1077f...l_distro":null},"screener":"none"}', content_sha256='33557e6176c7ba355995b55100f7da119b0bf808b305c9a1ea8807a8a9f727f7')
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6986/test_studio_submission_deep_sn0')
+
+    def test_studio_submission_deep_snapshot_is_contextual_refusal(
+        prepared: PreparedGeneration, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "submissions.sqlite"
+        store = SubmissionStore(path)
+        job = store.reserve(prepared, BINDING, WORKER)
+        depth = 16384
+        raw = "[" * depth + "0" + "]" * depth
+        assert len(raw) < 128 * 1024
+        with pytest.raises(RecursionError):
+            json.loads(raw)
+        with sqlite3.connect(path) as connection:
+            connection.execute("UPDATE submissions SET snapshot_json=?", (raw,))
+        with pytest.raises(StudioStorageError, match="snapshot"):
+>           store.get(job.job_id)
+
+tests\test_studio_submissions.py:245: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\studio_submissions.py:307: in get
+    return self._get(connection, job_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\studio_submissions.py:242: in _get
+    return self._decode(row)
+           ^^^^^^^^^^^^^^^^^
+src\hawedit\studio_submissions.py:204: in _decode
+    snapshot = json.loads(raw)
+               ^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:338: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x000002562F929C10>
+s = '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[...]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]'
+idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+>           obj, end = self.scan_once(s, idx)
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E           RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:354: RecursionError
+_____ test_studio_submission_deep_preparation_refuses_before_reservation ______
+
+prepared = PreparedGeneration(source_id='9913d54b54e34eacb6dddb770c594bb2', source_sha256='ed038e743a6b1ee167290741ceda926ac1077f...l_distro":null},"screener":"none"}', content_sha256='b29ca0b38536f36f07e70653c3ae4fc6ef98d715c34a9e39824df7608a8bad21')
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6986/test_studio_submission_deep_pr0')
+
+    def test_studio_submission_deep_preparation_refuses_before_reservation(
+        prepared: PreparedGeneration, tmp_path: Path
+    ) -> None:
+        store = SubmissionStore(tmp_path / "submissions.sqlite")
+        depth = 16384
+        raw = "[" * depth + "0" + "]" * depth
+        assert len(raw) < 128 * 1024
+        with pytest.raises(RecursionError):
+            json.loads(raw)
+        with pytest.raises(ValueError, match="configuration"):
+>           store.reserve(replace(prepared, configuration_json=raw), BINDING, WORKER)
+
+tests\test_studio_submissions.py:258: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\studio_submissions.py:263: in reserve
+    "configuration": json.loads(prepared.configuration_json),
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:338: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x000002562F929C10>
+s = '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[...]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]'
+idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+>           obj, end = self.scan_once(s, idx)
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E           RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:354: RecursionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_submissions.py::test_studio_submission_deep_snapshot_is_contextual_refusal
+FAILED tests/test_studio_submissions.py::test_studio_submission_deep_preparation_refuses_before_reservation

@@ -1,0 +1,44 @@
+..............F.......F............................................      [100%]
+================================== FAILURES ===================================
+___________________ test_the_module_map_covers_every_module ___________________
+
+    def test_the_module_map_covers_every_module() -> None:
+        mapped = set(re.findall(r"^\| `(\w+\.py)` \|", README, re.MULTILINE))
+        on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
+>       assert on_disk <= mapped, f"modules absent from the README map: {sorted(on_disk - mapped)}"
+E       AssertionError: modules absent from the README map: ['candidate_review.py']
+E       assert {'agent.py', ...mbly.py', ...} <= {'agent.py', ...mbly.py', ...}
+E         
+E         Extra items in the left set:
+E         'candidate_review.py'
+
+tests\test_claims.py:505: AssertionError
+__________________ test_the_ledger_accounts_for_every_module __________________
+
+    def test_the_ledger_accounts_for_every_module() -> None:
+        """A module named only in prose, or not at all, is a module with no recorded status.
+    
+        Deliberately reads the *evidence* cell of a row whose *status* cell is a legend mark, not
+        the file as a whole: a mention in a floating amendment below the table is exactly the
+        failure this catches, because it leaves the module out of the published tally.
+        """
+        claimed: set[str] = set()
+        for cells in _ledger_rows():
+            claimed |= set(re.findall(r"(\w+\.py)", " ".join(cells[3:])))
+        on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
+>       assert on_disk <= claimed, (
+            f"modules with no status in any PROGRESS.md ledger row: {sorted(on_disk - claimed)}. "
+            "Add a row, or name the module in an existing row's evidence cell � a description in "
+            "prose after the table does not put it in the DONE/PARTIAL tally."
+        )
+E       AssertionError: modules with no status in any PROGRESS.md ledger row: ['candidate_review.py']. Add a row, or name the module in an existing row's evidence cell � a description in prose after the table does not put it in the DONE/PARTIAL tally.
+E       assert {'agent.py', ...mbly.py', ...} <= {'__init__.py...rker.py', ...}
+E         
+E         Extra items in the left set:
+E         'candidate_review.py'
+
+tests\test_claims.py:741: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_claims.py::test_the_module_map_covers_every_module - Assert...
+FAILED tests/test_claims.py::test_the_ledger_accounts_for_every_module - Asse...
+2 failed, 65 passed in 11.61s

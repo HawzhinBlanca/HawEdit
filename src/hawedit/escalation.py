@@ -114,7 +114,11 @@ def scores_from_transcript(transcript: RawTranscript) -> tuple[SegmentScore, ...
             ctc_text=scored.ctc_text,
             duration_s=(scored.end_ms - scored.start_ms) / 1000.0,
         )
-        for scored in transcript.segment_confidence
+        for scored in (
+            tuple(origin.draft for origin in transcript.segment_origins)
+            if transcript.segment_origins is not None
+            else transcript.segment_confidence
+        )
     )
 
 

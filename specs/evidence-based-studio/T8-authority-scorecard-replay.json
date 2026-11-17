@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "status": "synthetic-counterexample-not-evaluation",
+  "python": "3.12.10",
+  "source_package_sha256": "68e131df5008b8d5938e4f7915e2c4475ccd2b855eaa01e49e0cfb3390751bea",
+  "unsupported_claim_refused": true,
+  "refusal_reason": "Refused leadership claim '10/10': unverified descriptive metrics, supplied confidence bounds and sign-off names do not authenticate independent evidence or satisfy the frozen acceptance protocol.",
+  "first_pass_rate": 0.8,
+  "first_pass_ci_lower": 0.7391448134346212,
+  "first_pass_ci_upper": 0.8495479907390189,
+  "accounting_property_reports_release_eligible": false,
+  "synthetic_visual_relevance": 0.2,
+  "total_episodes": 20,
+  "total_proposed": 200,
+  "malformed_provenance": true,
+  "signatures_or_human_review": false,
+  "provider_calls": 0,
+  "limitations": [
+    "diagnostic only",
+    "not a 10/10 verdict",
+    "no real holdout or CI acceptance"
+  ]
+}

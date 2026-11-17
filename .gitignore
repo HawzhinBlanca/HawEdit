@@ -49,3 +49,5 @@ models/*
 /scratch/
 /demos/**
 !/demos/hand-cut/README.md
+# Preserve this oversized generated failure trace locally; its identity is in the commit review.
+/specs/evidence-based-studio/T3-billing-schema-red.log

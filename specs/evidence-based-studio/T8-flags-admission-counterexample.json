@@ -1,0 +1,67 @@
+{
+  "status": "synthetic-unaccepted-admission-defect",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "d527027d5b06671e20d967d4bff1bc4c1893f2d8e3cc3e79145b6c093bdff874",
+  "python": "3.12.10",
+  "independent_human_evidence_supplied": false,
+  "scoped": {
+    "acceptance_status": "accepted",
+    "ci_verified": true,
+    "commit_sha": "not-a-sha",
+    "deficiencies": [],
+    "evidence_intact": true,
+    "gate_verified": true,
+    "human_review_verified": true,
+    "is_sample_sufficient": true,
+    "scorecard": {
+      "accepted_count": 0,
+      "episodes_evaluated": 20,
+      "episodes_with_no_clips": 20,
+      "first_pass_publishable_rate": 0.0,
+      "margin_of_error": 0.0,
+      "refusal_count": 200,
+      "refusal_rate": 1.0,
+      "total_proposed_clips": 200
+    }
+  },
+  "sustained": {
+    "deficiencies": [],
+    "fresh_holdout_scorecard": {
+      "accepted_count": 0,
+      "episodes_evaluated": 20,
+      "episodes_with_no_clips": 20,
+      "first_pass_publishable_rate": 0.0,
+      "margin_of_error": 0.0,
+      "refusal_count": 200,
+      "refusal_rate": 1.0,
+      "total_proposed_clips": 200
+    },
+    "fresh_holdout_verified": true,
+    "is_sustained": true,
+    "kurdish_editor_signoff": true,
+    "owner_signoff": true,
+    "rating_claim": "10/10",
+    "scoped_report": {
+      "acceptance_status": "accepted",
+      "ci_verified": true,
+      "commit_sha": "not-a-sha",
+      "deficiencies": [],
+      "evidence_intact": true,
+      "gate_verified": true,
+      "human_review_verified": true,
+      "is_sample_sufficient": true,
+      "scorecard": {
+        "accepted_count": 0,
+        "episodes_evaluated": 20,
+        "episodes_with_no_clips": 20,
+        "first_pass_publishable_rate": 0.0,
+        "margin_of_error": 0.0,
+        "refusal_count": 200,
+        "refusal_rate": 1.0,
+        "total_proposed_clips": 200
+      }
+    },
+    "sustained_status": "sustained",
+    "use_window_days": 30
+  }
+}

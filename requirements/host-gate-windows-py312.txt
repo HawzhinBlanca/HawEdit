@@ -5,7 +5,7 @@
 # target-python: 3.12
 # extras: dev,media,agentic
 # project-version: 0.1.0
-# contract-sha256: 8cc25ede84878db7c22b2d1d8e99d8e1900f65dda3cf1644c23d017c8918a47b
+# contract-sha256: fa7e3de0f911124632191503ec6ddf0357eff11758c616851270cb0a4e98036a
 # resolver: uv==0.11.26
 # exclude-newer: 2026-08-13T00:00:00Z
 --extra-index-url https://download.pytorch.org/whl/cpu
@@ -73,8 +73,8 @@ mypy==1.15.0 --hash=sha256:171a9ca9a40cd1843abeca0e405bc1940cd9b305eaeea2dda769b
 mypy-extensions==1.1.0 --hash=sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505
 # selected wheel https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl
 networkx==3.6.1 --hash=sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762
-# selected wheel https://files.pythonhosted.org/packages/17/c1/c31d3637f2641e25c7a19adf2ae822fdaf4ddd198b05d79a92a9ce7cb63e/numpy-2.2.1-cp312-cp312-win_amd64.whl
-numpy==2.2.1 --hash=sha256:ba5511d8f31c033a5fcbda22dd5c813630af98c70b2661f2d2c654ae3cdfcfc8
+# selected wheel https://files.pythonhosted.org/packages/fc/84/7f801a42a67b9772a883223a0a1e12069a14626c81a732bd70aac57aebc1/numpy-2.2.2-cp312-cp312-win_amd64.whl
+numpy==2.2.2 --hash=sha256:5acea83b801e98541619af398cc0109ff48016955cc0818f478ee9ef1c5c3dcb
 # selected wheel https://files.pythonhosted.org/packages/dd/80/76979e0b744307d488c79e41051117634b956612cc731f1028eb17ee7294/onnxruntime-1.20.1-cp312-cp312-win_amd64.whl
 onnxruntime==1.20.1 --hash=sha256:19c2d843eb074f385e8bbb753a40df780511061a63f9def1b216bf53860223fb
 # selected wheel https://files.pythonhosted.org/packages/f2/35/0858e9e71b36948eafbc5e835874b63e515179dc3b742cbe3d76bc683439/opencv_python_headless-4.12.0.88-cp37-abi3-win_amd64.whl

@@ -18,19 +18,19 @@ HOST_LOCK_SHA256: Final[dict[str, str]] = {
         "4090a9e50fa76e8db900d8d856e5b9d310143cbb602143f006d7d2a96f193275"
     ),
     "host-gate-linux-py311.txt": (
-        "11c7bb15962648d02da584e14e760a5ae9dc27185abf3f3cc2faa88524aa4904"
+        "972daa753db576e5c053ab27c671177b86011e7456794c79b1a74925e394ea95"
     ),
     "host-gate-linux-py312.txt": (
-        "89f00534230f41d98aa171ab830a51d096f41a56c5d0a33c185a2f5d7fad21e5"
+        "ea266c347fe9f679cb599ecef7027c281ad0d68e5ccec2edb12ebf705d5377d7"
     ),
     "host-gate-windows-py311.txt": (
-        "83184f1ebecc1bab313df83aa796721cf6e24bf14768ea97c6372383b4342ebb"
+        "880bc3ac4fc804362e3ca44c197d7d445fb52ac4273c7643b5f8b5e909a9bba2"
     ),
     "host-gate-windows-py312.txt": (
-        "5f2e1b91eb75e03028564aa9dbc23ad1b01e07471239035f77f5cfd7ad7346e3"
+        "97db2384f2f5970f40201201b972894b437749e80c238ce5bc0df20a8d2171de"
     ),
     "host-gpu-windows-py311.txt": (
-        "7621c86b9f05f87cfa276ad3a6f945d4dcc05c84418bb7a6dafa5a668c9a11d3"
+        "29daf21e48dc8c2078dd1efbc33279af68b3ba19e9b2140b6cd15af0b6c6db1b"
     ),
     "host-models-linux-py311.txt": (
         "bda0d3278fbeeeefaaa407b05145563fb576d30a4fac7144d7c814caaaba0887"
@@ -43,5 +43,8 @@ HOST_LOCK_SHA256: Final[dict[str, str]] = {
     ),
     "host-models-windows-py312.txt": (
         "4476f11845a4ca9b81d92434168073fbf2eca9e9f604f5f237db07bc30f0de13"
+    ),
+    "host-studio-windows-py311.txt": (
+        "49d7c57872e8de0f17aca033c4b857fdf95eced0760530c1e85369c730d64d92"
     ),
 }
