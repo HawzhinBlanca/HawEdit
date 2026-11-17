@@ -33,7 +33,7 @@ from typing import Final
 import pytest
 
 import test_candidate_publication as publication_fixtures
-from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, build_ass, find_ffmpeg
+from hawedit.captions import DEFAULT_MAX_CHARS_PER_LINE, RTL_MARK, build_ass, find_ffmpeg
 from hawedit.clip import Clip, Provenance
 from hawedit.delivery import (
     CandidateState,
@@ -232,7 +232,10 @@ def test_the_two_subtitle_formats_break_the_same_sentence_the_same_way() -> None
         if line.startswith("Dialogue:")
     ]
     assert len(dialogue) == 1
-    assert dialogue[0].split(",", 9)[9].split("\\N") == srt_lines
+    # Each ASS line opens on the base-direction mark (D-334); the SRT carries none.
+    ass_lines = dialogue[0].split(",", 9)[9].split("\\N")
+    assert all(line.startswith(RTL_MARK) for line in ass_lines)
+    assert [line.removeprefix(RTL_MARK) for line in ass_lines] == srt_lines
 
 
 @needs_ffmpeg

@@ -93,7 +93,7 @@ def test_hook_banner_ass_generation_layer_and_timing(sample_sentence: Sentence) 
 
     # Hook banner style definition with plate backing (border_style=3)
     assert "Style: HookBanner," in ass
-    assert f",8,60,60,{HOOK_BANNER_MARGIN_V},1" in ass  # Alignment 8 (top center)
+    assert f",8,60,60,{HOOK_BANNER_MARGIN_V},-1" in ass  # Alignment 8 (top center)
 
     # Dialogue event on layer 3 for 0 -> 3.5s with fade-in/fade-out
     assert "Dialogue: 3,0:00:00.00,0:00:03.50,HookBanner" in ass

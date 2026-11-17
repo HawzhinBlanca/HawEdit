@@ -1261,3 +1261,43 @@ Tracked under Items 9, 10, and 11 of Reality Check (2026-09-13):
    (Blocker #3) and `HF_TOKEN` for PyAnnote diarization (Blocker #4), allowing real-media
    end-to-end runs without mock fallbacks in CI.
 
+
+## #26 · A pipeline test passes only because the face detector fires on caption text — needs Hawa
+
+Found 2026-11-17 while fixing Kurdish caption direction (D-334). HawaPC01, Windows 11, `.venv`
+CPython 3.12, ffmpeg 8.1.1-full, opencv-python-headless 4.12.0.88; no `models/face_detection_yunet.onnx`
+in this checkout.
+
+`tests/test_pipeline.py::test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance`
+renders the 3-cut fixture with a `face_tracked` crop and expects the render to be published.
+`delivery.py` Clause 7 publishes a `face_tracked` clip under 3 s only if
+`faces.face_detected_share >= 0.50`.
+
+### Measured
+
+| Tree | `face_detected_share` | Detail | Test |
+|---|---|---|---|
+| `0ea5158` (before D-334) | 0.5 (5 of 10 samples) | `median_face_height_share` 0.0302, `median_y_center_share` 0.7833 | passes, exactly at the floor |
+| `e86a793` (after D-334) | 0.1 | refused: `face_tracking_unsubstantiated` | fails |
+
+The rendered frame contains no face: it is black with a hook card and one karaoke line
+(`specs/kurdish-rtl-base-direction/captures/speaker-ambiguous-base-frame.jpg`). A "face" 3 % of
+the frame high, centred 78 % of the way down, is the caption line. Before D-334 the reversed
+caption happened to trigger the detector in half the samples; drawn in reading order it triggers
+it in one. The same pinned digest (`SPEAKER_AMBIGUOUS_RENDER_SHA256`) is also stale, because the
+caption pixels changed.
+
+### Why this is not a code task
+
+Three honest ways out exist, and they mean different things:
+
+1. **Fix the measurement** so a detection inside the caption band, or below a minimum face
+   height, is not a face; then give this test a crop that really contains a face, or have it
+   expect the refusal. This changes what `measure.py` certifies for every delivery.
+2. **Change the test to expect the refusal.** That is the truthful result for a faceless frame,
+   but it changes what the test is for (the fallback path publishing).
+3. **Leave it red** until a fixture with a real face exists.
+
+Lowering the floor, passing `min_face_share`, or re-pinning the digest to make it pass would be
+editing a test to match an accident. None of those was done. Until Hawa picks one, the gate has
+this one failure and no `kurdish-rtl-base-direction` row can flip.
