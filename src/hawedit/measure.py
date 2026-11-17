@@ -58,6 +58,9 @@ _EBUR128_I_RE: Final = re.compile(r"Integrated loudness:\s+I:\s*(-?[\d.]+)\s*LUF
 _EBUR128_TP_RE: Final = re.compile(r"True peak:\s+Peak:\s*(-?[\d.]+)\s*dBFS")
 _EBUR128_LRA_RE: Final = re.compile(r"Loudness range:\s+LRA:\s*(-?[\d.]+)\s*LU")
 
+# D-335: a Haar box shorter than this share of the frame height is caption text, not a face.
+MIN_FACE_HEIGHT_SHARE: Final = 0.05
+
 
 class MeasureError(RuntimeError):
     """Failure during independent artifact measurement."""
@@ -545,6 +548,15 @@ def probe_face_tracking(
 
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
 
+    def faces(cascade: Any, image: Any) -> list[tuple[int, int, int, int]]:
+        """One cascade's detections that are tall enough to be a face (D-335)."""
+        found = cascade.detectMultiScale(image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        return [
+            (int(x), int(y), int(w), int(h))
+            for (x, y, w, h) in found
+            if float(h) / float(height) >= MIN_FACE_HEIGHT_SHARE
+        ]
+
     samples_count = 0
     face_detected_count = 0
     speaking_samples_count = 0
@@ -572,25 +584,17 @@ def probe_face_tracking(
                     speaking_samples_count += 1
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            boxes = frontal.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-            )
-            if len(boxes) == 0 and not profile.empty():
-                boxes = profile.detectMultiScale(
-                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                )
-                if len(boxes) == 0:
-                    flipped = cv2.flip(gray, 1)
-                    flipped_boxes = profile.detectMultiScale(
-                        flipped, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                    )
-                    if len(flipped_boxes) > 0:
-                        frame_w = gray.shape[1]
-                        boxes = [
-                            (frame_w - (fx + fw), fy, fw, fh) for (fx, fy, fw, fh) in flipped_boxes
-                        ]
+            boxes = faces(frontal, gray)
+            if not boxes and not profile.empty():
+                boxes = faces(profile, gray)
+                if not boxes:
+                    frame_w = gray.shape[1]
+                    boxes = [
+                        (frame_w - (fx + fw), fy, fw, fh)
+                        for (fx, fy, fw, fh) in faces(profile, cv2.flip(gray, 1))
+                    ]
 
-            if len(boxes) > 0:
+            if boxes:
                 face_detected_count += 1
                 if is_speaking:
                     speaking_face_count += 1

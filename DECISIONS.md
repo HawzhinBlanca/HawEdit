@@ -16603,3 +16603,71 @@ loader, input, asset or dependency. As in D-333's addenda, the owner approved th
 not separately re-review the digest; `reviewed` stays 2026-10-15. `expires` stays 2026-11-14,
 which had already passed on the day of this re-pin; it was not extended, and the unit tests
 evaluate at 2026-10-15.
+
+## D-335 - In the delivery face measurement, a detection is a face only at 5 % of frame height or more (resolves BLOCKED #26)
+
+2026-11-17; owner approval: told of BLOCKED #26's three ways out, the owner chose "Fix the
+measurement", then "Approve plan" (`specs/face-probe-height-floor/plan.md`).
+Blueprint ref: §2, §3 Stage 6. Type: defect elimination, not a deviation. D-258, D-263 clause 7.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, opencv-python-headless 4.12.0,
+ffmpeg 8.1.1-full, tree `b1cba30`. Scripts and raw output:
+`specs/face-probe-height-floor/captures/`. `measure.probe_face_tracking` counted any Haar box of
+30 px or more as a face. On 1080x1920 frames that contain no face:
+
+| Input | Samples | Samples with a box | Box height |
+|---|---|---|---|
+| Test render at `0ea5158` (before D-334) | 10 | 5 | 58 px = 3.02 % |
+| Same render at `b1cba30` (after D-334) | 10 | 1 | 53 px = 2.76 % |
+| Golden `kurdish-caption-fixture.png` | 1 | 1 | 53 px = 2.76 % |
+| Three other goldens | 3 | 0 | none |
+| 144 caption-only clips on black (12 sentences x 6 styles x font 64 and 108) | 2,160 | 1 | 48 px = 2.50 % |
+
+Every box is a frontal-cascade hit on caption text, centred 78-79 % down the frame, inside
+`DEFAULT_BOTTOM_CAPTION_BAND`. Eight samples with a box out of 2,184, four distinct boxes, two
+bundled fonts. Real faces were not re-measured: no real footage is on this machine. D-258
+(2026-08-27, same cascades, three real episodes) recorded face heights of 28.5 %, 16.2 % and
+11.6 % of frame height.
+
+**Decision.**
+1. `MIN_FACE_HEIGHT_SHARE = 0.05` in `measure.py`. `probe_face_tracking` drops a box whose
+   height is under that share of the frame height. A dropped box does not count the sample as
+   "face detected" and does not feed `median_face_height_share`, `median_y_center_share` or
+   `first_frame_face_share`.
+2. The drop happens after each cascade call, so a frontal hit on caption text no longer stops
+   the profile and mirrored-profile fallback.
+3. 0.05 is the share `delivery.py` Clause 7b already requires of an opening-frame subject. It
+   is 1.65x the tallest false box measured and under half the smallest real face in D-258. This
+   is judgment between two small samples, not a fitted threshold.
+4. `tests/test_pipeline.py::test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance`
+   now expects what the gate does with a faceless `face_tracked` render: it is not published,
+   with `face_tracking_unsubstantiated` measured 0.0. The clip still claims `face_tracked` and
+   not `speaker_face`, which is what the test's name is about.
+
+**Considered and not chosen.** Ignoring boxes inside the caption band (adds nothing on this
+evidence, and a real face can sit there); raising `minNeighbors` (changes sensitivity to real
+faces, unmeasurable here); swapping the probe to YuNet (`models/face_detection_yunet.onnx` is not
+in this checkout; larger change, own ADR); changing only the test (the probe would still certify
+caption text as a face).
+
+**Effect on the existing suite, logged before the change** (`captures/whatif-log.txt`): 113
+probe calls from 95 tests; 64 saw no box, 48 saw one 2.71-2.76 % box, one saw a faked 80 px box
+(4.17 %) on a `static_centre` clip that Clause 7 does not check. No call saw a box at or above
+5 %. At least 8 `test_review_candidate_cache.py` tests did not reach the probe in that run (a
+long temp path broke their ingest step), so the gate, not this log, decides.
+
+**Not established.** The floor on real footage: a real face under 5 % of frame height now counts
+as no face. Other fonts or larger captions producing a false box above 5 %. Clause 7b's own
+`0.05` literal is left as it is. The Haar probe's low recall on real faces (56 % of samples on
+episode ep29, vault note `HawEdit road to number one 2026-09-08`) is untouched; replacing the
+detector is separate work. The Linux CI runner has not run this.
+
+**VEX source binding re-pinned 2026-11-17.** The plan listed the re-pin as one of three things
+its approval covers, and the owner chose "Approve plan". `security/wsl-asr-vex.json`
+`applicability.source_sha256` and `tests/test_vex.py` `REVIEWED_VEX_SOURCE` moved from
+`fef53d73c7a7c7d1f5425ff16399d059984c40884dc38a3fc1c42da891619a7a` to
+`a7b54139328bd7a9a79c0d62237683ebc517d9e247367fe81928425ac1ea62f2`, which is
+`package_digest(src/hawedit)` with this ADR's one source change (`src/hawedit/measure.py`). No
+VEX control is affected: no new loader, input, asset or dependency. As in D-333's and D-334's
+addenda, the owner approved the change but did not separately re-review the digest; `reviewed`
+stays 2026-10-15. `expires` stays 2026-11-14, already past; it was not extended.
