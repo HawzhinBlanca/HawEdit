@@ -1,0 +1,79 @@
+"""Research only: render caption-only clips (black 1080x1920, no face anywhere) for boxes.py.
+
+Usage: caption_only.py OUT_DIR FONTS_DIR
+One 3 s clip per (sentence, style, font size). Every box the cascades return on these is false.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+from hawedit.captions import (
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
+    CaptionStyle,
+    build_ass,
+    find_ffmpeg,
+    subtitle_filter,
+)
+from hawedit.sentences import Sentence
+from hawedit.transcripts import Word
+
+out = Path(sys.argv[1])
+fonts = Path(sys.argv[2])
+out.mkdir(parents=True, exist_ok=True)
+ff = find_ffmpeg()
+
+TEXTS = [
+    "ئەمڕۆ باسی گرنگترین بابەت دەکەین.",
+    "من پێم وایە ئەوە ڕاست نییە، بەڵام گوێ بگرە.",
+    "کوردستان وڵاتێکی زۆر جوانە و خەڵکەکەی میهرەبانن.",
+    "ساڵی 2026 گۆڕانکاری گەورە ڕوودەدات لە تەکنەلۆجیا.",
+    "ئایا دەزانیت چۆن ئەم کێشەیە چارەسەر دەکرێت؟",
+    "هەموو شتێک لە یەک ڕۆژدا گۆڕا، هیچ کەس چاوەڕێی نەدەکرد!",
+    "OpusClip زۆر باشە بەڵام کوردی نازانێت.",
+    "دوو هەزار و پێنج سەد کەس بەشدارییان کرد.",
+    "ئەو قسەیەی کە کردت دڵمی شکاند.",
+    "بۆچی هەمیشە دەڵێیت نا؟ جارێک بڵێ بەڵێ.",
+    "پارە هەموو شتێک نییە، تەندروستی گرنگترە.",
+    "لە کۆتاییدا سەرکەوتن بۆ ئەو کەسەیە کە کۆڵ نادات.",
+]
+
+for ti, text in enumerate(TEXTS):
+    ws = text.split()
+    step = 3000 // len(ws)
+    sentence = Sentence(
+        words=tuple(
+            Word(w=w, start_ms=i * step, end_ms=(i + 1) * step, conf=0.95)
+            for i, w in enumerate(ws)
+        ),
+        complete=True,
+    )
+    for style in CaptionStyle:
+        for size in (64, VIRAL_FONT_SIZE):
+            kw = {} if size == 64 else {"theme": VIRAL_THEME}
+            name = f"t{ti:02d}__{style.value}__{size}"
+            try:
+                ass = build_ass(
+                    (sentence,),
+                    style=style,
+                    font_size=size,
+                    clip_in_ms=0,
+                    clip_duration_ms=3000,
+                    fonts_dir=fonts,
+                    **kw,
+                )
+            except Exception as exc:  # a style may refuse a combination; that is not this probe's subject
+                print(f"SKIP {name}: {type(exc).__name__}: {exc}")
+                continue
+            ass_path = out / f"{name}.ass"
+            ass_path.write_text(ass, encoding="utf-8")
+            subprocess.run(
+                [
+                    str(ff), "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=black:s=1080x1920:d=3:r=25", "-vf", subtitle_filter(ass_path, fonts),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out / f"{name}.mp4"),
+                ],
+                check=True,
+            )
+print("done", len(list(out.glob("*.mp4"))))

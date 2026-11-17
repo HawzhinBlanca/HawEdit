@@ -1,0 +1,68 @@
+"""Research only: list every box the delivery face probe's cascades return, per sample.
+
+Mirrors measure.probe_face_tracking (frontal -> profile -> flipped profile, scaleFactor 1.1,
+minNeighbors 5, minSize 30x30, 5 samples/s) but keeps all boxes instead of the largest.
+Usage: boxes.py FILE [FILE...]   (mp4 = sampled at 5 fps, image = one frame)
+"""
+
+import sys
+from pathlib import Path
+
+import cv2
+
+cas = Path(cv2.data.haarcascades)
+frontal = cv2.CascadeClassifier(str(cas / "haarcascade_frontalface_default.xml"))
+profile = cv2.CascadeClassifier(str(cas / "haarcascade_profileface.xml"))
+KW = dict(scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+
+def detect(gray):  # type: ignore[no-untyped-def]
+    out = [("frontal", *map(int, b)) for b in frontal.detectMultiScale(gray, **KW)]
+    if not out:
+        out = [("profile", *map(int, b)) for b in profile.detectMultiScale(gray, **KW)]
+    if not out:
+        w = gray.shape[1]
+        out = [
+            ("profile-flip", w - (int(x) + int(bw)), int(y), int(bw), int(bh))
+            for x, y, bw, bh in profile.detectMultiScale(cv2.flip(gray, 1), **KW)
+        ]
+    return out
+
+
+def report(tag, frame):  # type: ignore[no-untyped-def]
+    h, w = frame.shape[:2]
+    boxes = detect(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+    rows = [
+        f"{kind} h={bh}px h_share={bh / h:.4f} y_centre={(y + bh / 2) / h:.4f} x_centre={(x + bw / 2) / w:.4f}"
+        for kind, x, y, bw, bh in boxes
+    ]
+    print(f"  {tag} {w}x{h}: " + ("; ".join(rows) if rows else "none"))
+    return [bh / h for _, _, _, _, bh in boxes]
+
+
+for name in sys.argv[1:]:
+    path = Path(name)
+    print(path.name)
+    shares = []
+    if path.suffix.lower() == ".mp4":
+        cap = cv2.VideoCapture(str(path))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        dur = (int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0) / fps
+        t = 0.0
+        n = hit = 0
+        while t <= dur:
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+            ok, frame = cap.read()
+            if not ok:
+                break
+            n += 1
+            got = report(f"t={t:.1f}s", frame)
+            hit += bool(got)
+            shares += got
+            t += 0.2
+        cap.release()
+        print(f"  samples={n} with_box={hit}")
+    else:
+        shares = report("frame", cv2.imread(str(path)))
+    if shares:
+        print(f"  box height share: min={min(shares):.4f} max={max(shares):.4f} n={len(shares)}")
