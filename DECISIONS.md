@@ -17466,6 +17466,7 @@ Owner approved updating `security/wsl-asr-vex.json` and `tests/test_vex.py` (`RE
 - `applicability.source_sha256`: `aa0ff96ac6eabddd365add97f50e1994d54812976efa998e5230ecaf84a94d35` → `d9383634a39f20e4292f73fbc4ad09a6536c570c2cf768c934ea177654ae6444` (commit `e65994019cc137d8a7e033b311c534d275832ee6`).
 - Control audit (`git diff --name-only 95bd60e..e659940 -- src/hawedit/`): all 18 changed files are inside `studio_history.py`, `studio_ui.py`, `studio_youtube.py`, `web.py`, and `v8/*.py`. Zero WSL ASR worker, lock, loader, or asset-verification files changed, and `tests/test_vex.py` confirms `save_pretrained` and `custom_generate` remain absent from `src/hawedit/`.
 - Scope boundary: this re-pin records the source-control audit; live `pip-audit` against a provisioned WSL2 runtime remains an independent runtime gate (`hawedit-wsl-vex`).
+- Same-day re-pin (2026-11-24, owner approved "continue"): `d9383634…` → `0c826cf05ab81d68156a5ad9b10ff3f72f861b523795aafadbdceff61f797e1d` (commit `f4c1703`) for 6 non-ASR files (`assembly.py`, `render.py`, `v8/compiler.py`, `v8/director.py`, `v8/story_editor.py`, `v8/tiktok_subs.py`); zero WSL ASR files touched.
 
 ## D-395 — Archive 18 recovered Nov 18–22 historical evidence reports (2026-11-24)
 
