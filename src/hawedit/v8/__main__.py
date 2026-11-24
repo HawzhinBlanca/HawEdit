@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from hawedit.delivery import DeliveryError
 from hawedit.render import RenderError
 from hawedit.sentences import segment_sentences
 from hawedit.v8.compiler import (
@@ -34,8 +35,11 @@ from hawedit.v8.delivery_pack import (
 from hawedit.v8.director import LocalDirectorModality
 from hawedit.v8.doctor import format_doctor_report, run_v8_doctor
 from hawedit.v8.episode import V8EpisodeConfig, V8EpisodeError, compile_v8_episode
+from hawedit.v8.localization import translate_sidecar
 from hawedit.v8.schema import DirectorScriptError
+from hawedit.v8.story_editor import StoryEditorError
 from hawedit.v8.styles import CLIENT_STYLE_PRESETS
+from hawedit.v8.youtube import resolve_youtube_source
 
 __all__ = ["build_doctor_parser", "build_episode_parser", "build_parser", "main"]
 
@@ -146,7 +150,10 @@ def build_episode_parser() -> argparse.ArgumentParser:
         prog="python -m hawedit.v8 episode",
         description="HawEdit V9 full-episode multi-reel compiler & client delivery pack.",
     )
-    p.add_argument("source", type=Path, help="Full source episode video path.")
+    p.add_argument("source", help="Full source episode file or YouTube video URL.")
+    p.add_argument(
+        "--source-library", type=Path, help="Directory for cached YouTube source videos."
+    )
     p.add_argument("--out-dir", type=Path, required=True, help="Output directory.")
     p.add_argument("--transcript", type=Path, default=None, help="Aligned transcript JSON.")
     p.add_argument(
@@ -154,6 +161,9 @@ def build_episode_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run Stage 0/1 WSL OmniASR automatically when --transcript is omitted.",
     )
+    p.add_argument("--subtitles", choices=("ar", "en"), action="append", default=[])
+    p.add_argument("--dub", choices=("ar", "en"), action="append", default=[])
+    p.add_argument("--translation-model", help="Model ID on the local subtitle server")
     p.add_argument("--max-clips", type=int, default=3)
     p.add_argument("--min-duration-ms", type=int, default=28_000)
     p.add_argument("--max-duration-ms", type=int, default=68_000)
@@ -195,6 +205,11 @@ def build_episode_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional local commercial B-roll folder for content-aware visual cutaways.",
+    )
+    p.add_argument(
+        "--allow-web-stock",
+        action="store_true",
+        help="Allow stock-media searches for this episode.",
     )
     p.add_argument(
         "--no-broll",
@@ -255,6 +270,11 @@ def _run_episode_cli(argv: Sequence[str]) -> int:
     local_modality: LocalDirectorModality | None = args.local_modality
 
     try:
+        source = (
+            resolve_youtube_source(args.source, args.source_library or args.out_dir / ".sources")
+            if "://" in args.source
+            else Path(args.source)
+        )
         sentence_ranges: tuple[tuple[int, ...], ...] | None = None
         if args.sentences:
             sentence_ranges = tuple(parse_sentence_indices(spec) for spec in args.sentences)
@@ -289,6 +309,10 @@ def _run_episode_cli(argv: Sequence[str]) -> int:
             local_modality=local_modality,
             asd_onnx_path=args.asd_onnx,
             story_mode=args.story_mode,
+            subtitle_languages=tuple(args.subtitles),
+            dub_languages=tuple(args.dub),
+            translation_model=args.translation_model,
+            allow_web_stock=args.allow_web_stock,
             enable_broll=not args.no_broll,
             broll_dir=args.broll_dir,
             enable_banter_split=not args.no_banter_split,
@@ -297,7 +321,7 @@ def _run_episode_cli(argv: Sequence[str]) -> int:
             enable_local_vlm=not args.no_local_vlm,
         )
         result = compile_v8_episode(
-            source=args.source,
+            source=source,
             out_dir=args.out_dir,
             transcript_path=args.transcript,
             use_omni_asr=args.use_omni_asr,
@@ -306,6 +330,8 @@ def _run_episode_cli(argv: Sequence[str]) -> int:
             audio_wav_path=args.audio_wav,
         )
     except (
+        OSError,
+        ValueError,
         DirectorScriptError,
         V8EpisodeError,
         V8CompileError,
@@ -329,6 +355,31 @@ def main(
 ) -> int:
     """Run the V8/V9 CLI and return a POSIX exit status (0 = ok, 2 = strict fail-stop)."""
     argv_list = list(argv) if argv is not None else sys.argv[1:]
+    if argv_list and argv_list[0] == "publish-instagram":
+        from hawedit.v8.instagram import instagram_cli
+
+        return instagram_cli(argv_list[1:])
+    if argv_list and argv_list[0] == "dub":
+        from hawedit.v8.dubbing import dub_cli
+
+        return dub_cli(argv_list[1:])
+    if argv_list and argv_list[0] == "team":
+        from hawedit.v8.team_review import team_cli
+
+        return team_cli(argv_list[1:])
+    if argv_list and argv_list[0] == "localize":
+        parser = argparse.ArgumentParser(prog="hawedit.v8 localize")
+        parser.add_argument("srt", type=Path, help="Finished Sorani reel SRT")
+        parser.add_argument("--language", choices=("ar", "en"), action="append", required=True)
+        parser.add_argument("--model", help="Model served by the local director")
+        options = parser.parse_args(argv_list[1:])
+        try:
+            for language in dict.fromkeys(options.language):
+                print(translate_sidecar(options.srt, language, options.model))
+        except (OSError, ValueError, StoryEditorError, DeliveryError) as exc:
+            print(f"Subtitle translation failed: {exc}", file=sys.stderr)
+            return 2
+        return 0
     if argv_list and argv_list[0] == "doctor":
         return _run_doctor_cli(argv_list[1:])
     if argv_list and argv_list[0] == "episode":
@@ -411,6 +462,7 @@ def main(
                 fps=args.fps,
                 media_id=args.source.stem,
                 hook_title_ckb=result.script.hook_title_ckb,
+                post_cta=(args.end_card_title, args.end_card_subtitle, args.end_card_handle),
                 retained_intervals_ms=result.retained_intervals_ms,
                 keep_overlay=args.keep_overlay,
             )

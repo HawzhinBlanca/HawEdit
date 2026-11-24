@@ -6,6 +6,8 @@ import json
 import struct
 import subprocess
 import wave
+import zipfile
+from dataclasses import replace
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
 from hawedit.v8.compiler import (
     LockedCropWindow,
+    ReelQualityError,
     SubtitleArtifact,
     V8CompileConfig,
     V8CompileResult,
@@ -433,6 +436,12 @@ def test_write_client_delivery_pack_and_overlay_cleanup(tmp_path: Path) -> None:
 
     # All deliverables exist, non-empty, valid
     verify_client_pack_complete(pack)
+    assert pack.social_zip_path is not None
+    with zipfile.ZipFile(pack.social_zip_path) as archive:
+        assert set(archive.namelist()) == {"reel.mp4", "captions.ckb.srt", "cover.png", "post.txt"}
+        assert archive.read("reel.mp4") == res.output_mp4.read_bytes()
+        assert archive.read("captions.ckb.srt") == pack.srt_path.read_bytes()
+        assert pack.hook_title_ckb in archive.read("post.txt").decode("utf-8")
     assert pack.srt_path.name == f"{res.clip_id}.v8.srt"
     assert pack.edl_path.name == f"{res.clip_id}.v8.edl"
     assert pack.otio_path.name == f"{res.clip_id}.v8.otio"
@@ -629,6 +638,11 @@ def test_write_client_review_html_self_contained_rtl_badges_and_downloads(tmp_pa
     )
     content = html_path.read_text(encoding="utf-8")
 
+    blind = (out_dir / "blind-review.html").read_text(encoding="utf-8")
+    assert "blind-review.html" in content
+    assert blind.count("<video ") == 2
+    assert "GRILL PASSED" not in blind and p1.hook_title_ckb not in blind
+    assert "meaning" in blind and "caption_accuracy" in blind
     # Zero external CDN links
     assert "http://" not in content
     assert "https://" not in content
@@ -739,6 +753,27 @@ def test_compile_v8_episode_offline_batch_with_mocked_compiler(tmp_path: Path) -
     html_text = result.review_html_path.read_text(encoding="utf-8")
     for item in result.clips:
         assert item.clip_id in html_text
+
+    def reject_first(**kwargs: Any) -> V8CompileResult:
+        if not compiled_calls:
+            compiled_calls.append(kwargs)
+            raise ReelQualityError("trailing cut")
+        return fake_compiler(**kwargs)
+
+    compiled_calls.clear()
+    retried = compile_v8_episode(
+        source_mp4,
+        tmp_path / "reserves",
+        transcript_path=transcript_json,
+        audio_wav_path=wav_path,
+        config=V8EpisodeConfig(max_clips=1),
+        clip_compiler=reject_first,
+        cover_extractor=lambda _mp4, dst, _t: _make_fake_png(dst),
+    )
+    assert len(compiled_calls) == 2
+    assert len(retried.clips) == 1
+    assert retried.quarantined[0]["clip_id"] != retried.clips[0].clip_id
+    assert retried.quarantined[0]["error"] == "trailing cut"
 
 
 def test_compile_v8_episode_explicit_sentence_ranges_and_omni_asr_hook(tmp_path: Path) -> None:
@@ -980,3 +1015,36 @@ def test_tighten_internal_word_silences_handles_short_bleeding_tail_and_trough(
     assert out[2].end_ms <= 1_920
     assert out[3].start_ms <= 2_470
     assert out[3].start_ms - out[2].end_ms >= 500
+
+
+def test_unpunctuated_reel_has_timed_phrase_sidecar(tmp_path: Path) -> None:
+    words = tuple(Word("بە زمانی", i * 400, i * 400 + 380, 0.98) for i in range(30))
+    result = replace(_make_compile_result(tmp_path), repaired_words=words)
+    pack = write_client_delivery_pack(
+        result,
+        source_mp4=tmp_path / "source.mp4",
+        clip_in_ms=0,
+        clip_out_ms=36_000,
+        cover_extractor=lambda _mp4, out, _ts: _make_fake_png(out),
+    )
+    content = pack.srt_path.read_text(encoding="utf-8")
+    cues = parse_srt_times(content)
+    assert len(cues) >= 20
+    assert cues[0][0] == 0
+    assert cues[-1][1] == words[-1].end_ms
+    tokens = [
+        w for cue in content.strip().split("\n\n") for w in " ".join(cue.splitlines()[2:]).split()
+    ]
+    assert tokens == " ".join(w.w for w in words).split()
+
+
+def test_sidecar_rejects_cues_past_rendered_end(tmp_path: Path) -> None:
+    result = _make_compile_result(tmp_path, duration_ms=6000)
+    with pytest.raises(DeliveryPackError, match="past the end"):
+        write_client_delivery_pack(
+            result,
+            source_mp4=tmp_path / "source.mp4",
+            clip_in_ms=0,
+            clip_out_ms=36_000,
+            cover_extractor=lambda _mp4, out, _ts: _make_fake_png(out),
+        )

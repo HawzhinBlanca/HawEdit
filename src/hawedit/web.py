@@ -37,6 +37,7 @@ from hawedit.studio_history import HistoryError, read_historical_job, read_histo
 from hawedit.studio_private import PrivateDirectory, StudioStorageError
 from hawedit.studio_ui import DASHBOARD_HTML as DASHBOARD_HTML
 from hawedit.studio_uploads import DEFAULT_MAX_BYTES, UploadError, UploadStore
+from hawedit.studio_youtube import YouTubeImports
 from hawedit.transcripts import validate_media_id
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,6 +62,10 @@ _V8_OPTION_KEYS: Final[frozenset[str]] = frozenset(
         "cold_open",
         "max_clips",
         "brand_accent_hex",
+        "speaker_source_id",
+        "cloud_consent_token",
+        "subtitle_languages",
+        "dub_languages",
         "speaker_name_ckb",
         "speaker_role_ckb",
         "end_card_title_ckb",
@@ -70,6 +75,7 @@ _V8_OPTION_KEYS: Final[frozenset[str]] = frozenset(
 )
 _V8_ARTIFACT_KINDS: Final[dict[str, tuple[str, str]]] = {
     "mp4": ("mp4", "video/mp4"),
+    "social_zip": ("social_zip", "application/zip"),
     "srt": ("srt", "application/x-subrip; charset=utf-8"),
     "edl": ("edl", "text/plain; charset=utf-8"),
     "otio": ("otio", "application/json; charset=utf-8"),
@@ -86,10 +92,12 @@ _V8_ALLOWED_FILE_SUFFIXES: Final[tuple[tuple[str, str], ...]] = (
     (".v8.mp4", "video/mp4"),
     (".v8.srt", "application/x-subrip; charset=utf-8"),
     (".v8.edl", "text/plain; charset=utf-8"),
+    (".v8.social.zip", "application/zip"),
     (".v8.otio", "application/json; charset=utf-8"),
     (".v8.cover.png", "image/png"),
     (".grill.json", "application/json; charset=utf-8"),
     (".director.json", "application/json; charset=utf-8"),
+    ("blind-review.html", "text/html; charset=utf-8"),
     ("client-review.html", "text/html; charset=utf-8"),
 )
 _V8_SMALL_ARTIFACT_LIMIT: Final[int] = 32 * 1024 * 1024
@@ -180,6 +188,8 @@ def _parse_v8_repurpose_payload(payload: Mapping[str, Any]) -> tuple[str, str, d
         raise ValueError(
             f"Unsupported director {director!r}; choose one of {sorted(_V8_DIRECTORS)}"
         )
+    if director == "gemini" and merged.get("cloud_consent_token") != client_token:
+        raise ValueError("Gemini requires cloud consent for this job")
     sub_engine = merged.get("sub_engine", "skia")
     if not isinstance(sub_engine, str) or sub_engine not in _V8_SUB_ENGINES:
         raise ValueError(
@@ -209,6 +219,10 @@ def _parse_v8_repurpose_payload(payload: Mapping[str, Any]) -> tuple[str, str, d
     speaker_role_ckb = _validate_bounded_opt_text(
         merged.get("speaker_role_ckb"), "speaker_role_ckb", max_len=120
     )
+    if speaker_role_ckb and not speaker_name_ckb:
+        raise ValueError("A speaker credit role requires a speaker name")
+    if speaker_name_ckb and merged.get("speaker_source_id") != source_id:
+        raise ValueError("Confirm the speaker credit for this source")
     end_card_title_ckb = _validate_bounded_opt_text(
         merged.get("end_card_title_ckb"), "end_card_title_ckb", max_len=120
     )
@@ -238,6 +252,20 @@ def _parse_v8_repurpose_payload(payload: Mapping[str, Any]) -> tuple[str, str, d
         "end_card_handle": end_card_handle,
         "use_omni_asr": use_omni_asr,
     }
+    for option_name in ("subtitle_languages", "dub_languages"):
+        tracks = merged.get(option_name, [])
+        if (
+            not isinstance(tracks, list)
+            or len(tracks) > 2
+            or any(v not in ("ar", "en") for v in tracks)
+        ):
+            raise ValueError(f"{option_name} must list Arabic or English language codes")
+        if tracks:
+            normalized[option_name] = list(dict.fromkeys(tracks))
+    if director == "gemini":
+        normalized["cloud_consent_token"] = client_token
+    if speaker_name_ckb:
+        normalized["speaker_source_id"] = source_id
     return source_id, client_token, normalized
 
 
@@ -366,6 +394,8 @@ def _build_v8_episode_config(config_cls: Any, opts: Mapping[str, Any]) -> Any:
         "cold_open": bool(opts.get("cold_open", True)),
         "max_clips": int(opts.get("max_clips", 3)),
         "brand_accent_hex": opts.get("brand_accent_hex"),
+        "subtitle_languages": tuple(opts.get("subtitle_languages", ())),
+        "dub_languages": tuple(opts.get("dub_languages", ())),
         "speaker_bio": speaker_bio,
         "speaker_name_ckb": speaker_name,
         "speaker_role_ckb": speaker_role,
@@ -1123,6 +1153,7 @@ class JobManager:
                 artifact_sources: dict[str, object] = {
                     "mp4": getattr(pack, "mp4_path", None),
                     "srt": getattr(pack, "srt_path", None),
+                    "social_zip": getattr(pack, "social_zip_path", None),
                     "edl": getattr(pack, "edl_path", None),
                     "otio": getattr(pack, "otio_path", None),
                     "cover": getattr(pack, "cover_png_path", None),
@@ -1169,7 +1200,15 @@ class JobManager:
                 )
 
                 download_urls: dict[str, str] = {}
-                for dl_kind in ("mp4", "srt", "edl", "otio", "director_json", "grill_json"):
+                for dl_kind in (
+                    "mp4",
+                    "social_zip",
+                    "srt",
+                    "edl",
+                    "otio",
+                    "director_json",
+                    "grill_json",
+                ):
                     if dl_kind in rel_map:
                         download_urls[dl_kind] = (
                             f"/api/jobs/{encoded_job_id}/clips/{encoded_cid}/artifacts/{dl_kind}"
@@ -1292,6 +1331,7 @@ class JobManager:
 
 JOB_MANAGER = JobManager(create_dir=False)
 UPLOAD_STORE: UploadStore | None = None
+YOUTUBE_IMPORTS = YouTubeImports()
 
 
 def _upload_store() -> UploadStore:
@@ -1417,6 +1457,23 @@ class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path in {"/api/youtube/import", "/api/youtube/status"}:
+            if not self._local_write():
+                return
+            try:
+                data = self._read_json()
+                if set(data) != {"url"} or not isinstance(data["url"], str):
+                    raise ValueError("Supply one YouTube video URL")
+                status = YOUTUBE_IMPORTS.request(
+                    _upload_store(), data["url"], start=path.endswith("/import")
+                )
+                self._json_reply(202 if status["state"] == "importing" else 200, status)
+            except (ValueError, UploadError) as exc:
+                self._json_reply(400, {"error": str(exc)})
+            except (OSError, StudioStorageError) as exc:
+                self._json_reply(503, {"error": str(exc)})
+            return
 
         if path == "/api/uploads":
             if not self._local_write():
@@ -1588,11 +1645,12 @@ class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
         v8_ep = doc.get("v8_episode")
         return dict(v8_ep) if isinstance(v8_ep, dict) else None
 
-    def _stream_safe_v8_video(
+    def _stream_safe_v8_artifact(
         self,
         job_id: str,
         rel_parts: tuple[str, ...],
         *,
+        content_type: str = "video/mp4",
         as_preview: bool = False,
         download_name: str | None = None,
     ) -> None:
@@ -1652,7 +1710,7 @@ class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
                     return
                 start, end = selected if selected is not None else (0, size - 1)
                 self.send_response(206 if selected is not None else 200)
-                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(end - start + 1))
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("ETag", etag)
@@ -1775,10 +1833,11 @@ class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
             self._json_reply(404, {"error": "Requested V8 clip artifact was not found"})
             return
         rel_parts = tuple(rel_str.split("/"))
-        if canonical_kind == "mp4":
-            self._stream_safe_v8_video(
+        if canonical_kind in {"mp4", "social_zip"}:
+            self._stream_safe_v8_artifact(
                 job_id,
                 rel_parts,
+                content_type=content_type,
                 as_preview=as_preview,
                 download_name=None if as_preview else rel_parts[-1],
             )
@@ -1805,8 +1864,10 @@ class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
         if content_type is None:
             self._json_reply(400, {"error": "Artifact extension is not allowed"})
             return
-        if content_type == "video/mp4":
-            self._stream_safe_v8_video(job_id, rel_parts, download_name=rel_parts[-1])
+        if content_type in {"video/mp4", "application/zip"}:
+            self._stream_safe_v8_artifact(
+                job_id, rel_parts, content_type=content_type, download_name=rel_parts[-1]
+            )
             return
         try:
             data, digest = _read_safe_job_file_bytes(

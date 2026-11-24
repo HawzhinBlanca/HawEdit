@@ -171,6 +171,20 @@ def test_multicut_story_plan_and_meaning_preservation_surgical_restore(tmp_path:
     assert len(rec.keep_spans) == 2
     assert len(rec.drop_ranges) == 3
 
+    long_words = _make_words(["وشە"] * 2250, step_ms=520, gap_ms=80)
+    whole_episode = plan_episode_multicut_stories(
+        long_words,
+        backend="gemini",
+        max_stories=3,
+        min_duration_ms=15_000,
+        max_duration_ms=55_000,
+        api_key="test-key",
+        transport=_plan_tx,
+    )
+    assert [story.keep_spans[0].start_word_idx for story in whole_episode] == [0, 1000, 2000]
+    assert whole_episode[-1].visual_cues[0].anchor_word_idx == 2028
+    assert whole_episode[-1].drop_ranges[0].start_word_idx == 2003
+
     # Gemini 4 Carbon verifier catches drop[1] (the risky negation drop) and restores ONLY drop[1].
     verify_payload = {
         "approved": False,
@@ -542,11 +556,15 @@ def test_v10_3_episode_overgenerate_quarantines_bad_candidate_and_promotes_winne
             visual_interrupts=(),
         )
         sc_path.write_text(script.to_json(), encoding="utf-8")
+        intervals = tuple(
+            (sp.source_in_ms, sp.source_out_ms) for sp in kwargs["semantic_assembly_spans"]
+        )
+        duration = sum(end - start for start, end in intervals)
         grill = VideoGrillReport(
             mp4_path=mp4,
-            duration_ms=12_000,
+            duration_ms=duration,
             fps=25.0,
-            frame_count=300,
+            frame_count=round(duration / 40),
             cut_times_s=(),
             double_cuts=(),
             trailing_cuts=(),
@@ -561,7 +579,7 @@ def test_v10_3_episode_overgenerate_quarantines_bad_candidate_and_promotes_winne
             output_mp4=mp4,
             script=script,
             script_path=sc_path,
-            repaired_words=tuple(kwargs["words"]),
+            repaired_words=tuple(kwargs["semantic_words"]),
             camera_filter="",
             camera_jump_cuts_ms=(),
             subtitles=SubtitleArtifact(engine="libass", ass_path=ass, chunk_count=4),
@@ -571,7 +589,7 @@ def test_v10_3_episode_overgenerate_quarantines_bad_candidate_and_promotes_winne
             director_backend="gemini",
             sub_engine="libass",
             grill_report=grill,
-            retained_intervals_ms=((1000, 13000),),
+            retained_intervals_ms=intervals,
         )
 
     def _fake_cover(mp4: Path, out_png: Path, ts: float) -> Path:

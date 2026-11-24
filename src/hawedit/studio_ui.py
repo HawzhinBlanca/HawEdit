@@ -574,6 +574,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <button id="uploadBtn" type="button" disabled>بارکردنی ڤیدیۆ</button>
           <button id="recoverUploadBtn" type="button" hidden>پشکنینی بارکردن</button>
         </div>
+        <div class="field">
+          <label for="youtubeUrl">بەستەری ئەڵقەی YouTube</label>
+          <input id="youtubeUrl" type="url" dir="ltr" placeholder="https://youtu.be/…" />
+          <button id="youtubeBtn" type="button">هێنانی ئەڵقە</button>
+        </div>
         <progress
           id="uploadProgress"
           aria-label="پێشکەوتنی بارکردنی بایتەکان"
@@ -616,6 +621,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
               </select>
             </div>
           </div>
+          <fieldset><legend>وەشانی زمانەکان</legend>
+            <label><input type="checkbox" id="subAr"> ژێرنووسی عەرەبی</label>
+            <label><input type="checkbox" id="subEn"> ژێرنووسی ئینگلیزی</label>
+            <label><input type="checkbox" id="dubAr"> دەنگی عەرەبی</label>
+            <label><input type="checkbox" id="dubEn"> دەنگی ئینگلیزی</label>
+          </fieldset>
           <label class="checkbox">
             <input id="optCondense" type="checkbox" checked />
             چڕکردنەوە بۆ ٣٥–٤٨ چرکە — Condense to 35–48 s
@@ -918,8 +929,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         $(id).textContent = text || '';
         $(id).hidden = !text;
       }
+      function reusableOptions(opts) {
+        if (!opts || opts.engine !== 'v8') return opts;
+        const copy = {...opts, speaker_name_ckb: null, speaker_role_ckb: null};
+        delete copy.speaker_source_id;
+        delete copy.cloud_consent_token;
+        if (copy.director === 'gemini') copy.director = 'offline';
+        return copy;
+      }
       function save(key, value) {
         try {
+          if (key === 'options') value = reusableOptions(value);
           if (value === null) localStorage.removeItem('hawedit.studio.v1.' + key);
           else localStorage.setItem('hawedit.studio.v1.' + key, JSON.stringify(value));
           return true;
@@ -963,6 +983,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       function controls() {
         const locked = state.busy || state.requestUncertain;
         $('videoFile').disabled = locked || state.uploadUncertain;
+        $('youtubeBtn').disabled = locked || state.uploadUncertain || !state.storageReady;
+        $('youtubeUrl').disabled = $('youtubeBtn').disabled;
         $('optEngine').disabled = locked;
         $('v8Controls').disabled = locked;
         $('settingsFields').disabled = locked;
@@ -1008,6 +1030,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           throw new Error('ناسنامەی سەرچاوە پشتڕاست نەکراوەتەوە.');
         if (!save('source', source))
           throw new Error('ناسنامەی سەرچاوە پاشەکەوت نەکرا.');
+        if (state.source?.source_id !== source.source_id) {
+          $('optSpeakerName').value = '';
+          $('optSpeakerRole').value = '';
+        }
         state.source = source;
         state.uploadUncertain = false;
         message('fileInfo', source.filename + ' · ' + source.size + ' bytes');
@@ -1167,6 +1193,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             cold_open: $('optColdOpen').checked,
             max_clips: Number($('optMaxClips').value),
             brand_accent_hex: trimOrNull('optBrandAccent'),
+            subtitle_languages: ['ar','en'].filter(l => $(l === 'ar' ? 'subAr' : 'subEn').checked),
+            dub_languages: ['ar','en'].filter(l => $(l === 'ar' ? 'dubAr' : 'dubEn').checked),
+            speaker_source_id: state.source?.source_id || null,
             speaker_name_ckb: trimOrNull('optSpeakerName'),
             speaker_role_ckb: trimOrNull('optSpeakerRole'),
             end_card_title_ckb: trimOrNull('optEndCardTitle'),
@@ -1197,6 +1226,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             'cold_open',
             'max_clips',
             'brand_accent_hex',
+            'speaker_source_id',
+            'cloud_consent_token',
+            'subtitle_languages','dub_languages',
             'speaker_name_ckb',
             'speaker_role_ckb',
             'end_card_title_ckb',
@@ -1222,6 +1254,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             (value.brand_accent_hex === null ||
               value.brand_accent_hex === undefined ||
               /^#[0-9A-Fa-f]{6}$/.test(value.brand_accent_hex)) &&
+            [value.subtitle_languages,value.dub_languages].every(v => v === undefined ||
+              (Array.isArray(v) && v.length <= 2 && v.every(l => ['en','ar'].includes(l)))) &&
             optText(value.speaker_name_ckb, 120) &&
             optText(value.speaker_role_ckb, 120) &&
             optText(value.end_card_title_ckb, 120) &&
@@ -1255,6 +1289,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           $('optColdOpen').checked = value.cold_open !== false;
           $('optMaxClips').value = String(value.max_clips);
           $('optBrandAccent').value = value.brand_accent_hex || '';
+          const subtitleLangs = value.subtitle_languages || [];
+          const dubLangs = value.dub_languages || [];
+          $('subAr').checked = subtitleLangs.includes('ar');
+          $('subEn').checked = subtitleLangs.includes('en');
+          $('dubAr').checked = dubLangs.includes('ar');
+          $('dubEn').checked = dubLangs.includes('en');
           $('optSpeakerName').value = value.speaker_name_ckb || '';
           $('optSpeakerRole').value = value.speaker_role_ckb || '';
           $('optEndCardTitle').value = value.end_card_title_ckb || '';
@@ -1276,13 +1316,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         if (state.busy || !state.source || !state.storageReady) return;
         if (!state.runnerReady && !state.requestUncertain) return;
         message('sourceError', '');
-        if (!state.request)
+        if (!state.request) {
+          const opts = options();
+          const token = crypto.randomUUID();
+          if (opts.engine === 'v8' && opts.director === 'gemini') {
+            if (!window.confirm('ڕەزامەندیت بۆ ناردنی ڤیدیۆ و دەق بۆ Gemini بۆ ئەم کارە؟')) return;
+            opts.cloud_consent_token = token;
+          }
           state.request = {
             schema: 1,
             source_id: state.source.source_id,
-            client_token: crypto.randomUUID(),
-            options: options(),
+            client_token: token,
+            options: opts,
           };
+        }
         if (!save('request', state.request)) {
           controls();
           return;
@@ -1884,6 +1931,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           ['SRT', dl.srt, true],
           ['EDL', dl.edl, true],
           ['OTIO', dl.otio, true],
+          ['Social ZIP', dl.social_zip, true],
           ['Cover', clip && clip.cover_url, true],
           ['Director JSON', dl.director_json, true],
           ['Grill JSON', dl.grill_json, true],
@@ -1928,6 +1976,41 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         );
         controls();
       });
+      async function importYouTube(url, resume = false) {
+        if (!url || state.busy || state.requestUncertain || state.uploadUncertain) return;
+        state.busy = true;
+        controls();
+        message('sourceError', '');
+        message('uploadMessage', 'ئەڵقەکە دەهێنرێت…');
+        try {
+          if (!save('youtube', url)) throw new Error('پاشەکەوتکردن سەرکەوتوو نەبوو.');
+          let endpoint = resume ? 'status' : 'import';
+          for (;;) {
+            const result = await api('/api/youtube/' + endpoint, {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({url}),
+            });
+            if (result.state === 'ready') {
+              showSource(result.source);
+              save('youtube', null);
+              break;
+            }
+            if (result.state !== 'importing') {
+              save('youtube', null);
+              throw new Error(result.error || 'هێنانی ئەڵقەکە وەستا. دووبارە هەوڵ بدە.');
+            }
+            endpoint = 'status';
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        } catch (error) {
+          message('uploadMessage', '');
+          message('sourceError', error.message);
+        } finally {
+          state.busy = false;
+          controls();
+        }
+      }
+      $('youtubeBtn').addEventListener('click', () => importYouTube($('youtubeUrl').value.trim()));
       $('uploadBtn').addEventListener('click', upload);
       $('recoverUploadBtn').addEventListener('click', recoverUpload);
       $('startBtn').addEventListener('click', generate);
@@ -1993,7 +2076,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         const ticket = read('upload');
         const request = read('request');
         const savedOptions = read('options');
-        if (savedOptions !== null) applyOptions(savedOptions);
+        if (savedOptions !== null) applyOptions(reusableOptions(savedOptions));
         if (source && validSource(source)) {
           state.source = source;
           message('sourceIdentity', source.filename + ' · ' + source.source_id);
@@ -2048,6 +2131,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         await Promise.all([readiness(), loadDoctor(), loadPresets()]);
         await refreshHistory(read('selected') || '');
         if (state.ticket) await recoverUpload();
+        const pendingUrl = read('youtube');
+        if (typeof pendingUrl === 'string' && !state.requestUncertain) {
+          $('youtubeUrl').value = pendingUrl;
+          await importYouTube(pendingUrl, true);
+        }
       }
       initialize();
     </script>

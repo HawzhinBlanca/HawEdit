@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import sys
+import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,6 +71,7 @@ def _v8_payload(source_id: str, **overrides: Any) -> dict[str, Any]:
         "cold_open": True,
         "max_clips": 2,
         "brand_accent_hex": "#FF2E63",
+        "speaker_source_id": source_id,
         "speaker_name_ckb": "هاوژین",
         "speaker_role_ckb": "پێشکەشکار",
         "end_card_title_ckb": "بۆ ڤیدیۆی زیاتر فۆڵۆمان بکە",
@@ -631,6 +633,7 @@ def test_v8_repurpose_accepts_top_level_engine_and_legacy_engine_override(
         "engine": "v8",
         "style_preset": "broadcast_news",
         "director": "gemini",
+        "cloud_consent_token": "v8-top-level-token-01",
         "max_clips": 3,
     }
     code, _, raw = _http_post("/api/repurpose", top_v8)
@@ -924,3 +927,45 @@ def test_v9_audit_fixes_review_links_restart_history_etag_and_security(
         ]
         assert len(remaining) == 2
         assert len(reloaded._events) <= 2
+
+
+def test_studio_requires_source_specific_credit_and_job_specific_cloud_consent() -> None:
+    payload = _v8_payload("a" * 32)
+    payload["source_id"] = "b" * 32
+    with pytest.raises(ValueError, match="speaker credit"):
+        web._parse_v8_repurpose_payload(payload)
+    payload = _v8_payload("a" * 32, director="gemini")
+    for consent in (None, "another-job-token-123"):
+        payload["options"]["cloud_consent_token"] = consent
+        with pytest.raises(ValueError, match="cloud consent"):
+            web._parse_v8_repurpose_payload(payload)
+    payload["options"]["cloud_consent_token"] = payload["client_token"]
+    assert web._parse_v8_repurpose_payload(payload)[2]["director"] == "gemini"
+
+
+def test_studio_import_reuses_archived_youtube_and_returns_upload_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_library = tmp_path / "library"
+    source_library.mkdir()
+    (source_library / "episode.mp4").write_bytes(FIXTURE_VIDEO.read_bytes())
+    (source_library / "episode.info.json").write_text(
+        json.dumps({"id": "RO1PmSoqmCM", "extractor_key": "Youtube"}), encoding="utf-8"
+    )
+    store = UploadStore(tmp_path / "uploads")
+    monkeypatch.setenv("HAWEDIT_YOUTUBE_LIBRARY", str(source_library))
+    monkeypatch.setattr(web, "UPLOAD_STORE", store)
+    payload = {"url": "https://youtu.be/RO1PmSoqmCM"}
+    assert _http_post("/api/youtube/import", payload)[0] == 202
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        code, _, body = _http_post("/api/youtube/status", payload)
+        status = json.loads(body)
+        assert code == 200 or status["state"] == "importing"
+        if status["state"] == "ready":
+            break
+        time.sleep(0.05)
+    assert status["state"] == "ready", status
+    assert store.source(status["source"]["source_id"]).read_bytes() == FIXTURE_VIDEO.read_bytes()
+    assert json.loads(_http_post("/api/youtube/import", payload)[2]) == status
+    assert _http_post("/api/youtube/import", payload, host="example.org")[0] == 403

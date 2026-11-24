@@ -26,7 +26,15 @@ from hawedit.caption_polish import repair_kurdish_asr_orthography
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Provenance, Qc
 from hawedit.ingest import probe_duration_ms, probe_stream
-from hawedit.render import BRollItem, Reframe, frame_rate, render_clip, resolve_encoder
+from hawedit.render import (
+    BRollItem,
+    Reframe,
+    frame_rate,
+    render_clip,
+    resolve_encoder,
+    vertical_crop_size,
+    vertical_framing,
+)
 from hawedit.sentences import Sentence, segment_sentences
 from hawedit.silence import (
     KURDISH_FILLER_TOKENS,
@@ -77,6 +85,7 @@ from hawedit.v8.schema import (
 from hawedit.v8.story_editor import VisualCue
 from hawedit.v8.styles import ClientStylePreset, get_client_style_preset
 from hawedit.v8.tiktok_subs import (
+    END_CARD_DURATION_MS,
     VISUAL_INTERRUPT_MIN_START_MS,
     TikTokSubtitleError,
     build_viral_tiktok_ass,
@@ -200,6 +209,10 @@ class V8CompileError(RuntimeError):
     """Raised on any strict fail-stop violation during V8 compilation."""
 
 
+class ReelQualityError(V8CompileError):
+    """A rendered candidate failed the forensic video checks."""
+
+
 @dataclass(frozen=True, slots=True)
 class LockedCropWindow:
     """One rock-steady median crop window for a shot or active-speaker hold (D-385)."""
@@ -277,6 +290,7 @@ class V8CompileConfig:
     end_card_subtitle_ckb: str | None = None
     end_card_handle: str | None = None
     keep_overlay: bool = False
+    allow_web_stock: bool = False
     enable_broll: bool = False
     broll_dir: Path | None = None
     broll_cache_dir: Path | None = None
@@ -772,6 +786,36 @@ class DefaultV8SubtitleRenderer:
         self._style_preset = style_preset
         self._speaker_bio = speaker_bio
         self._end_card = end_card
+
+    def protect_outro_faces(
+        self,
+        crops: Sequence[LockedCropWindow],
+        source_width: int,
+        source_height: int,
+        duration_ms: int,
+        split_windows: Sequence[tuple[int, int]],
+    ) -> None:
+        """Leave a crowded or untracked outro clear; delivery includes the CTA in post.txt."""
+        if self._end_card is None:
+            return
+        start = max(0, duration_ms - END_CARD_DURATION_MS)
+        covered = start
+        cw, ch = vertical_crop_size(source_width, source_height, self._width, self._height)
+        for crop in crops:
+            if crop.end_ms <= start or crop.start_ms >= duration_ms:
+                continue
+            if crop.start_ms > covered or crop.face_height_px <= 0:
+                break
+            _, height, top = vertical_framing(
+                source_height, cw, ch, crop.face_center_y_px, crop.face_height_px
+            )
+            face_top = (crop.face_center_y_px - crop.face_height_px / 2 - top) / height
+            face_bottom = (crop.face_center_y_px + crop.face_height_px / 2 - top) / height
+            if face_top < 0.72 and face_bottom > 0.13:
+                break
+            covered = max(covered, crop.end_ms)
+        if covered < duration_ms or any(s < duration_ms and e > start for s, e in split_windows):
+            self._end_card = None
 
     def set_hook_y_top_px(self, hook_y_top_px: float) -> None:
         self._hook_y_top_px = hook_y_top_px
@@ -2474,7 +2518,7 @@ def compile_v8_clip(
                 duration_ms=effective_duration_ms,
                 cache_dir=active_cfg.broll_cache_dir or DEFAULT_BROLL_CACHE_DIR,
                 broll_dir=active_cfg.broll_dir,
-                enable_web_stock=(active_cfg.director_backend in ("gemini", "local-omni")),
+                enable_web_stock=active_cfg.allow_web_stock,
                 enable_ai_images=(active_cfg.director_backend == "gemini"),
                 verify_with_gemini=(active_cfg.director_backend == "gemini"),
                 verify_with_local_vision=(active_cfg.director_backend == "local-omni"),
@@ -2513,7 +2557,15 @@ def compile_v8_clip(
                 split_screen_windows=split_windows,
             )
         if isinstance(active_sub, DefaultV8SubtitleRenderer) and prepared is not None:
-            active_sub.set_split_screen_windows([(s, e) for s, e, _, _ in split_windows])
+            split_timings = [(s, e) for s, e, _, _ in split_windows]
+            active_sub.protect_outro_faces(
+                locked_crops,
+                prepared.source_width,
+                prepared.source_height,
+                effective_duration_ms,
+                split_timings,
+            )
+            active_sub.set_split_screen_windows(split_timings)
             if any(s < 2_400 and e > 0 for s, e, _, _ in split_windows):
                 active_sub.set_hook_y_top_px(76.0)
             elif (
@@ -2825,7 +2877,9 @@ def compile_v8_clip(
                     report = _grill(cur_mp4)
                 if report is not None and not report.passed:
                     defect_msg = "; ".join(report.defects) if report.defects else "unspecified"
-                    raise V8CompileError(f"Forensic video grill failed for {clip_id}: {defect_msg}")
+                    raise ReelQualityError(
+                        f"Forensic video grill failed for {clip_id}: {defect_msg}"
+                    )
             return cur_script, cur_repaired, cur_cam_flt, cur_cam_jumps, cur_subs, cur_mp4, report
 
         script, repaired_words, camera_filter, camera_jumps, subtitles, rendered_mp4 = _run(script)

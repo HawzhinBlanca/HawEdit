@@ -28,6 +28,7 @@ from hawedit.sentences import DANGLING_CONJUNCTIONS_CKB, Sentence, segment_sente
 from hawedit.transcripts import NormalizedTranscript, TranscriptStore, Word
 from hawedit.v8.compiler import (
     DirectorBackend,
+    ReelQualityError,
     SubtitleEngine,
     V8CompileConfig,
     V8CompileError,
@@ -194,6 +195,10 @@ class V8EpisodeConfig:
     omni_asr_runtime: str = "auto"
     wsl_distro: str | None = None
     story_mode: Literal["auto", "semantic-multicut", "legacy"] = "auto"
+    subtitle_languages: tuple[str, ...] = ()
+    dub_languages: tuple[str, ...] = ()
+    translation_model: str | None = None
+    allow_web_stock: bool = False
     enable_broll: bool = True
     broll_dir: Path | None = None
     enable_banter_split: bool = True
@@ -255,6 +260,9 @@ class V8EpisodeConfig:
             "brand_accent_hex": self.brand_accent_hex,
             "speaker_name_ckb": self.speaker_name_ckb,
             "speaker_role_ckb": self.speaker_role_ckb,
+            "subtitle_languages": self.subtitle_languages,
+            "dub_languages": self.dub_languages,
+            "allow_web_stock": self.allow_web_stock,
             "end_card_title_ckb": self.end_card_title_ckb,
             "end_card_handle": self.end_card_handle,
             "director_model": self.director_model,
@@ -645,6 +653,7 @@ def _build_compile_config(cfg: V8EpisodeConfig) -> V8CompileConfig:
         "end_card_subtitle_ckb": cfg.end_card_subtitle_ckb,
         "end_card_handle": cfg.end_card_handle,
         "local_modality": cfg.local_modality,
+        "allow_web_stock": cfg.allow_web_stock,
         "enable_broll": cfg.enable_broll,
         "broll_dir": cfg.broll_dir,
         "enable_banter_split": cfg.enable_banter_split,
@@ -964,6 +973,14 @@ def compile_v8_episode(
                     fps=cfg.fps,
                     media_id=media_id,
                     hook_title_ckb=compile_res.script.hook_title_ckb,
+                    subtitle_languages=cfg.subtitle_languages,
+                    dub_languages=cfg.dub_languages,
+                    translation_model=cfg.translation_model,
+                    post_cta=(
+                        cfg.end_card_title_ckb,
+                        cfg.end_card_subtitle_ckb,
+                        cfg.end_card_handle,
+                    ),
                     retained_intervals_ms=compile_res.retained_intervals_ms,
                     keep_overlay=cfg.keep_overlay,
                     ffmpeg=cfg.ffmpeg,
@@ -1055,6 +1072,9 @@ def compile_v8_episode(
         )
         return result
 
+    use_reserves = (
+        sentence_ranges is None and cfg.director == "offline" and cfg.overgenerate_candidates
+    )
     selected_arcs: tuple[tuple[tuple[int, ...], float, str], ...]
     if sentence_ranges is not None:
         if not sentence_ranges:
@@ -1097,7 +1117,7 @@ def compile_v8_episode(
         selected_arcs = discover_viral_arcs_offline(
             discovery_sentences,
             resolved_wav_path,
-            max_clips=cfg.max_clips,
+            max_clips=cfg.max_clips * 2 if use_reserves else cfg.max_clips,
             min_duration_ms=cfg.min_duration_ms,
             max_duration_ms=effective_max_dur_ms,
             min_separation_ms=cfg.min_separation_ms,
@@ -1108,8 +1128,12 @@ def compile_v8_episode(
     compiler_fn = clip_compiler if clip_compiler is not None else compile_v8_clip
     items: list[V8EpisodeClipItem] = []
 
-    total_arcs = len(selected_arcs)
-    for rank, (sent_indices, score, reason) in enumerate(selected_arcs, start=1):
+    rejected: list[dict[str, Any]] = []
+    total_arcs = min(cfg.max_clips, len(selected_arcs)) if use_reserves else len(selected_arcs)
+    for candidate_index, (sent_indices, score, reason) in enumerate(selected_arcs, start=1):
+        if use_reserves and len(items) >= cfg.max_clips:
+            break
+        rank = len(items) + 1
         clip_t0 = time.monotonic()
         if on_progress is not None:
             start_pct = 35 + int(((rank - 1) / max(1, total_arcs)) * 55)
@@ -1129,16 +1153,30 @@ def compile_v8_episode(
         )
         clip_id = f"{media_id}-r{rank:02d}-s{sent_indices[0]}-{sent_indices[-1]}"
 
-        compile_res = compiler_fn(
-            source_mp4=source,
-            clip_id=clip_id,
-            clip_in_ms=clip_in_ms,
-            clip_out_ms=clip_out_ms,
-            words=clip_words,
-            out_dir=out_dir,
-            config=compile_cfg,
-            source_sentences=selected_sentences,
-        )
+        try:
+            compile_res = compiler_fn(
+                source_mp4=source,
+                clip_id=clip_id,
+                clip_in_ms=clip_in_ms,
+                clip_out_ms=clip_out_ms,
+                words=clip_words,
+                out_dir=out_dir,
+                config=compile_cfg,
+                source_sentences=selected_sentences,
+            )
+        except ReelQualityError as exc:
+            if not use_reserves:
+                raise
+            rejected.append(
+                {
+                    "candidate_index": candidate_index,
+                    "clip_id": clip_id,
+                    "clip_in_ms": clip_in_ms,
+                    "clip_out_ms": clip_out_ms,
+                    "error": str(exc),
+                }
+            )
+            continue
         try:
             pack = write_client_delivery_pack(
                 compile_res,
@@ -1148,6 +1186,10 @@ def compile_v8_episode(
                 fps=cfg.fps,
                 media_id=media_id,
                 hook_title_ckb=compile_res.script.hook_title_ckb,
+                post_cta=(cfg.end_card_title_ckb, cfg.end_card_subtitle_ckb, cfg.end_card_handle),
+                subtitle_languages=cfg.subtitle_languages,
+                dub_languages=cfg.dub_languages,
+                translation_model=cfg.translation_model,
                 retained_intervals_ms=compile_res.retained_intervals_ms,
                 keep_overlay=cfg.keep_overlay,
                 ffmpeg=cfg.ffmpeg,
@@ -1176,6 +1218,8 @@ def compile_v8_episode(
             )
         )
 
+    if not items:
+        raise V8EpisodeError(f"No accepted clips. Quality results: {rejected!r}")
     total_wall_s = round(time.monotonic() - t0, 3)
     all_grills_passed = bool(items) and all(item.grill_passed is True for item in items)
 
@@ -1202,6 +1246,7 @@ def compile_v8_episode(
         review_html_path=review_html_path,
         total_wall_s=total_wall_s,
         all_grills_passed=all_grills_passed,
+        quarantined=tuple(rejected),
     )
     payload = result.to_dict()
     payload["config"] = cfg.to_dict()

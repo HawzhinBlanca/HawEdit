@@ -20,10 +20,11 @@ from __future__ import annotations
 import json
 import math
 import os
-import struct
+import sys
 import urllib.error
 import urllib.request
 import wave
+from array import array
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -756,7 +757,7 @@ def _parse_and_validate_recipes(
 ) -> tuple[MultiCutStoryRecipe, ...]:
     raw_stories = payload.get("stories")
     if not isinstance(raw_stories, list) or not raw_stories:
-        raise StoryEditorError("Story Architect returned zero stories")
+        raise _NoStory("Story Architect returned zero stories")
 
     n_words = len(words)
     parsed: list[MultiCutStoryRecipe] = []
@@ -895,11 +896,16 @@ def _parse_and_validate_recipes(
         )
 
     if not parsed:
-        raise StoryEditorError(
+        raise _NoStory(
             "Story Architect returned no valid stories within duration & word-index bounds"
         )
 
-    # Sort descending by viral_score and drop heavily overlapping stories (> 40% shared words).
+    return _distinct_recipes(parsed, max_stories)
+
+
+def _distinct_recipes(
+    parsed: list[MultiCutStoryRecipe], max_stories: int
+) -> tuple[MultiCutStoryRecipe, ...]:
     parsed.sort(key=lambda r: -r.viral_score)
     selected: list[MultiCutStoryRecipe] = []
     chosen_word_sets: list[set[int]] = []
@@ -920,6 +926,35 @@ def _parse_and_validate_recipes(
     return tuple(selected)
 
 
+class _NoStory(StoryEditorError):
+    """A window contained no valid nomination."""
+
+
+def _episode_recipe(recipe: MultiCutStoryRecipe, offset: int) -> MultiCutStoryRecipe:
+    def move(span: WordSpan) -> WordSpan:
+        return replace(
+            span,
+            start_word_idx=offset + span.start_word_idx,
+            end_word_idx=offset + span.end_word_idx,
+        )
+
+    return replace(
+        recipe,
+        story_id=f"w{offset}-{recipe.story_id}",
+        keep_spans=tuple(move(span) for span in recipe.keep_spans),
+        cold_open_span=move(recipe.cold_open_span) if recipe.cold_open_span else None,
+        drop_ranges=tuple(
+            replace(
+                r, start_word_idx=offset + r.start_word_idx, end_word_idx=offset + r.end_word_idx
+            )
+            for r in recipe.drop_ranges
+        ),
+        visual_cues=tuple(
+            replace(c, anchor_word_idx=offset + c.anchor_word_idx) for c in recipe.visual_cues
+        ),
+    )
+
+
 def plan_episode_multicut_stories(
     words: Sequence[Word],
     *,
@@ -938,6 +973,33 @@ def plan_episode_multicut_stories(
         raise StoryEditorError("Cannot plan multi-cut stories from an empty transcript")
     if max_stories < 1:
         raise StoryEditorError(f"max_stories must be >= 1, got {max_stories}")
+
+    window_size = 1200
+    if len(words) > window_size:
+        nominations: list[MultiCutStoryRecipe] = []
+        for start in range(0, len(words), window_size - 200):
+            end = min(start + window_size, len(words))
+            try:
+                local = plan_episode_multicut_stories(
+                    words[start:end],
+                    backend=backend,
+                    max_stories=min(3, max_stories),
+                    min_duration_ms=min_duration_ms,
+                    max_duration_ms=max_duration_ms,
+                    audio_wav=audio_wav,
+                    model_id=model_id,
+                    api_key=api_key,
+                    base_url=base_url,
+                    transport=transport,
+                )
+                nominations.extend(_episode_recipe(story, start) for story in local)
+            except _NoStory:
+                pass
+            if end == len(words):
+                break
+        if not nominations:
+            raise _NoStory("No episode window produced a valid source-grounded story")
+        return _distinct_recipes(nominations, max_stories)
 
     ep_dur_s = words[-1].end_ms / 1000.0
     indexed_text = _format_indexed_episode_transcript(words, audio_wav=audio_wav)
@@ -1225,7 +1287,7 @@ def verify_story_meaning_preservation(
     )
 
 
-def _load_pcm16_mono(audio_wav: Path) -> tuple[tuple[int, ...], int] | None:
+def _load_pcm16_mono(audio_wav: Path) -> tuple[Sequence[int], int] | None:
     if not audio_wav.is_file():
         return None
     try:
@@ -1238,8 +1300,11 @@ def _load_pcm16_mono(audio_wav: Path) -> tuple[tuple[int, ...], int] | None:
         return None
     if not raw or sr <= 0:
         return None
-    n = len(raw) // 2
-    return struct.unpack(f"<{n}h", raw), sr
+    samples: array[int] = array("h")
+    samples.frombytes(raw)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return samples, sr
 
 
 def snap_cut_to_rms_valley(

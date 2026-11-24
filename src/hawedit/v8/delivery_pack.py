@@ -17,8 +17,10 @@ import json
 import math
 import os
 import subprocess
+import tempfile
+import zipfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -27,9 +29,15 @@ from hawedit.atomic_fs import write_text_atomic
 from hawedit.captions import find_ffmpeg
 from hawedit.delivery import DeliveryError, build_edl, build_srt, parse_srt_times
 from hawedit.ingest import probe_duration_ms
-from hawedit.sentences import Sentence, UndeliverableOrder, segment_sentences
+from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.timeline import _marker, _rational_time, _time_range, serialize_otio
+from hawedit.transcripts import Word
+from hawedit.v8.blind_review import write_blind_review
 from hawedit.v8.compiler import LockedCropWindow, V8CompileResult, VideoGrillReport
+from hawedit.v8.dubbing import dub_reel
+from hawedit.v8.localization import translate_sidecar
+from hawedit.v8.media_settings import media_setting
+from hawedit.v8.tiktok_subs import chunk_viral_kurdish_words
 
 __all__ = [
     "ClientDeliveryPack",
@@ -71,12 +79,14 @@ class ClientDeliveryPack:
     long_silences_count: int = 0
     audio_flat_factor: float = 0.0
     loudness_lufs: float | None = None
+    social_zip_path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "clip_id": self.clip_id,
             "mp4_path": str(self.mp4_path),
             "srt_path": str(self.srt_path),
+            "social_zip_path": str(self.social_zip_path) if self.social_zip_path else None,
             "edl_path": str(self.edl_path),
             "otio_path": str(self.otio_path),
             "cover_png_path": str(self.cover_png_path),
@@ -353,11 +363,48 @@ def _sentences_for_v8_srt(
         return tuple(explicit_sentences)
     if not result.repaired_words:
         raise DeliveryPackError(f"Clip {result.clip_id} has zero repaired words for SRT")
-    segmented = segment_sentences(result.repaired_words)
-    # Post-trim V8 clip words were already selected on complete episode sentence boundaries.
-    # Unpunctuated ASR utterances lack a trailing pause after the final word, so mark each
-    # non-empty segmented utterance complete for clip-timeline SRT cues.
-    return tuple(Sentence(words=s.words, complete=True) for s in segmented if s.words)
+    power_indices = frozenset(
+        beat.power_word_index
+        for beat in result.script.caption_beats
+        if beat.power_word_index is not None
+    )
+    chunks = chunk_viral_kurdish_words(result.repaired_words, power_word_indices=power_indices)
+    return tuple(
+        Sentence(
+            words=tuple(
+                Word(w.text, w.start_ms, w.end_ms, result.repaired_words[w.index].conf)
+                for w in chunk.words
+            ),
+            complete=True,
+        )
+        for chunk in chunks
+    )
+
+
+def write_social_handoff(
+    mp4: Path,
+    srt: Path,
+    cover: Path,
+    post_text: str,
+    *,
+    variants: Sequence[tuple[Path, str]] = (),
+) -> Path:
+    """Bundle the finished reel and posting assets using portable names."""
+    target = mp4.with_suffix(".social.zip")
+    with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".zip", delete=False) as temp:
+        staged = Path(temp.name)
+    try:
+        with zipfile.ZipFile(staged, "w") as archive:
+            archive.write(mp4, "reel.mp4")
+            archive.write(srt, "captions.ckb.srt")
+            archive.write(cover, "cover.png")
+            for path, name in variants:
+                archive.write(path, name)
+            archive.writestr("post.txt", post_text.strip() + "\n")
+        staged.replace(target)
+    finally:
+        staged.unlink(missing_ok=True)
+    return target
 
 
 def write_client_delivery_pack(
@@ -369,6 +416,10 @@ def write_client_delivery_pack(
     fps: float = 25.0,
     media_id: str | None = None,
     hook_title_ckb: str | None = None,
+    post_cta: Sequence[str | None] = (),
+    subtitle_languages: Sequence[str] = (),
+    dub_languages: Sequence[str] = (),
+    translation_model: str | None = None,
     sentences: Sequence[Sentence] | None = None,
     retained_intervals_ms: Sequence[tuple[int, int]] | None = None,
     cover_at_seconds: float = 0.6,
@@ -410,9 +461,8 @@ def write_client_delivery_pack(
 
     # a) .v8.srt — post-repair, post-trim Kurdish SRT via hawedit.delivery.build_srt
     srt_sentences = _sentences_for_v8_srt(result, sentences)
-    srt_dur_ms = max(duration_ms, max((s.end_ms for s in srt_sentences), default=0))
     try:
-        srt_text = build_srt(srt_sentences, clip_in_ms=0, clip_duration_ms=srt_dur_ms)
+        srt_text = build_srt(srt_sentences, clip_in_ms=0, clip_duration_ms=duration_ms)
     except (DeliveryError, UndeliverableOrder) as exc:
         raise DeliveryPackError(f"Failed to build SRT for {result.clip_id}: {exc}") from exc
     srt_path = out_dir / f"{result.clip_id}.v8.srt"
@@ -529,7 +579,28 @@ def write_client_delivery_pack(
         loudness_lufs=loudness_lufs,
     )
     verify_client_pack_complete(pack)
-    return pack
+    copy = "\n\n".join(part.strip() for part in (resolved_hook, *post_cta) if part and part.strip())
+    variants = []
+    for lang in dict.fromkeys((*subtitle_languages, *dub_languages)):
+        subtitle = translate_sidecar(
+            srt_path, lang, translation_model or media_setting("translation_model")
+        )
+        variants.append((subtitle, f"captions.{lang}.draft.srt"))
+        if lang in dub_languages:
+            voice_python = media_setting("voice_python")
+            weights = media_setting("voice_weights")
+            if not voice_python or not weights:
+                raise DeliveryPackError(
+                    "Set HAWEDIT_VOICE_PYTHON and HAWEDIT_VOICE_WEIGHTS for dubbing"
+                )
+            dubbed = dub_reel(
+                pack.mp4_path, subtitle, lang, worker=Path(voice_python), weights=Path(weights)
+            )
+            variants.append((dubbed, f"reel.{lang}.dub.mp4"))
+    social = write_social_handoff(
+        pack.mp4_path, pack.srt_path, pack.cover_png_path, copy, variants=variants
+    )
+    return replace(pack, social_zip_path=social)
 
 
 def verify_client_pack_complete(pack: ClientDeliveryPack) -> None:
@@ -651,6 +722,11 @@ def write_client_review_html(
             f'<a class="dl-btn" href="{cover_href}" download>Cover PNG</a>',
             f'<a class="dl-btn" href="{dir_href}" download>Director JSON</a>',
         ]
+        if pack.social_zip_path is not None:
+            social_href = _rel_href(base_dir, pack.social_zip_path)
+            links.insert(
+                0, f'<a class="dl-btn dl-primary" href="{social_href}" download>Social ZIP</a>'
+            )
         if pack.grill_json_path is not None:
             grill_href = _rel_href(base_dir, pack.grill_json_path)
             links.append(f'<a class="dl-btn" href="{grill_href}" download>Grill JSON</a>')
@@ -894,6 +970,7 @@ def write_client_review_html(
     <header>
       <div>
         <h1>{title_esc}</h1>
+        <a class="dl-btn" href="blind-review.html">هەڵسەنگاندنی کلیپەکان</a>
         <div class="sub">Source: {source_esc}</div>
       </div>
       <div class="meta-pills">
@@ -912,5 +989,6 @@ def write_client_review_html(
 </body>
 </html>
 """
+    write_blind_review([p.mp4_path for p in packs], base_dir / "blind-review.html")
     write_text_atomic(output_html_path, doc)
     return output_html_path
