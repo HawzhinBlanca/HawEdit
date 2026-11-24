@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from hawedit.atomic_fs import write_text_atomic
 from hawedit.delivery import ms_to_srt_time, parse_srt_times
-from hawedit.v8.director import DEFAULT_OMNI_URL
+from hawedit.v8.director import DEFAULT_OMNI_URL, OMNI_URL_ENV
 from hawedit.v8.story_editor import _call_structured_llm
 
 
@@ -20,12 +23,12 @@ class Phrase:
 
 
 def read_phrases(srt: Path) -> list[Phrase]:
-    text = srt.read_text(encoding="utf-8-sig").strip()
+    text = "\n".join(srt.read_text(encoding="utf-8-sig").splitlines()).strip()
     times = parse_srt_times(text)
     if not times:
         raise ValueError("No source cues")
     phrases: list[Phrase] = []
-    for span, block in zip(times, text.split("\n\n"), strict=True):
+    for span, block in zip(times, re.split(r"\n[ \t]*\n+", text), strict=True):
         start, end = span
         words = " ".join(block.splitlines()[2:]).strip()
         if not words or (phrases and phrases[-1].end > start):
@@ -77,10 +80,13 @@ def translate_sidecar(srt: Path, language: str, model: str | None) -> Path:
         },
         "required": ["cues"],
     }
+    base_url = os.environ.get(OMNI_URL_ENV, "").strip() or DEFAULT_OMNI_URL
+    if urlparse(base_url).hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("Local subtitle translation requires a loopback model URL")
     response, _ = _call_structured_llm(
         backend="local-omni",
         model_id=model,
-        base_url=DEFAULT_OMNI_URL,
+        base_url=base_url,
         default_gemini_model="",
         api_key=None,
         transport=None,

@@ -10,8 +10,8 @@ from hawedit.credentials import ENV_FILE
 
 def media_setting(name: str) -> str | None:
     env = os.environ.get("HAWEDIT_" + name.upper())
-    if env:
-        return env
+    if env is not None and env.strip():
+        return env.strip()
     path = ENV_FILE.with_name("media-tools.json")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -22,4 +22,4 @@ def media_setting(name: str) -> str | None:
     value = data.get(name)
     if value is not None and not isinstance(value, str):
         raise ValueError(f"media-tools.json expects text for {name}")
-    return value
+    return value.strip() or None if isinstance(value, str) else None

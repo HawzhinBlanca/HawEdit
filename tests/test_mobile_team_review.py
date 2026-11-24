@@ -6,6 +6,8 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from hawedit.v8.team_review import ReviewStore, load_release_candidates, review_handler
 
 
@@ -61,10 +63,10 @@ def test_private_team_scores_approval_and_range_downloads(tmp_path: Path) -> Non
 
         try:
             assert request("GET", "/", {})[0] == 401
-            assert request("GET", "/video/" + key, {**headers("reader"), "Range": "bytes=0-3"}) == (
-                206,
-                b"test",
-            )
+            assert request("GET", "/?v=1", headers("reader"))[0] == 200
+            assert request(
+                "GET", "/video/" + key + "?t=1", {**headers("reader"), "Range": "bytes=0-3"}
+            ) == (206, b"test")
             assert request("GET", "/dub-en/" + key, headers("reader")) == (200, b"dub-test")
             status, vtt = request("GET", "/sub-en/" + key, headers("reader"))
             assert status == 200 and b"00:00:00.100 --> 00:00:01.001" in vtt
@@ -81,6 +83,8 @@ def test_private_team_scores_approval_and_range_downloads(tmp_path: Path) -> Non
             held = json.dumps({"scores": scores, "notes": "", "decision": "hold"})
             assert request("POST", "/ballot/" + key, headers("editor"), held)[0] == 200
             assert request("GET", "/pack/" + key, headers("reader"))[0] == 403
+            with pytest.raises(ValueError, match="already exists"):
+                store.invite("reader", False)
         finally:
             server.shutdown()
             thread.join()

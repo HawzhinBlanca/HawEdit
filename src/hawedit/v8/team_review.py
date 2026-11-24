@@ -32,7 +32,9 @@ class ReviewStore:
     def __init__(self, state: Path):
         self.private = PrivateDirectory(state)
         self.db = self.private.path / "reviews.sqlite"
-        with closing(sqlite3.connect(self.db)) as db:
+        with closing(sqlite3.connect(self.db, timeout=10)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA busy_timeout=10000")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS members(name TEXT PRIMARY KEY,
                     digest TEXT, approver INTEGER);
@@ -46,11 +48,14 @@ class ReviewStore:
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
             raise ValueError("Use a short alphanumeric member name")
         token = secrets.token_urlsafe(32)
-        with closing(sqlite3.connect(self.db)) as db, db:
-            db.execute(
-                "INSERT INTO members VALUES(?,?,?)",
-                (name, hashlib.sha256(token.encode()).hexdigest(), int(approver)),
-            )
+        try:
+            with closing(sqlite3.connect(self.db, timeout=10)) as db, db:
+                db.execute(
+                    "INSERT INTO members VALUES(?,?,?)",
+                    (name, hashlib.sha256(token.encode()).hexdigest(), int(approver)),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"Member {name!r} already exists") from exc
         return token
 
     def authenticate(self, header: str) -> tuple[str, bool] | None:
@@ -60,7 +65,7 @@ class ReviewStore:
             name, token = base64.b64decode(header[6:], validate=True).decode().split(":", 1)
         except (ValueError, UnicodeError):
             return None
-        with closing(sqlite3.connect(self.db)) as db:
+        with closing(sqlite3.connect(self.db, timeout=10)) as db:
             row = db.execute(
                 "SELECT digest, approver FROM members WHERE name=?", (name,)
             ).fetchone()
@@ -87,7 +92,7 @@ class ReviewStore:
             raise ValueError("Invalid review")
         if decision != "review" and not approver:
             raise PermissionError("Only an approver can change release status")
-        with closing(sqlite3.connect(self.db)) as db, db:
+        with closing(sqlite3.connect(self.db, timeout=10)) as db, db:
             db.execute(
                 "INSERT OR REPLACE INTO ballots VALUES(?,?,?)",
                 (bundle, name, json.dumps(data, ensure_ascii=False)),
@@ -98,7 +103,7 @@ class ReviewStore:
                 )
 
     def approved(self, bundle: str) -> bool:
-        with closing(sqlite3.connect(self.db)) as db:
+        with closing(sqlite3.connect(self.db, timeout=10)) as db:
             row = db.execute("SELECT decision FROM decisions WHERE bundle=?", (bundle,)).fetchone()
         return bool(row == ("approve",))
 
@@ -257,10 +262,11 @@ def review_handler(
             member = self.identity()
             if member is None:
                 return
-            if self.path == "/":
+            route = self.path.split("?", 1)[0]
+            if route == "/":
                 self.reply(200, _review_page(store, clips, member[1]), "text/html; charset=utf-8")
                 return
-            parts = self.path.split("/")
+            parts = route.split("/")
             if len(parts) != 3 or parts[2] not in clips:
                 self.reply(404, b"Unknown candidate")
                 return
@@ -370,7 +376,10 @@ def team_cli(argv: list[str]) -> int:
         return 0
     if bool(args.tls_cert) != bool(args.tls_key):
         parser.error("Supply both TLS certificate and key")
-    address = ipaddress.IPv4Address(args.bind)
+    try:
+        address = ipaddress.IPv4Address(args.bind)
+    except ipaddress.AddressValueError as exc:
+        parser.error(f"Invalid IPv4 bind address: {exc}")
     if not address.is_loopback and (not address.is_private or not args.tls_cert):
         parser.error("A mobile listener requires a private interface and TLS")
     tls = None

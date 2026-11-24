@@ -13,18 +13,19 @@ from urllib.parse import parse_qs, urlsplit
 
 
 def youtube_video_id(url: str) -> str:
-    parsed = urlsplit(url)
+    parsed = urlsplit(url.strip())
     host = parsed.netloc.lower()
+    path = parsed.path[:-1] if parsed.path.endswith("/") and len(parsed.path) > 1 else parsed.path
     video_id = ""
     if parsed.scheme == "https":
         if host == "youtu.be":
-            video_id = parsed.path.removeprefix("/")
+            video_id = path.removeprefix("/")
         elif host in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
-            if parsed.path == "/watch":
+            if path == "/watch":
                 ids = parse_qs(parsed.query).get("v", [])
                 video_id = ids[0] if len(ids) == 1 else ""
-            elif parsed.path.startswith(("/shorts/", "/live/")):
-                video_id = parsed.path.split("/", 2)[-1]
+            elif path.startswith(("/shorts/", "/live/")):
+                video_id = path.split("/", 2)[-1]
     if not re.fullmatch(r"[a-zA-Z0-9_-]{11}", video_id):
         raise ValueError("Enter an HTTPS YouTube video URL for one episode")
     return video_id

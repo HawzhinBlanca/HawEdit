@@ -582,21 +582,28 @@ def write_client_delivery_pack(
     copy = "\n\n".join(part.strip() for part in (resolved_hook, *post_cta) if part and part.strip())
     variants = []
     for lang in dict.fromkeys((*subtitle_languages, *dub_languages)):
-        subtitle = translate_sidecar(
-            srt_path, lang, translation_model or media_setting("translation_model")
-        )
-        variants.append((subtitle, f"captions.{lang}.draft.srt"))
-        if lang in dub_languages:
-            voice_python = media_setting("voice_python")
-            weights = media_setting("voice_weights")
-            if not voice_python or not weights:
-                raise DeliveryPackError(
-                    "Set HAWEDIT_VOICE_PYTHON and HAWEDIT_VOICE_WEIGHTS for dubbing"
-                )
-            dubbed = dub_reel(
-                pack.mp4_path, subtitle, lang, worker=Path(voice_python), weights=Path(weights)
+        try:
+            subtitle = translate_sidecar(
+                srt_path, lang, translation_model or media_setting("translation_model")
             )
-            variants.append((dubbed, f"reel.{lang}.dub.mp4"))
+            variants.append((subtitle, f"captions.{lang}.draft.srt"))
+            if lang in dub_languages:
+                voice_python = media_setting("voice_python")
+                weights = media_setting("voice_weights")
+                if not voice_python or not weights:
+                    raise DeliveryPackError(
+                        "Set HAWEDIT_VOICE_PYTHON and HAWEDIT_VOICE_WEIGHTS for dubbing"
+                    )
+                dubbed = dub_reel(
+                    pack.mp4_path, subtitle, lang, worker=Path(voice_python), weights=Path(weights)
+                )
+                variants.append((dubbed, f"reel.{lang}.dub.mp4"))
+        except DeliveryPackError:
+            raise
+        except Exception as exc:
+            raise DeliveryPackError(
+                f"Failed to build {lang} localized variant for {result.clip_id}: {exc}"
+            ) from exc
     social = write_social_handoff(
         pack.mp4_path, pack.srt_path, pack.cover_png_path, copy, variants=variants
     )
@@ -615,6 +622,8 @@ def verify_client_pack_complete(pack: ClientDeliveryPack) -> None:
     ]
     if pack.grill_json_path is not None:
         required.append(("grill_json_path", pack.grill_json_path))
+    if pack.social_zip_path is not None:
+        required.append(("social_zip_path", pack.social_zip_path))
 
     defects: list[str] = []
     for label, path in required:
@@ -652,6 +661,24 @@ def verify_client_pack_complete(pack: ClientDeliveryPack) -> None:
                     defects.append(f"grill_json_path invalid object: {pack.grill_json_path}")
             except (OSError, json.JSONDecodeError) as exc:
                 defects.append(f"grill_json_path invalid JSON: {exc}")
+
+        if pack.social_zip_path is not None:
+            try:
+                with zipfile.ZipFile(pack.social_zip_path) as archive:
+                    names = set(archive.namelist())
+                    missing_members = {
+                        "reel.mp4",
+                        "captions.ckb.srt",
+                        "cover.png",
+                        "post.txt",
+                    } - names
+                    if missing_members:
+                        defects.append(
+                            f"social_zip_path missing members {sorted(missing_members)}: "
+                            f"{pack.social_zip_path}"
+                        )
+            except (OSError, zipfile.BadZipFile) as exc:
+                defects.append(f"social_zip_path invalid ZIP: {exc}")
 
     if defects:
         raise DeliveryPackError(

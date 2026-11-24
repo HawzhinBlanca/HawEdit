@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -37,13 +39,34 @@ def verify_voice_consent(receipt: Path, reference: Path, movie: Path, language: 
         raise ValueError("Voice consent is expired or missing a time zone")
     if not isinstance(data.get("languages"), list) or language not in data["languages"]:
         raise ValueError("Voice consent does not cover this language")
+    rel_evidence = Path(data["evidence_file"])
+    grant_dir = receipt.parent.resolve()
+    evidence = (grant_dir / rel_evidence).resolve()
+    if rel_evidence.is_absolute() or not evidence.is_relative_to(grant_dir):
+        raise ValueError("Consent evidence_file must stay inside the consent directory")
     checks = (
         (reference, "reference_sha256"),
         (movie, "reel_sha256"),
-        (receipt.parent / data["evidence_file"], "evidence_sha256"),
+        (evidence, "evidence_sha256"),
     )
-    if any(data.get(key) != file_digest(path) for path, key in checks):
-        raise ValueError("Voice consent does not match the reference, reel or evidence")
+    for path, key in checks:
+        expected = data.get(key)
+        if not isinstance(expected, str) or not path.is_file():
+            raise ValueError("Voice consent does not match the reference, reel or evidence")
+        if not hmac.compare_digest(expected, file_digest(path)):
+            raise ValueError("Voice consent does not match the reference, reel or evidence")
+
+
+def _atempo_chain(factor: float) -> str:
+    if factor > 10.0:
+        raise ValueError(f"Dubbed cue exceeds slot duration by {factor:.1f}x")
+    parts: list[str] = []
+    remaining = max(1.0, factor)
+    while remaining > 2.0:
+        parts.append("atempo=2.0")
+        remaining /= 2.0
+    parts.append(f"atempo={remaining:.6f}")
+    return ",".join(parts)
 
 
 def dub_reel(
@@ -64,10 +87,17 @@ def dub_reel(
     if binary is None:
         raise ValueError("FFmpeg is required for dubbing")
     duration = probe_duration_ms(movie, binary)
-    txt = subtitles.read_text(encoding="utf-8-sig").strip()
+    txt = "\n".join(subtitles.read_text(encoding="utf-8-sig").splitlines()).strip()
     times = parse_srt_times(txt)
-    phrases = [" ".join(b.splitlines()[2:]).strip() for b in txt.split("\n\n")]
-    if not times or len(phrases) != len(times) or not all(phrases) or times[-1][1] > duration:
+    blocks = re.split(r"\n[ \t]*\n+", txt) if txt else []
+    phrases = [" ".join(b.splitlines()[2:]).strip() for b in blocks]
+    if (
+        not times
+        or len(phrases) != len(times)
+        or not all(phrases)
+        or any(end <= start for start, end in times)
+        or times[-1][1] > duration
+    ):
         raise ValueError("Dub subtitles must cover speech within the rendered video")
     if any(a[1] > b[0] for a, b in pairwise(times)):
         raise ValueError("Overlapping dub cues")
@@ -102,12 +132,16 @@ def dub_reel(
         for index, (start, end) in enumerate(times):
             wav = stage / f"cue-{index}.wav"
             with wave.open(str(wav), "rb") as cue:
-                length = cue.getnframes() / cue.getframerate()
+                rate = cue.getframerate()
+                frames = cue.getnframes()
+                if rate <= 0 or frames <= 0:
+                    raise ValueError(f"Voice worker returned empty audio for cue {index + 1}")
+                length = frames / rate
             factor = max(1.0, length * 1000 / (end - start))
             cmd.extend(["-i", str(wav)])
             label = f"v{index}"
             filters.append(
-                f"[{index + 1}:a]atempo={factor:.6f},atrim=duration={(end - start) / 1000:.3f},"
+                f"[{index + 1}:a]{_atempo_chain(factor)},atrim=duration={(end - start) / 1000:.3f},"
                 f"adelay={start}:all=1[{label}]"
             )
             labels.append(f"[{label}]")

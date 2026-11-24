@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from hawedit.atomic_fs import write_text_atomic
-from hawedit.studio_uploads import UploadStore
+from hawedit.studio_uploads import UploadError, UploadStore
 from hawedit.v8.media_settings import media_setting
 from hawedit.v8.youtube import resolve_youtube_source, youtube_video_id
 
@@ -28,8 +28,13 @@ class YouTubeImports:
             if self.active == key:
                 return {"state": "importing", "video_id": video_id}
             if receipt.is_file():
-                source_id = json.loads(receipt.read_text(encoding="utf-8"))["source_id"]
-                return {"state": "ready", "source": store.describe(source_id)}
+                try:
+                    source_id = json.loads(receipt.read_text(encoding="utf-8"))["source_id"]
+                    if not isinstance(source_id, str):
+                        raise ValueError("Invalid receipt source_id")
+                    return {"state": "ready", "source": store.describe(source_id)}
+                except (OSError, KeyError, ValueError, UploadError):
+                    receipt.unlink(missing_ok=True)
             if not start:
                 if self.failure and self.failure[:2] == key:
                     return {"state": "failed", "error": self.failure[2]}

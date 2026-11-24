@@ -37,7 +37,13 @@ class InstagramClient:
         try:
             conn.request(method, route, body=body, headers=dict(headers))
             result = conn.getresponse()
-            payload = json.loads(result.read(256 * 1024))
+            raw = result.read(256 * 1024)
+            try:
+                payload = json.loads(raw)
+            except (ValueError, UnicodeError) as exc:
+                raise ValueError(
+                    f"Meta returned HTTP {result.status} non-JSON on {method} {route.split('?')[0]}"
+                ) from exc
             if not isinstance(payload, dict) or result.status >= 400:
                 raise ValueError(
                     f"Meta returned HTTP {result.status} on {method} {route.split('?')[0]}"
@@ -100,22 +106,36 @@ def publish_approved(store: ReviewStore, package: Path, account: str, api: Insta
                 (bundle, account),
             ).fetchone()
             if row is None:
-                caption = archive.read("post.txt").decode("utf-8").strip()
-                resp = api.graph(
-                    account + "/media",
-                    {
-                        "media_type": "REELS",
-                        "upload_type": "resumable",
-                        "caption": caption,
-                        "thumb_offset": "600",
-                    },
-                )
-                container = str(resp["id"])
-                if not container.isascii() or not container.isdecimal():
-                    raise ValueError("Invalid Instagram container response")
                 db.execute(
                     "INSERT INTO instagram VALUES(?,?,?,?,?)",
-                    (bundle, account, container, "new", ""),
+                    (bundle, account, "", "creating", ""),
+                )
+                db.commit()
+                try:
+                    caption = archive.read("post.txt").decode("utf-8").strip()
+                    resp = api.graph(
+                        account + "/media",
+                        {
+                            "media_type": "REELS",
+                            "upload_type": "resumable",
+                            "caption": caption,
+                            "thumb_offset": "600",
+                        },
+                    )
+                    container = str(resp.get("id", ""))
+                    if not container or not container.isascii() or not container.isdecimal():
+                        raise ValueError("Invalid Instagram container response")
+                except Exception:
+                    db.execute(
+                        "DELETE FROM instagram WHERE bundle=? AND account=? AND phase='creating'",
+                        (bundle, account),
+                    )
+                    db.commit()
+                    raise
+                db.execute(
+                    "UPDATE instagram SET container=?, phase='new' "
+                    "WHERE bundle=? AND account=? AND phase='creating'",
+                    (container, bundle, account),
                 )
                 db.commit()
             else:
@@ -123,20 +143,42 @@ def publish_approved(store: ReviewStore, package: Path, account: str, api: Insta
                 db.commit()
                 if phase == "published":
                     return str(receipt)
-            # Serialize upload attempts. Once upload succeeds every retry reuses the container.
+                if phase == "creating":
+                    raise ValueError("Instagram container creation already in progress")
+            # Serialize upload attempts without holding a SQLite write lock across network I/O.
             db.execute("BEGIN IMMEDIATE")
             phase = db.execute(
                 "SELECT phase FROM instagram WHERE bundle=? AND account=?", (bundle, account)
             ).fetchone()[0]
-            if phase == "new":
-                member = archive.getinfo("reel.mp4")
-                with archive.open(member) as movie:
-                    api.upload(container, movie, member.file_size)
+            if phase == "uploading":
+                db.commit()
+                raise ValueError("Instagram upload already in progress for this container")
+            should_upload = phase == "new"
+            if should_upload:
                 db.execute(
-                    "UPDATE instagram SET phase='uploaded' WHERE bundle=? AND account=?",
+                    "UPDATE instagram SET phase='uploading' WHERE bundle=? AND account=?",
                     (bundle, account),
                 )
             db.commit()
+            if should_upload:
+                try:
+                    member = archive.getinfo("reel.mp4")
+                    with archive.open(member) as movie:
+                        api.upload(container, movie, member.file_size)
+                except Exception:
+                    db.execute(
+                        "UPDATE instagram SET phase='new' "
+                        "WHERE bundle=? AND account=? AND phase='uploading'",
+                        (bundle, account),
+                    )
+                    db.commit()
+                    raise
+                db.execute(
+                    "UPDATE instagram SET phase='uploaded' "
+                    "WHERE bundle=? AND account=? AND phase='uploading'",
+                    (bundle, account),
+                )
+                db.commit()
             for attempt in range(6):
                 status = api.graph(container + "?fields=status_code").get("status_code")
                 if status == "PUBLISHED":
@@ -160,7 +202,11 @@ def publish_approved(store: ReviewStore, package: Path, account: str, api: Insta
                     raise ValueError(f"Instagram container {container} has status {status!r}")
                 time.sleep(10)
             db.execute("BEGIN IMMEDIATE")
-            if not store.approved(bundle):
+            decision = db.execute(
+                "SELECT decision FROM decisions WHERE bundle=?", (bundle,)
+            ).fetchone()
+            if decision != ("approve",):
+                db.rollback()
                 raise ValueError("Editorial approval has been withdrawn")
             changed = db.execute(
                 "UPDATE instagram SET phase='publishing' WHERE bundle=? AND account=? "
@@ -173,7 +219,9 @@ def publish_approved(store: ReviewStore, package: Path, account: str, api: Insta
                     "Publish already requested; check this container again for its result"
                 )
             result = api.graph(account + "/media_publish", {"creation_id": container})
-            media_id = str(result["id"])
+            media_id = str(result.get("id", ""))
+            if not media_id or not media_id.isascii() or not media_id.isdecimal():
+                raise ValueError("Invalid Instagram publish response")
             db.execute(
                 "UPDATE instagram SET phase='published',receipt=? WHERE bundle=? AND account=?",
                 (media_id, bundle, account),

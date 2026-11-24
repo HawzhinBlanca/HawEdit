@@ -551,6 +551,13 @@ def test_verify_client_pack_complete_fails_loudly_on_missing_or_empty_artifact(
     with pytest.raises(DeliveryPackError, match="otio_path invalid JSON"):
         verify_client_pack_complete(pack)
 
+    # Restore valid OTIO, then corrupt social ZIP -> must fail loudly
+    pack.otio_path.write_text('{"OTIO_SCHEMA": "Timeline.1"}', encoding="utf-8")
+    assert pack.social_zip_path is not None
+    pack.social_zip_path.write_bytes(b"not-a-zip")
+    with pytest.raises(DeliveryPackError, match="social_zip_path invalid ZIP"):
+        verify_client_pack_complete(pack)
+
 
 def test_extract_v8_cover_png_real_ffmpeg_1080x1920(tmp_path: Path) -> None:
     ffmpeg = find_ffmpeg()
