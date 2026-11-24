@@ -1175,7 +1175,34 @@ does not block T0b (the D-number renumber), which is independent.
 
 ---
 
-## #24 · The VEX review date does not move when the digest it reviewed does
+## #24 · The VEX review date does not move when the digest it reviewed does — **RESOLVED 2026-10-15** (D-333)
+
+> **Resolved by owner review, 2026-10-15 (option 1).** Asked "Do you approve me applying the VEX
+> update from the review packet, with you as the reviewer (review date today, the 3 new advisory
+> rulings, the over-strong claims reworded to match the code, v12's file added to the
+> allowlist)?", the owner chose "Approve VEX update". `security/wsl-asr-vex.json` now reads
+> `reviewed` 2026-10-15, `expires` 2026-11-14 and `source_sha256` `4e607203…` — the
+> `package_digest(src/hawedit)` of the final `claude/v12-fused-model` tree — with fifteen
+> dispositions. `tests/test_vex.py` pins `REVIEWED_VEX_SOURCE = (2026-10-15, 4e607203…)` beside
+> its `BUILD_LOCK_SHA256` check, so a digest rebind that does not move `reviewed` (and the pin,
+> deliberately) fails. Evidence: `omniasr-v11-audit/release/vex_review/` (`VEX_REVIEW_PACKET.md`,
+> `control_audit.md`, `osv_scan_2026-10-14.json`). The review was of that packet and this
+> source; the live gate (`hawedit-wsl-vex`, pip-audit on the provisioned WSL runtime) was not
+> run as part of it and is still the runtime confirmation. The pattern this entry names had
+> recurred meanwhile: `1cea90d`, `e8ab656`, `4f9bedb` and `6bed0c9` rebound `source_sha256`
+> (`81f6f606…` → `39e585d4…`) with `reviewed` left at 2026-08-09 and the policy already expired.
+> **Re-pinned 2026-10-15**, the same day as the owner review: `source_sha256` and the pin moved
+> `4e607203…` → `666b8770…` for a diff limited to the T8 retry's device moves
+> (`src/hawedit/asr.py`; tests in `tests/test_asr_completion.py`), which changes no VEX control (no
+> new loader, input, asset or dependency). The owner approved the change ("option 1, yes push and
+> open the PR") but did not separately re-review the new digest; `reviewed` is unchanged. D-333.
+>
+> **Re-pinned again 2026-10-15**, same day: `666b8770…` → `18fe2dd7…` for a type-annotation and
+> `sys.platform`-guard-only diff (Windows-only APIs, so mypy passes on the Linux CI runner; files
+> listed in D-333). No VEX control is affected. The owner approved it ("yes fix the CI errors") but
+> did not separately re-review the new digest; `reviewed` is unchanged.
+>
+> The original text is kept below.
 
 `security/wsl-asr-vex.json` carries twelve CVE dispositions, a `reviewed` date of 2026-08-09,
 and an `applicability.source_sha256`. `tests/test_vex.py:131` binds that digest to
@@ -1234,3 +1261,59 @@ Tracked under Items 9, 10, and 11 of Reality Check (2026-09-13):
    (Blocker #3) and `HF_TOKEN` for PyAnnote diarization (Blocker #4), allowing real-media
    end-to-end runs without mock fallbacks in CI.
 
+
+## #26 · A pipeline test passes only because the face detector fires on caption text — needs Hawa — **RESOLVED 2026-11-17** (D-335)
+
+Found 2026-11-17 while fixing Kurdish caption direction (D-334). HawaPC01, Windows 11, `.venv`
+CPython 3.12, ffmpeg 8.1.1-full, opencv-python-headless 4.12.0.88; no `models/face_detection_yunet.onnx`
+in this checkout.
+
+`tests/test_pipeline.py::test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance`
+renders the 3-cut fixture with a `face_tracked` crop and expects the render to be published.
+`delivery.py` Clause 7 publishes a `face_tracked` clip under 3 s only if
+`faces.face_detected_share >= 0.50`.
+
+### Measured
+
+| Tree | `face_detected_share` | Detail | Test |
+|---|---|---|---|
+| `0ea5158` (before D-334) | 0.5 (5 of 10 samples) | `median_face_height_share` 0.0302, `median_y_center_share` 0.7833 | passes, exactly at the floor |
+| `e86a793` (after D-334) | 0.1 | refused: `face_tracking_unsubstantiated` | fails |
+
+The rendered frame contains no face: it is black with a hook card and one karaoke line
+(`specs/kurdish-rtl-base-direction/captures/speaker-ambiguous-base-frame.jpg`). A "face" 3 % of
+the frame high, centred 78 % of the way down, is the caption line. Before D-334 the reversed
+caption happened to trigger the detector in half the samples; drawn in reading order it triggers
+it in one. The same pinned digest (`SPEAKER_AMBIGUOUS_RENDER_SHA256`) is also stale, because the
+caption pixels changed.
+
+### Why this is not a code task
+
+Three honest ways out exist, and they mean different things:
+
+1. **Fix the measurement** so a detection inside the caption band, or below a minimum face
+   height, is not a face; then give this test a crop that really contains a face, or have it
+   expect the refusal. This changes what `measure.py` certifies for every delivery.
+2. **Change the test to expect the refusal.** That is the truthful result for a faceless frame,
+   but it changes what the test is for (the fallback path publishing).
+3. **Leave it red** until a fixture with a real face exists.
+
+Lowering the floor, passing `min_face_share`, or re-pinning the digest to make it pass would be
+editing a test to match an accident. None of those was done. Until Hawa picks one, the gate has
+this one failure and no `kurdish-rtl-base-direction` row can flip.
+
+### Resolved 2026-11-17 by D-335
+
+Hawa chose way out 1, "Fix the measurement", and approved `specs/face-probe-height-floor/plan.md`.
+`measure.probe_face_tracking` now drops a detection under 5 % of the frame height
+(`MIN_FACE_HEIGHT_SHARE`), so caption text is no longer a face. The same render measures
+`face_detected_share` 0.0, and the test expects the refusal:
+`face_tracking_unsubstantiated`, measured 0.0, with the clip still claiming `face_tracked`.
+
+The gate on the tree with the floor but before the test change (`0d3a8c2`, HawaPC01, Windows 11,
+`.venv` CPython 3.12.10, opencv-python-headless 4.12.0): 6,559 passed, 1 failed, and the one
+failure was this test with "measured 0.0". No other test changed outcome.
+
+Still open, and not part of this blocker: `tests/fixtures/` has no clip with a real face, so no
+test publishes a `face_tracked` render; `SPEAKER_AMBIGUOUS_RENDER_SHA256` is still pinned to the
+pre-D-334 digest and is not checked on a refused render.

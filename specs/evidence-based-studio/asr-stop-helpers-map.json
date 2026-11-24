@@ -1,0 +1,45 @@
+{
+  "started_utc": "2026-10-04T17:42:33.886070+00:00",
+  "git_sha": "3fa765cd2dd48900fc900c949f63df2648eb7430",
+  "status_before": " M DECISIONS.md\n M src/hawedit/asr.py\n M src/hawedit/pipeline.py\n?? specs/evidence-based-studio/asr-stop-before-map.json\n?? specs/evidence-based-studio/asr-stop-impact-map.md\n?? specs/evidence-based-studio/asr-stop-plan.md\n?? specs/evidence-based-studio/asr-stop-research.md\n?? specs/evidence-based-studio/asr-stop-spec.md\n?? tests/test_asr_stop.py\n",
+  "source_hashes_before": {
+    "src/hawedit/asr.py": "11cc82a9573c12dea9578466e0e8830d90eeebe2c5b81a6e687b37191b9e7176",
+    "src/hawedit/pipeline.py": "8b8dd7e80ca0e4deae758e62ffa514630ebb09a4a37ac6fbf925c56d10338ea6",
+    "tests/test_asr.py": "505565cc698a44ac0c05ef71fa6ff289586ddeb6f04105f44b300ff41c5092a1"
+  },
+  "scope": "Approved production first-failure repair: actual pre-edit definitions/references, no source edit, model change, cloud call or publication.",
+  "records": [
+    {
+      "file": "src/hawedit/asr.py",
+      "symbol": "AsrProductionFailure",
+      "definition": "[{\"name_path\": \"AsrProductionFailure\", \"kind\": \"Class\", \"relative_path\": \"src/hawedit/asr.py\", \"body_location\": {\"start_line\": 950, \"end_line\": 971}}]",
+      "references": "[]"
+    },
+    {
+      "file": "src/hawedit/asr.py",
+      "symbol": "AsrProductionFailure/__init__",
+      "definition": "[{\"name_path\": \"AsrProductionFailure/__init__\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/asr.py\", \"body_location\": {\"start_line\": 953, \"end_line\": 971}}]",
+      "references": "[]"
+    },
+    {
+      "file": "src/hawedit/pipeline.py",
+      "symbol": "_unresolved_transcript_failure",
+      "definition": "[{\"name_path\": \"_unresolved_transcript_failure\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/pipeline.py\", \"body_location\": {\"start_line\": 2533, \"end_line\": 2550}}]",
+      "references": "[]"
+    },
+    {
+      "file": "tests/test_asr.py",
+      "symbol": "test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_infeasible",
+      "definition": "[{\"name_path\": \"test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_infeasible\", \"kind\": \"Function\", \"relative_path\": \"tests/test_asr.py\", \"body_location\": {\"start_line\": 800, \"end_line\": 842}}]",
+      "references": "[]"
+    }
+  ],
+  "finished_utc": "2026-10-04T17:42:45.552059+00:00",
+  "status_after": " M DECISIONS.md\n M src/hawedit/asr.py\n M src/hawedit/pipeline.py\n?? specs/evidence-based-studio/asr-stop-before-map.json\n?? specs/evidence-based-studio/asr-stop-impact-map.md\n?? specs/evidence-based-studio/asr-stop-plan.md\n?? specs/evidence-based-studio/asr-stop-research.md\n?? specs/evidence-based-studio/asr-stop-spec.md\n?? tests/test_asr_stop.py\n",
+  "source_hashes_after": {
+    "src/hawedit/asr.py": "11cc82a9573c12dea9578466e0e8830d90eeebe2c5b81a6e687b37191b9e7176",
+    "src/hawedit/pipeline.py": "8b8dd7e80ca0e4deae758e62ffa514630ebb09a4a37ac6fbf925c56d10338ea6",
+    "tests/test_asr.py": "505565cc698a44ac0c05ef71fa6ff289586ddeb6f04105f44b300ff41c5092a1"
+  },
+  "source_unchanged": true
+}

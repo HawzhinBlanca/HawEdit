@@ -1,0 +1,23 @@
+Could not find containing symbol for src\hawedit\comparison_kit.py:40:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\visual_scorecard.py:17:35. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:20:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:29:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:31:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:12:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:32:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:13:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:33:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:39:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:19:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:37:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:17:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:36:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:16:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:34:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:14:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:35:5. Returning file symbol instead
+Could not find containing symbol for tests\test_comparison_kit.py:15:4. Returning file symbol instead
+Could not find containing symbol for specs\evidence-based-studio\acceptance_current_probe.py:11:37. Returning file symbol instead
+Could not find containing symbol for src\hawedit\visual_scorecard.py:36:5. Returning file symbol instead
+Could not find containing symbol for tests\test_visual_scorecard.py:26:4. Returning file symbol instead
+Captured 25 fresh paired-contract definition/reference records

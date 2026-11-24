@@ -1,0 +1,2218 @@
+"""Offline vanilla studio, with explicit unavailable and private-review boundaries."""
+
+from __future__ import annotations
+
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="ckb" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HawEdit — Pro Kurdish Social Reel Studio</title>
+    <style>
+      @font-face {
+        font-family: 'Vazirmatn';
+        src: url('/assets/fonts/Vazirmatn.ttf') format('truetype');
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      :root {
+        color-scheme: dark;
+        --bg: #111315;
+        --surface: #1c2023;
+        --border: #737d85;
+        --text: #f5f7f8;
+        --muted: #c2c8ce;
+        --accent: #67dce8;
+        --gold: #ffdc8a;
+        --error: #ffb7af;
+        --ok: #7ef2a6;
+      }
+      * {
+        box-sizing: border-box;
+        min-inline-size: 0;
+        letter-spacing: 0;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          16px/1.65 'Vazirmatn',
+          sans-serif;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+        max-inline-size: 100%;
+      }
+      button,
+      select,
+      input[type='file'],
+      input[type='search'],
+      input[type='file']::file-selector-button,
+      summary,
+      .action {
+        min-block-size: 44px;
+      }
+      button,
+      .action {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 16px;
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: not-allowed;
+        border-style: dashed;
+      }
+      button:not(:disabled):hover,
+      .action:hover {
+        border-color: var(--accent);
+      }
+      :focus-visible {
+        outline: 3px solid var(--gold);
+        outline-offset: 4px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      h2 {
+        font-size: 20px;
+      }
+      h3 {
+        font-size: 17px;
+      }
+      p,
+      bdi,
+      option,
+      dd,
+      li {
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: var(--accent);
+      }
+      header {
+        border-block-end: 1px solid var(--border);
+        padding: 20px 24px;
+      }
+      .header-inner {
+        max-inline-size: 1280px;
+        margin: auto;
+        display: flex;
+        gap: 16px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+      }
+      .brand span {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      #engineStatus {
+        color: var(--gold);
+        font-size: 14px;
+      }
+      main {
+        max-inline-size: 1280px;
+        margin: auto;
+        padding: 24px;
+        display: grid;
+        grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+        gap: 32px;
+      }
+      section {
+        padding-block-end: 24px;
+      }
+      .source-column {
+        border-inline-end: 1px solid var(--border);
+        padding-inline-end: 28px;
+      }
+      .stack {
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+      label {
+        font-weight: 600;
+      }
+      input[type='file'] {
+        inline-size: 100%;
+        padding: 8px;
+        border: 1px dashed var(--border);
+        border-radius: 6px;
+      }
+      input[type='file']::file-selector-button {
+        margin-inline-end: 12px;
+        border: 0;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font: inherit;
+        color: #102025;
+        background: var(--accent);
+      }
+      select,
+      input[type='search'],
+      textarea {
+        inline-size: 100%;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 12px;
+      }
+      select {
+        text-overflow: ellipsis;
+      }
+      textarea {
+        resize: vertical;
+      }
+      .primary {
+        color: #102025;
+        background: var(--accent);
+        font-weight: 700;
+      }
+      .primary:disabled {
+        background: var(--surface);
+        color: var(--muted);
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .error {
+        color: var(--error);
+        font-size: 14px;
+        white-space: pre-line;
+      }
+      .warning {
+        color: var(--gold);
+        font-size: 14px;
+      }
+      .rule {
+        border-block-start: 1px solid var(--border);
+        padding-block-start: 20px;
+      }
+      details {
+        border-block: 1px solid var(--border);
+        padding-block: 8px;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+        padding-block: 8px;
+      }
+      fieldset {
+        border: 0;
+        padding: 16px 0 8px;
+        margin: 0;
+      }
+      .settings-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 16px;
+      }
+      .checkbox {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        min-block-size: 44px;
+        font-size: 14px;
+      }
+      input[type='checkbox'] {
+        inline-size: 22px;
+        block-size: 22px;
+        flex: none;
+        accent-color: var(--accent);
+      }
+      progress {
+        inline-size: 100%;
+        block-size: 12px;
+        accent-color: var(--accent);
+      }
+      #jobSelect {
+        flex: 1 1 240px;
+      }
+      #jobContext {
+        border-inline-start: 3px solid var(--gold);
+        padding-inline-start: 14px;
+      }
+      .candidate-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+        gap: 12px;
+      }
+      .candidate {
+        text-align: start;
+        overflow-wrap: anywhere;
+      }
+      .candidate[aria-pressed='true'] {
+        border-color: var(--accent);
+        background: #253237;
+      }
+      .player-area {
+        display: grid;
+        grid-template-columns: minmax(0, 250px) minmax(0, 1fr);
+        gap: 24px;
+      }
+      video {
+        inline-size: 100%;
+        aspect-ratio: 9/16;
+        object-fit: contain;
+        background: #000;
+        border-radius: 4px;
+      }
+      dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+        gap: 8px 16px;
+        font-size: 14px;
+      }
+      dt {
+        color: var(--muted);
+      }
+      dd {
+        margin: 0;
+      }
+      #historyDiagnostics,
+      #jobDiagnostics,
+      #stageList {
+        margin: 0;
+        padding: 0;
+        list-style-position: inside;
+      }
+      #stageList li {
+        padding-block: 4px;
+      }
+      #historyDiagnostics details > bdi,
+      #jobDiagnostics details > bdi {
+        display: block;
+        margin-block-start: 12px;
+      }
+      .skip-link {
+        position: absolute;
+        inset-block-start: -200px;
+        inset-inline-start: 16px;
+        background: var(--surface);
+        padding: 12px;
+      }
+      .skip-link:focus {
+        inset-block-start: 12px;
+        z-index: 10;
+      }
+      input[type='text'] {
+        min-block-size: 44px;
+        inline-size: 100%;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 12px;
+      }
+      .health-strip {
+        max-inline-size: 1280px;
+        margin: 12px auto 0;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .health-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .health-pill[data-status='ok'] {
+        border-color: var(--ok);
+        color: var(--ok);
+      }
+      .health-pill[data-status='warn'] {
+        border-color: var(--gold);
+        color: var(--gold);
+      }
+      .health-pill[data-status='fail'] {
+        border-color: var(--error);
+        color: var(--error);
+      }
+      .v8-panel {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        background: #16191d;
+      }
+      .field-label {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+        gap: 8px;
+      }
+      .preset-card {
+        display: grid;
+        gap: 6px;
+        text-align: start;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        min-block-size: 44px;
+      }
+      .preset-card[aria-pressed='true'] {
+        border-color: var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold);
+        background: #232830;
+      }
+      .preset-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .preset-desc {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .swatch-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .swatch {
+        inline-size: 18px;
+        block-size: 18px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        flex: none;
+      }
+      .brand-kit-grid {
+        display: grid;
+        gap: 10px;
+        padding-block-start: 10px;
+      }
+      .grill-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        border: 1px solid var(--border);
+      }
+      .grill-badge.pass {
+        border-color: var(--ok);
+        color: var(--ok);
+        background: #12291e;
+      }
+      .grill-badge.fail {
+        border-color: var(--error);
+        color: var(--error);
+        background: #2e1515;
+      }
+      .clip-card-inner {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .clip-thumb {
+        inline-size: 44px;
+        block-size: 78px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: #000;
+        flex: none;
+      }
+      .clip-card-meta {
+        display: grid;
+        gap: 4px;
+      }
+      .cover-preview {
+        max-inline-size: 120px;
+        aspect-ratio: 9/16;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+      }
+      .download-bar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .download-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-block-size: 44px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--accent);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .download-chip:hover {
+        border-color: var(--gold);
+        color: var(--gold);
+      }
+      @media (max-width: 860px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 24px;
+        }
+        .source-column {
+          border-inline-end: 0;
+          padding-inline-end: 0;
+          border-block-end: 1px solid var(--border);
+        }
+      }
+      @media (max-width: 520px) {
+        header,
+        main {
+          padding: 16px;
+        }
+        .settings-grid,
+        .player-area {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        video {
+          max-inline-size: 250px;
+          justify-self: center;
+        }
+        .toolbar > button {
+          flex: 1 1 120px;
+        }
+        dl {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 4px;
+        }
+        dd {
+          margin-block-end: 8px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#studio">بڕۆ بۆ ستۆدیۆ</a>
+    <header>
+      <div class="header-inner">
+        <div class="brand">
+          <h1 dir="ltr">HawEdit</h1>
+          <span>ستۆدیۆی شۆرت</span>
+        </div>
+        <p id="engineStatus" role="status" aria-live="polite">پشکنینی ئامادەیی…</p>
+      </div>
+      <div
+        id="v8HealthStrip"
+        class="health-strip"
+        role="status"
+        aria-live="polite"
+        aria-label="V8 Preflight Health"
+      >
+        <span class="health-pill" data-status="warn">V8 Preflight…</span>
+      </div>
+    </header>
+    <main id="studio" tabindex="-1">
+      <section class="source-column stack" aria-labelledby="sourceHeading">
+        <h2 id="sourceHeading">ڤیدیۆی سەرچاوە</h2>
+        <div class="field">
+          <label for="videoFile">فایلی ڤیدیۆ هەڵبژێرە</label>
+          <input
+            type="file"
+            id="videoFile"
+            accept=".mp4,.mov,.mkv,.avi,.webm,.ts,.m4v"
+            aria-describedby="fileInfo sourceError"
+          />
+          <p id="fileInfo" class="muted" dir="auto">هیچ فایلێک هەڵنەبژێردراوە.</p>
+        </div>
+        <div class="toolbar">
+          <button id="uploadBtn" type="button" disabled>بارکردنی ڤیدیۆ</button>
+          <button id="recoverUploadBtn" type="button" hidden>پشکنینی بارکردن</button>
+        </div>
+        <div class="field">
+          <label for="youtubeUrl">بەستەری ئەڵقەی YouTube</label>
+          <input id="youtubeUrl" type="url" dir="ltr" placeholder="https://youtu.be/…" />
+          <button id="youtubeBtn" type="button">هێنانی ئەڵقە</button>
+        </div>
+        <progress
+          id="uploadProgress"
+          aria-label="پێشکەوتنی بارکردنی بایتەکان"
+          hidden
+        ></progress>
+        <p id="uploadMessage" role="status" aria-live="polite" class="muted"></p>
+        <p id="sourceError" role="alert" class="error" hidden></p>
+        <div class="field">
+          <label for="optEngine">بزوێنەری ستۆدیۆ — Studio Engine</label>
+          <select id="optEngine">
+            <option value="v8" selected>V8 Lean Director (Agency)</option>
+            <option value="legacy">Legacy Pipeline</option>
+          </select>
+        </div>
+        <fieldset id="v8Controls" class="v8-panel stack">
+          <div class="field">
+            <span class="field-label">شێوازی براندی کڕیار — Client Style Presets</span>
+            <div
+              id="stylePresetGrid"
+              class="preset-grid"
+              role="group"
+              aria-label="Client Style Presets"
+            ></div>
+            <p id="presetStatus" class="muted">بارکردنی شێوازەکان…</p>
+          </div>
+          <div class="settings-grid">
+            <div class="field">
+              <label for="optDirector">دەرهێنەر — Director Brain</label>
+              <select id="optDirector">
+                <option value="offline" selected>Offline Restrained (Local)</option>
+                <option value="gemini">Gemini Video Director</option>
+                <option value="local-omni">Local Qwen-Omni (GPU)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="optSubEngine">بزوێنەری ژێرنووس — Subtitles</label>
+              <select id="optSubEngine">
+                <option value="skia" selected>Skia TikTok Pills</option>
+                <option value="libass">libass</option>
+              </select>
+            </div>
+          </div>
+          <fieldset><legend>وەشانی زمانەکان</legend>
+            <label><input type="checkbox" id="subAr"> ژێرنووسی عەرەبی</label>
+            <label><input type="checkbox" id="subEn"> ژێرنووسی ئینگلیزی</label>
+            <label><input type="checkbox" id="dubAr"> دەنگی عەرەبی</label>
+            <label><input type="checkbox" id="dubEn"> دەنگی ئینگلیزی</label>
+          </fieldset>
+          <label class="checkbox">
+            <input id="optCondense" type="checkbox" checked />
+            چڕکردنەوە بۆ ٣٥–٤٨ چرکە — Condense to 35–48 s
+          </label>
+          <label class="checkbox">
+            <input id="optColdOpen" type="checkbox" checked />
+            پێشەکیی سەرنجڕاکێش — Cold-Open Hook
+          </label>
+          <details id="clientBrandKit">
+            <summary>کیتی براندی کڕیار — Client Brand Kit</summary>
+            <div class="brand-kit-grid">
+              <div class="field">
+                <label for="optBrandAccent">ڕەنگی سەرەکی — Accent Hex</label>
+                <input
+                  id="optBrandAccent"
+                  type="text"
+                  dir="ltr"
+                  placeholder="#FFD700"
+                  maxlength="7"
+                />
+              </div>
+              <div class="field">
+                <label for="optSpeakerName">ناوی قسەکەر — Speaker Name</label>
+                <input
+                  id="optSpeakerName"
+                  type="text"
+                  dir="auto"
+                  placeholder="هاوژین"
+                  maxlength="120"
+                />
+              </div>
+              <div class="field">
+                <label for="optSpeakerRole">پۆستی قسەکەر — Speaker Role</label>
+                <input
+                  id="optSpeakerRole"
+                  type="text"
+                  dir="auto"
+                  placeholder="پێشکەشکار"
+                  maxlength="120"
+                />
+              </div>
+              <div class="field">
+                <label for="optEndCardTitle">ناونیشانی کۆتایی — Outro CTA</label>
+                <input
+                  id="optEndCardTitle"
+                  type="text"
+                  dir="auto"
+                  placeholder="بۆ ڤیدیۆی زیاتر فۆڵۆمان بکە"
+                  maxlength="120"
+                />
+              </div>
+              <div class="field">
+                <label for="optEndCardHandle">هاندڵ — Outro Handle</label>
+                <input
+                  id="optEndCardHandle"
+                  type="text"
+                  dir="ltr"
+                  placeholder="@hawedit"
+                  maxlength="80"
+                />
+              </div>
+            </div>
+          </details>
+        </fieldset>
+        <details id="advancedSettings">
+          <summary>ڕێکخستنی پێشکەوتوو</summary>
+          <fieldset id="settingsFields">
+            <div class="settings-grid">
+              <div class="field">
+                <label for="optPreset">شێواز</label>
+                <select id="optPreset">
+                  <option value="viral">ڤایرۆڵ</option>
+                  <option value="broadcast">برۆدکاست</option>
+                  <option value="split">دووانە</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="optCaptionStyle">ژێرنووس</label>
+                <select id="optCaptionStyle">
+                  <option value="">بەپێی شێواز</option>
+                  <option value="kinetic_pop">جووڵەی وشەکان</option>
+                  <option value="viral_popup">دەرکەوتنی وشە</option>
+                  <option value="rtl_highlight">دیاریکردنی وشە</option>
+                  <option value="broadcast_studio">تەواوی دێڕ</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="optMaxClips">ژمارەی بڕگەکان</label>
+                <select id="optMaxClips">
+                  <option value="1">١</option>
+                  <option value="2">٢</option>
+                  <option value="3" selected>٣</option>
+                  <option value="5">٥</option>
+                  <option value="10">١٠</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="optScreener">فلتەری سەرەتایی</label>
+                <select id="optScreener">
+                  <option value="none">بێ فلتەری زیادە</option>
+                  <option value="gemini-flash" disabled>
+                    Gemini Flash — ئامادە نییە
+                  </option>
+                  <option value="jev" disabled>Jev — ئامادە نییە</option>
+                </select>
+              </div>
+            </div>
+            <label class="checkbox">
+              <input id="optHookBanner" type="checkbox" checked />
+              ناونیشانی دەستپێک
+            </label>
+            <label class="checkbox">
+              <input id="optSilence" type="checkbox" checked />
+              کەمکردنەوەی بێدەنگی
+            </label>
+          </fieldset>
+        </details>
+        <button
+          id="startBtn"
+          type="button"
+          class="primary"
+          disabled
+          aria-describedby="generationReason"
+        >
+          دروستکردنی بڕگەکان
+        </button>
+        <p id="generationReason" class="warning">دروستکردن هێشتا ئامادە نییە.</p>
+        <p id="storageError" role="alert" class="error" hidden></p>
+        <p class="muted" id="sourceIdentity" dir="auto"></p>
+      </section>
+      <div class="stack">
+        <section class="stack" aria-labelledby="historyHeading">
+          <h2 id="historyHeading">کارەکان</h2>
+          <div class="field">
+            <label for="historySearch">گەڕان لە کارەکان</label>
+            <input
+              id="historySearch"
+              type="search"
+              dir="auto"
+              aria-controls="jobSelect"
+              autocomplete="off"
+              disabled
+            />
+          </div>
+          <div class="field">
+            <label for="jobSelect">کاری هەڵبژێردراو</label>
+            <div class="toolbar">
+              <select id="jobSelect">
+                <option value="">کارێک هەڵبژێرە</option>
+              </select>
+              <button id="refreshBtn" type="button">نوێکردنەوە</button>
+            </div>
+          </div>
+          <p id="historyMessage" role="status" aria-live="polite" class="muted">
+            پشکنینی مێژووی کارەکان…
+          </p>
+          <p id="historySelectionWarning" aria-live="polite" class="warning" hidden></p>
+          <ul id="historyDiagnostics" class="error" hidden></ul>
+          <div id="jobContext" class="stack" hidden>
+            <h3 id="jobTitle"></h3>
+            <p id="jobIdentity" class="muted" dir="auto"></p>
+            <p id="jobMessage" aria-live="polite" class="warning"></p>
+          </div>
+          <p id="jobError" role="alert" class="error" hidden></p>
+          <ul id="jobDiagnostics" aria-live="polite" class="error" hidden></ul>
+        </section>
+        <section class="stack rule" aria-labelledby="candidatesHeading">
+          <h2 id="candidatesHeading">بڕگەکان</h2>
+          <p id="candidateMessage" class="muted">هیچ کارێک هەڵنەبژێردراوە.</p>
+          <div
+            id="clipTabs"
+            class="candidate-list"
+            role="group"
+            aria-label="بڕگەی هەڵبژێردراو"
+          ></div>
+          <div id="previewPanel" class="stack" hidden>
+            <h3 id="headlineText" dir="auto"></h3>
+          <details id="sourceQuotes" hidden><summary>هۆکاری هەڵبژاردن و دەقی سەرچاوە</summary>
+            <p id="selectReason"></p><ol id="quoteList"></ol>
+          </details>
+            <div id="grillBadgeRow" class="toolbar" hidden>
+              <span id="grillBadge" class="grill-badge"></span>
+              <span id="grillSummaryText" class="muted" dir="auto"></span>
+            </div>
+            <p class="warning">پێشبینینی تایبەت؛ بۆ بڵاوکردنەوە پشتڕاست نەکراوەتەوە.</p>
+            <div class="player-area">
+              <video
+                id="player"
+                controls
+                playsinline
+                preload="metadata"
+                hidden
+                aria-label="پێشبینینی بڕگە"
+              ></video>
+              <div class="stack">
+                <img
+                  id="clipCoverImg"
+                  class="cover-preview"
+                  alt="کەڤەری بڕگە"
+                  hidden
+                />
+                <p
+                  id="previewStatus"
+                  role="status"
+                  aria-live="polite"
+                  class="muted"
+                ></p>
+                <p id="previewError" role="alert" class="error" hidden></p>
+                <button id="retryPreviewBtn" type="button" hidden>
+                  دووبارە پشکنینی پێشبینین
+                </button>
+                <dl>
+                  <dt>ماوەی پێوانەکراو</dt>
+                  <dd id="measuredDuration">نەزانراو</dd>
+                  <dt>هەڵسەنگاندنی ناوەڕۆک</dt>
+                  <dd id="qualityScore">نەزانراو</dd>
+                  <dt>ماوەی پلەیەر</dt>
+                  <dd id="playerDuration">نەزانراو</dd>
+                  <dt>ڕێژەی دەموچاو</dt>
+                  <dd id="faceShare">نەزانراو</dd>
+                </dl>
+                <a id="privateCopy" class="action" hidden>داگرتنی کۆپی تایبەت</a>
+                <div
+                  id="clipDownloads"
+                  class="download-bar"
+                  aria-label="داگرتنی فایلەکانی بڕگە"
+                  hidden
+                ></div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="stack rule" aria-labelledby="stagesHeading">
+          <h2 id="stagesHeading">قۆناغەکان</h2>
+          <p id="stageMessage" class="muted">هیچ قۆناغێکی پشتڕاستکراو نییە.</p>
+          <progress
+            id="stageProgress"
+            aria-label="قۆناغە تەواوبووە بینراوەکان"
+            hidden
+          ></progress>
+          <ol id="stageList"></ol>
+        </section>
+        <section class="stack rule" aria-labelledby="reviewHeading">
+          <h2 id="reviewHeading">پێداچوونەوە و دەرکردن</h2>
+          <div class="toolbar">
+            <button id="reviseBtn" type="button" disabled>دەستکاریکردن</button>
+            <button id="approveBtn" type="button" disabled>پەسەندکردن</button>
+            <button id="exportBtn" type="button" disabled>دەرکردنی پشتڕاستکراو</button>
+          </div>
+          <p class="warning">
+            دەستکاریی ڕێندەرکراو، پەسەندکردنی واژۆکراو و دەرکردنی پشتڕاستکراو هێشتا
+            بەستراوەتەوە نییە.
+          </p>
+        </section>
+      </div>
+    </main>
+    <noscript>بۆ کارکردنی ستۆدیۆ جاڤاسکریپت پێویستە.</noscript>
+    <script>
+      'use strict';
+      const $ = (id) => document.getElementById(id);
+      const unknown = 'نەزانراو';
+      const sourceIdPattern = /^[a-f0-9]{32}$/;
+      const state = {
+        file: null,
+        source: null,
+        ticket: null,
+        request: null,
+        requestUncertain: false,
+        uploadUncertain: false,
+        busy: false,
+        runnerReady: false,
+        storageReady: true,
+        job: null,
+        clip: null,
+        selectionEpoch: 0,
+        previewEpoch: 0,
+        historyEpoch: 0,
+        historyJobs: [],
+        historySelected: '',
+        historyLoaded: false,
+        historyTruncated: false,
+        readinessEpoch: 0,
+        doctorEpoch: 0,
+        presetsEpoch: 0,
+        stylePreset: 'viral_gold',
+        presets: [],
+        previewController: null,
+        eventSource: null,
+      };
+      const statusLabels = {
+        queued: 'لە ڕیزدایە',
+        running: 'لە کاردایە',
+        'awaiting-review': 'چاوەڕوانی پێداچوونەوە',
+        'partially-completed': 'بەشێکی تەواو بووە',
+        completed: 'بڵاوکردنەوەی پشتڕاستکراو',
+        interrupted: 'پچڕاو؛ پێویستی بە گەڕاندنەوە هەیە',
+        failed: 'شکستی هێنا',
+        cancelled: 'هەڵوەشێنراوە',
+        'unverified-historical': 'کاری کۆن — پشتڕاست نەکراوەتەوە',
+      };
+
+      function message(id, text) {
+        $(id).textContent = text || '';
+        $(id).hidden = !text;
+      }
+      function reusableOptions(opts) {
+        if (!opts || opts.engine !== 'v8') return opts;
+        const copy = {...opts, speaker_name_ckb: null, speaker_role_ckb: null};
+        delete copy.speaker_source_id;
+        delete copy.transcript_corrections;
+        delete copy.correction_source_id;
+        delete copy.cloud_consent_token;
+        if (copy.director === 'gemini') copy.director = 'offline';
+        return copy;
+      }
+      function save(key, value) {
+        try {
+          if (key === 'options') value = reusableOptions(value);
+          if (value === null) localStorage.removeItem('hawedit.studio.v1.' + key);
+          else localStorage.setItem('hawedit.studio.v1.' + key, JSON.stringify(value));
+          return true;
+        } catch (error) {
+          state.storageReady = false;
+          message(
+            'storageError',
+            'پاشەکەوتکردنی ناسنامەی داواکاری لە وێبگەڕ شکستی هێنا؛ داواکاریی نوێ نانێردرێت.',
+          );
+          return false;
+        }
+      }
+      function read(key) {
+        try {
+          const raw = localStorage.getItem('hawedit.studio.v1.' + key);
+          if (raw && raw.length > 16384) throw new Error('oversized browser record');
+          return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+          state.storageReady = false;
+          message(
+            'storageError',
+            'تۆماری وێبگەڕ نەتوانرا بخوێندرێتەوە؛ ناسنامەی داواکاری پشتڕاست بکەرەوە.',
+          );
+          return null;
+        }
+      }
+      function validSource(value) {
+        return (
+          value && typeof value === 'object' && !Array.isArray(value) &&
+          typeof value.source_id === 'string' &&
+          typeof value.sha256 === 'string' &&
+          sourceIdPattern.test(value.source_id) &&
+          /^[a-f0-9]{64}$/.test(value.sha256) &&
+          Number.isSafeInteger(value.size) &&
+          value.size > 0 &&
+          typeof value.filename === 'string' && value.filename.length <= 240 &&
+          Number.isSafeInteger(value.duration_ms) &&
+          value.duration_ms > 0
+        );
+      }
+      function controls() {
+        const locked = state.busy || state.requestUncertain;
+        $('videoFile').disabled = locked || state.uploadUncertain;
+        $('youtubeBtn').disabled = locked || state.uploadUncertain || !state.storageReady;
+        $('youtubeUrl').disabled = $('youtubeBtn').disabled;
+        $('optEngine').disabled = locked;
+        $('v8Controls').disabled = locked;
+        $('settingsFields').disabled = locked;
+        $('uploadBtn').disabled =
+          locked || !state.file || Boolean(state.source) ||
+          state.uploadUncertain || !state.storageReady;
+        $('recoverUploadBtn').hidden = !state.ticket;
+        $('recoverUploadBtn').disabled = state.busy;
+        $('startBtn').disabled =
+          state.busy ||
+          !state.storageReady ||
+          !state.source ||
+          (!state.runnerReady && !state.requestUncertain) ||
+          state.uploadUncertain;
+        $('startBtn').textContent = state.requestUncertain
+          ? 'پشکنینی هەمان داواکاری'
+          : 'دروستکردنی بڕگەکان';
+      }
+      async function api(path, options = {}) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+          const response = await fetch(path, {
+            ...options,
+            signal: controller.signal,
+            cache: 'no-store',
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            const error = new Error(data.error || 'HTTP ' + response.status);
+            error.status = response.status;
+            error.code = data.code;
+            error.data = data;
+            throw error;
+          }
+          return data;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      function showSource(source) {
+        if (!validSource(source))
+          throw new Error('ناسنامەی سەرچاوە پشتڕاست نەکراوەتەوە.');
+        if (!save('source', source))
+          throw new Error('ناسنامەی سەرچاوە پاشەکەوت نەکرا.');
+        if (state.source?.source_id !== source.source_id) {
+          $('sourceQuotes').hidden = true;
+          $('optSpeakerName').value = '';
+          $('optSpeakerRole').value = '';
+        }
+        state.source = source;
+        state.uploadUncertain = false;
+        message('fileInfo', source.filename + ' · ' + source.size + ' bytes');
+        message('sourceIdentity', source.filename + ' · ' + source.source_id);
+        message('uploadMessage', 'بارکردن و پشکنینی ڤیدیۆ تەواو بووە.');
+        $('uploadProgress').hidden = true;
+        controls();
+      }
+      function transfer(file, uploadId) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable) {
+              $('uploadProgress').max = event.total;
+              $('uploadProgress').value = event.loaded;
+              message(
+                'uploadMessage',
+                'بارکردنی بایتەکان: ' +
+                  Math.floor((event.loaded * 100) / event.total) +
+                  '%',
+              );
+            }
+          });
+          xhr.upload.addEventListener('load', () => {
+            $('uploadProgress').removeAttribute('value');
+            message('uploadMessage', 'بایتەکان نێردران؛ چاوەڕوانی پشکنینی ڤیدیۆ…');
+          });
+          xhr.open('PUT', '/api/uploads/' + encodeURIComponent(uploadId));
+          xhr.timeout = 24 * 60 * 60 * 1000;
+          xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+          xhr.addEventListener('load', () => {
+            try {
+              const result = JSON.parse(xhr.responseText);
+              if (xhr.status < 200 || xhr.status >= 300)
+                throw new Error(result.error || 'HTTP ' + xhr.status);
+              resolve(result);
+            } catch (error) {
+              reject(error);
+            }
+          });
+          for (const event of ['error', 'abort', 'timeout'])
+            xhr.addEventListener(event, () =>
+              reject(new Error('دۆخی بارکردن نەزانراوە؛ پشکنینی بارکردن هەڵبژێرە.')),
+            );
+          xhr.send(file);
+        });
+      }
+      async function upload() {
+        const file = state.file;
+        if (!file || state.busy || state.uploadUncertain || state.requestUncertain)
+          return;
+        state.busy = true;
+        state.source = null;
+        state.ticket = null;
+        if (!save('source', null) || !save('upload', null)) {
+          state.busy = false;
+          controls();
+          return;
+        }
+        controls();
+        message('sourceError', '');
+        message('sourceIdentity', '');
+        $('uploadProgress').hidden = false;
+        $('uploadProgress').removeAttribute('value');
+        message('uploadMessage', 'ئامادەکردنی بارکردن…');
+        try {
+          const ticket = await api('/api/uploads', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, size: file.size }),
+          });
+          if (
+            !ticket ||
+            !sourceIdPattern.test(ticket.upload_id) ||
+            ticket.size !== file.size
+          )
+            throw new Error('ناسنامەی بارکردن نادروستە.');
+          state.ticket = ticket;
+          if (!save('upload', ticket))
+            throw new Error('ناسنامەی بارکردن پاشەکەوت نەکرا؛ هیچ بایتێک نەنێردرا.');
+          state.uploadUncertain = true;
+          const source = await transfer(file, ticket.upload_id);
+          if (source.source_id !== ticket.upload_id || source.size !== file.size)
+            throw new Error('وەڵامی بارکردن لەگەڵ فایلەکە ناگونجێت.');
+          showSource(source);
+        } catch (error) {
+          message('sourceError', error.message);
+          message(
+            'uploadMessage',
+            state.uploadUncertain
+              ? 'ئەنجامی بارکردن پشتڕاست بکەرەوە پێش دووبارە ناردن.'
+              : 'بارکردن تەواو نەبوو.',
+          );
+          $('uploadProgress').hidden = true;
+        } finally {
+          state.busy = false;
+          controls();
+        }
+      }
+      async function recoverUpload() {
+        if (!state.ticket || state.busy) return;
+        state.busy = true;
+        controls();
+        message('sourceError', '');
+        try {
+          const result = await api(
+            '/api/uploads/' + encodeURIComponent(state.ticket.upload_id),
+          );
+          if (result.upload_id !== state.ticket.upload_id)
+            throw new Error('ناسنامەی گەڕاندنەوە ناگونجێت.');
+          if (result.state === 'ready') {
+            if (
+              !validSource(result.source) ||
+              result.source.source_id !== state.ticket.upload_id
+            )
+              throw new Error('سەرچاوەی گەڕێندراوە پشتڕاست نەکراوەتەوە.');
+            showSource(result.source);
+          } else if (
+            ['reserved', 'failed', 'expired', 'interrupted'].includes(result.state)
+          ) {
+            state.uploadUncertain = false;
+            state.ticket = null;
+            if (!save('upload', null))
+              throw new Error('ناسنامەی گەڕاندنەوە پاشەکەوت نەکرا.');
+            message(
+              'uploadMessage',
+              'بارکردن تەواو نەبوو؛ فایل هەڵبژێرە و دووبارە بار بکە.',
+            );
+            if (result.error) message('sourceError', result.error);
+          } else {
+            state.uploadUncertain = true;
+            message(
+              'uploadMessage',
+              'بارکردن هێشتا لە کاردایە؛ هیچ بارکردنێکی دووبارە نانێردرێت.',
+            );
+          }
+        } catch (error) {
+          state.uploadUncertain = true;
+          message('sourceError', error.message);
+        } finally {
+          state.busy = false;
+          controls();
+        }
+      }
+      function correctionOptions() {
+        const id = state.source?.source_id;
+        const edits = id && read('corrections.' + id);
+        return Array.isArray(edits) && edits.length ?
+          {correction_source_id:id, transcript_corrections:edits} : {};
+      }
+      function correctionEditor(words, id) {
+        const group = document.createElement('fieldset');
+        const legend = document.createElement('legend');
+        legend.textContent = 'ڕاستکردنەوەی وشە بۆ دروستکردنەوەی داهاتوو';
+        const select = document.createElement('select');
+        select.setAttribute('aria-label', 'وشەی سەرچاوە');
+        words.forEach(w => select.add(new Option(w.original + ' · ' + w.index, String(w.index))));
+        const field = document.createElement('input');
+        field.maxLength = 100;
+        field.setAttribute('aria-label', 'ڕاستنووس');
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.textContent = 'پاشەکەوتکردنی ڕاستکردنەوە';
+        const status = document.createElement('span');
+        status.setAttribute('role', 'status');
+        const selected = () => words[select.selectedIndex];
+        function restoreWord() {
+          const w = selected();
+          const edits = read('corrections.' + id) || [];
+          field.value = edits.find(r => r.word_index === w.index)?.repaired || w.original;
+          status.textContent = '';
+        }
+        select.onchange = restoreWord;
+        restoreWord();
+        apply.onclick = () => {
+          if (state.source?.source_id !== id || !field.value.trim()) return;
+          const w = selected();
+          const remaining = (read('corrections.' + id) || []).filter(r => r.word_index !== w.index);
+          if (field.value.trim() !== w.original) remaining.push({
+            word_index:w.index, original:w.original,
+            repaired:field.value.trim(), reason:'native editor'
+          });
+          if (remaining.length > 32) {status.textContent = 'زۆرترین ٣٢ ڕاستکردنەوە'; return;}
+          if (save('corrections.' + id, remaining)) status.textContent = 'پاشەکەوت کرا';
+        };
+        group.append(legend, select, field, apply, status);
+        return group;
+      }
+      function options() {
+        if ($('optEngine').value === 'v8') {
+          const trimOrNull = (id) => {
+            const val = $(id).value.trim();
+            return val || null;
+          };
+          return {
+            engine: 'v8',
+            style_preset: state.stylePreset || 'viral_gold',
+            director: $('optDirector').value,
+            sub_engine: $('optSubEngine').value,
+            condense: $('optCondense').checked,
+            cold_open: $('optColdOpen').checked,
+            max_clips: Number($('optMaxClips').value),
+            brand_accent_hex: trimOrNull('optBrandAccent'),
+            subtitle_languages: ['ar','en'].filter(l => $(l === 'ar' ? 'subAr' : 'subEn').checked),
+            dub_languages: ['ar','en'].filter(l => $(l === 'ar' ? 'dubAr' : 'dubEn').checked),
+            ...correctionOptions(),
+            speaker_source_id: state.source?.source_id || null,
+            speaker_name_ckb: trimOrNull('optSpeakerName'),
+            speaker_role_ckb: trimOrNull('optSpeakerRole'),
+            end_card_title_ckb: trimOrNull('optEndCardTitle'),
+            end_card_handle: trimOrNull('optEndCardHandle'),
+            use_omni_asr: true,
+          };
+        }
+        const result = {
+          preset: $('optPreset').value,
+          max_clips: Number($('optMaxClips').value),
+          screener: $('optScreener').value,
+          hook_banner: $('optHookBanner').checked,
+          silence_tightening: $('optSilence').checked,
+        };
+        if ($('optCaptionStyle').value)
+          result.caption_style = $('optCaptionStyle').value;
+        return result;
+      }
+      function validOptions(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+        if (value.engine === 'v8') {
+          const v8Keys = [
+            'engine',
+            'style_preset',
+            'director',
+            'sub_engine',
+            'condense',
+            'cold_open',
+            'max_clips',
+            'brand_accent_hex',
+            'speaker_source_id', 'transcript_corrections', 'correction_source_id',
+            'cloud_consent_token',
+            'subtitle_languages','dub_languages',
+            'speaker_name_ckb',
+            'speaker_role_ckb',
+            'end_card_title_ckb',
+            'end_card_handle',
+            'use_omni_asr',
+          ];
+          const optText = (val, maxLen) =>
+            val === null || val === undefined || (typeof val === 'string' && val.length <= maxLen);
+          return (
+            Object.keys(value).every((key) => v8Keys.includes(key)) &&
+            [
+              'viral_gold',
+              'crimson_punch',
+              'executive_cyan',
+              'luxury_minimal',
+              'broadcast_news',
+            ].includes(value.style_preset) &&
+            ['offline', 'gemini', 'local-omni'].includes(value.director) &&
+            ['skia', 'libass'].includes(value.sub_engine) &&
+            typeof value.condense === 'boolean' &&
+            typeof value.cold_open === 'boolean' &&
+            [1, 2, 3, 5, 10].includes(value.max_clips) &&
+            (value.brand_accent_hex === null ||
+              value.brand_accent_hex === undefined ||
+              /^#[0-9A-Fa-f]{6}$/.test(value.brand_accent_hex)) &&
+            [value.subtitle_languages,value.dub_languages].every(v => v === undefined ||
+              (Array.isArray(v) && v.length <= 2 && v.every(l => ['en','ar'].includes(l)))) &&
+            optText(value.speaker_name_ckb, 120) &&
+            optText(value.speaker_role_ckb, 120) &&
+            optText(value.end_card_title_ckb, 120) &&
+            optText(value.end_card_handle, 80) &&
+            (value.use_omni_asr === undefined || typeof value.use_omni_asr === 'boolean')
+          );
+        }
+        const keys = ['preset', 'max_clips', 'screener', 'hook_banner',
+          'silence_tightening', 'caption_style'];
+        return Object.keys(value).every(key => keys.includes(key)) &&
+          ['viral', 'broadcast', 'split'].includes(value.preset) &&
+          [1, 2, 3, 5, 10].includes(value.max_clips) && value.screener === 'none' &&
+          typeof value.hook_banner === 'boolean' &&
+          typeof value.silence_tightening === 'boolean' &&
+          (value.caption_style === undefined ||
+            ['kinetic_pop', 'viral_popup', 'rtl_highlight',
+              'broadcast_studio'].includes(value.caption_style));
+      }
+      function applyOptions(value) {
+        if (!validOptions(value)) {
+          state.storageReady = false;
+          message('storageError', 'ڕێکخستنی پاشەکەوتکراو نادروست یان ئامادە نییە.');
+          return;
+        }
+        if (value.engine === 'v8') {
+          $('optEngine').value = 'v8';
+          state.stylePreset = value.style_preset || 'viral_gold';
+          $('optDirector').value = value.director || 'offline';
+          $('optSubEngine').value = value.sub_engine || 'skia';
+          $('optCondense').checked = value.condense !== false;
+          $('optColdOpen').checked = value.cold_open !== false;
+          $('optMaxClips').value = String(value.max_clips);
+          $('optBrandAccent').value = value.brand_accent_hex || '';
+          const subtitleLangs = value.subtitle_languages || [];
+          const dubLangs = value.dub_languages || [];
+          $('subAr').checked = subtitleLangs.includes('ar');
+          $('subEn').checked = subtitleLangs.includes('en');
+          $('dubAr').checked = dubLangs.includes('ar');
+          $('dubEn').checked = dubLangs.includes('en');
+          $('optSpeakerName').value = value.speaker_name_ckb || '';
+          $('optSpeakerRole').value = value.speaker_role_ckb || '';
+          $('optEndCardTitle').value = value.end_card_title_ckb || '';
+          $('optEndCardHandle').value = value.end_card_handle || '';
+          syncEngineVisibility();
+          renderPresets();
+          return;
+        }
+        $('optEngine').value = 'legacy';
+        $('optPreset').value = value.preset;
+        $('optCaptionStyle').value = value.caption_style || '';
+        $('optMaxClips').value = String(value.max_clips);
+        $('optScreener').value = value.screener;
+        $('optHookBanner').checked = value.hook_banner;
+        $('optSilence').checked = value.silence_tightening;
+        syncEngineVisibility();
+      }
+      async function generate() {
+        if (state.busy || !state.source || !state.storageReady) return;
+        if (!state.runnerReady && !state.requestUncertain) return;
+        message('sourceError', '');
+        if (!state.request) {
+          const opts = options();
+          const token = crypto.randomUUID();
+          if (opts.engine === 'v8' && opts.director === 'gemini') {
+            if (!window.confirm('ڕەزامەندیت بۆ ناردنی ڤیدیۆ و دەق بۆ Gemini بۆ ئەم کارە؟')) return;
+            opts.cloud_consent_token = token;
+          }
+          state.request = {
+            schema: 1,
+            source_id: state.source.source_id,
+            client_token: token,
+            options: opts,
+          };
+        }
+        if (!save('request', state.request)) {
+          controls();
+          return;
+        }
+        state.requestUncertain = true;
+        state.busy = true;
+        controls();
+        try {
+          const job = await api('/api/repurpose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(state.request),
+          });
+          if (!job || typeof job.job_id !== 'string' || !job.job_id)
+            throw new Error('ئەنجامی داواکاری نادیارە؛ هەمان ناسنامە پشکنین بکە.');
+          if (!save('selected', job.job_id) || !save('request', null))
+            throw new Error('ناسنامەی کاری وەرگیراو پاشەکەوت نەکرا.');
+          state.request = null;
+          state.requestUncertain = false;
+          await refreshHistory(job.job_id);
+        } catch (error) {
+          if (error.status === 400 || error.code === 'studio_runner_unavailable') {
+            if (save('request', null)) {
+              state.request = null;
+              state.requestUncertain = false;
+            }
+          }
+          message('sourceError', error.message);
+        } finally {
+          state.busy = false;
+          controls();
+        }
+      }
+      function clearPreview() {
+        state.previewEpoch++;
+        if (state.previewController) state.previewController.abort();
+        state.previewController = null;
+        state.clip = null;
+        const player = $('player');
+        player.pause();
+        player.removeAttribute('src');
+        player.removeAttribute('poster');
+        player.load();
+        player.hidden = true;
+        $('previewPanel').hidden = true;
+        $('grillBadgeRow').hidden = true;
+        $('grillBadge').textContent = '';
+        $('grillBadge').className = 'grill-badge';
+        $('grillSummaryText').textContent = '';
+        $('clipCoverImg').hidden = true;
+        $('clipCoverImg').removeAttribute('src');
+        $('clipDownloads').hidden = true;
+        $('clipDownloads').replaceChildren();
+        $('privateCopy').hidden = true;
+        $('privateCopy').removeAttribute('href');
+        $('privateCopy').removeAttribute('download');
+        $('retryPreviewBtn').hidden = true;
+        for (const id of ['measuredDuration', 'qualityScore', 'playerDuration', 'faceShare'])
+          $(id).textContent = unknown;
+        message('previewError', '');
+        message('previewStatus', '');
+      }
+      function closeJobEvents() {
+        if (state.eventSource) {
+          state.eventSource.close();
+          state.eventSource = null;
+        }
+      }
+      function connectJobEvents(jobId, epoch) {
+        closeJobEvents();
+        if (typeof EventSource !== 'function') return;
+        const source = new EventSource(
+          '/api/jobs/' + encodeURIComponent(jobId) + '/events',
+        );
+        state.eventSource = source;
+        const onStage = (event) => {
+          if (epoch !== state.selectionEpoch || !state.job) {
+            source.close();
+            return;
+          }
+          try {
+            const payload = JSON.parse(event.data);
+            const rows = Array.isArray(state.job.stages) ? [...state.job.stages] : [];
+            const idx = rows.findIndex((row) => row.stage === payload.stage);
+            const entry = { stage: payload.stage, state: payload.state };
+            if (idx >= 0) rows[idx] = entry;
+            else rows.push(entry);
+            state.job.stages = rows;
+            stages(state.job);
+          } catch {}
+        };
+        const onTerminal = async () => {
+          source.close();
+          if (state.eventSource === source) state.eventSource = null;
+          if (epoch !== state.selectionEpoch) return;
+          await readiness();
+          await refreshHistory(jobId);
+        };
+        source.addEventListener('stage', onStage);
+        source.addEventListener('completed', onTerminal);
+        source.addEventListener('failed', onTerminal);
+      }
+      function clearJob() {
+        closeJobEvents();
+        state.job = null;
+        clearPreview();
+        $('clipTabs').replaceChildren();
+        $('jobContext').hidden = true;
+        $('stageList').replaceChildren();
+        $('stageProgress').hidden = true;
+        message('jobError', '');
+        diagnostics('jobDiagnostics', []);
+        message('stageMessage', 'هیچ قۆناغێکی پشتڕاستکراو نییە.');
+        message('candidateMessage', 'هیچ کارێک هەڵنەبژێردراوە.');
+      }
+      function diagnosticText(row) {
+        const labels = {
+          history_record_refused:
+            'تۆماری مێژوو ونە، نادروستە یان بەستەرە؛ فایلە ڕەسەنەکان پارێزراون.',
+          history_storage_unavailable:
+            'پاشەکەوتی مێژووی کارەکان ئامادە نییە؛ لیستی تەواوی کارەکان پشتڕاست نەکراوەتەوە.',
+          history_scan_limit:
+            'پشکنینی مێژوو بەشێکی نیشان داوە؛ هیچ کارێکی کۆن نەسڕاوەتەوە.',
+          candidate_manifest_missing:
+            'تۆماری بڕگە تایبەتەکان نییە؛ بەڵگە ڕەسەنەکان پارێزراون.',
+          candidate_manifest_refused:
+            'تۆماری بڕگە تایبەتەکان نادروستە؛ پێشبینین و بڵاوکردنەوە پشتڕاست نەکراونەتەوە.',
+          legacy_recovery_required:
+            'پێش دووبارە ناردنی ئەم کارە کۆنە، پێویستە دۆخی ڕەسەنی پشتڕاست بکرێتەوە.',
+        };
+        if (Object.hasOwn(labels, row.code)) return labels[row.code];
+        return 'بەڵگەی کار پشتڕاست نەکراوەتەوە.';
+      }
+      function diagnostics(id, rows) {
+        const list = $(id);
+        list.replaceChildren();
+        list.hidden = !Array.isArray(rows) || !rows.length;
+        if (Array.isArray(rows))
+          for (const entry of rows) {
+            const row = entry && typeof entry === 'object' && !Array.isArray(entry)
+              ? entry : {};
+            const item = document.createElement('li');
+            item.textContent = diagnosticText(row);
+            item.dir = 'rtl';
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = 'وردەکاریی تەکنیکی';
+            const identity = document.createElement('bdi');
+            identity.dir = 'auto';
+            const code = typeof row.code === 'string' ? row.code : unknown;
+            identity.textContent = [code, row.job_id]
+              .filter(value => typeof value === 'string' && value).join(' · ');
+            const original = document.createElement('p');
+            original.dir = 'auto';
+            original.textContent = typeof row.message === 'string' ? row.message : '';
+            details.append(summary, identity, original);
+            item.append(details);
+            list.append(item);
+          }
+      }
+      function stages(job) {
+        const rows = Array.isArray(job.stages) ? job.stages : [];
+        $('stageList').replaceChildren();
+        $('stageProgress').hidden = true;
+        if (!rows.length) {
+          message('stageMessage', 'هیچ قۆناغێکی پشتڕاستکراو نییە.');
+          return;
+        }
+        const labels = {
+          started: 'لە کاردایە',
+          completed: 'تەواو بوو',
+          skipped: 'تێپەڕێنرا',
+          failed: 'شکستی هێنا',
+          refused: 'ڕەت کرایەوە',
+        };
+        for (const row of rows) {
+          const item = document.createElement('li');
+          item.dir = 'auto';
+          item.textContent =
+            (row.stage || unknown) + ' · ' + (labels[row.state] || unknown);
+          $('stageList').append(item);
+        }
+        const finished = rows.filter((row) =>
+          ['completed', 'skipped'].includes(row.state),
+        ).length;
+        message(
+          'stageMessage',
+          'قۆناغە بینراوەکان: ' +
+            finished +
+            ' / ' +
+            rows.length +
+            '؛ پێشکەوتنی ناو قۆناغ نەزانراوە.',
+        );
+        $('stageProgress').max = rows.length;
+        $('stageProgress').value = finished;
+        $('stageProgress').hidden = false;
+      }
+      async function selectJob(jobId) {
+        const epoch = ++state.selectionEpoch;
+        clearJob();
+        if (!save('selected', jobId || null)) controls();
+        if (!jobId) return;
+        message('candidateMessage', 'خوێندنەوەی کاری هەڵبژێردراو…');
+        try {
+          const job = await api('/api/jobs/' + encodeURIComponent(jobId));
+          if (epoch !== state.selectionEpoch) return;
+          if (job.job_id !== jobId) throw new Error('ناسنامەی کار ناگونجێت.');
+          state.job = job;
+          $('jobContext').hidden = false;
+          $('jobTitle').textContent = job.source || job.headline || jobId;
+          $('jobIdentity').textContent =
+            jobId + ' · ' + recordedDate(job.created_at);
+          let label = statusLabels[job.status] || unknown;
+          if (job.historical && job.status === 'completed' && job.publication_verified !== true)
+            label = statusLabels['unverified-historical'];
+          message(
+            'jobMessage',
+            (job.historical ? 'مێژووی کار · ' : '') +
+              label +
+              (job.recovery_required ? ' · دووبارە خۆکارانە نانێردرێت.' : ''),
+          );
+          message('jobError', job.error
+            ? job.code === 'legacy_recovery_required' ? diagnosticText(job) : job.error
+            : '');
+          const jobDiagnostics = Array.isArray(job.diagnostics) ? [...job.diagnostics] : [];
+          if (job.error && job.code === 'legacy_recovery_required')
+            jobDiagnostics.push({ code: job.code, job_id: jobId, message: job.error });
+          diagnostics('jobDiagnostics', jobDiagnostics);
+          stages(job);
+          if (!job.historical && (job.status === 'queued' || job.status === 'running')) {
+            connectJobEvents(jobId, epoch);
+          }
+          const clips = Array.isArray(job.clips) ? job.clips : [];
+          message(
+            'candidateMessage',
+            clips.length
+              ? clips.length + ' بڕگە؛ هیچ پەسەندکردنێک لە ڕیزبەندییەوە ناگیرێت.'
+              : 'هیچ بڕگەیەکی تۆمارکراو نییە.',
+          );
+          for (const [index, clip] of clips.entries()) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'candidate';
+            button.dir = 'auto';
+            button.setAttribute('aria-pressed', 'false');
+            const cardInner = document.createElement('div');
+            cardInner.className = 'clip-card-inner';
+            if (typeof clip.cover_url === 'string' && clip.cover_url.startsWith('/api/')) {
+              const thumb = document.createElement('img');
+              thumb.className = 'clip-thumb';
+              thumb.src = clip.cover_url;
+              thumb.alt = clip.hook_title_ckb || clip.headline || clip.clip_id;
+              cardInner.append(thumb);
+            }
+            const meta = document.createElement('div');
+            meta.className = 'clip-card-meta';
+            const title = document.createElement('span');
+            title.textContent =
+              index + 1 + ' · ' + (clip.hook_title_ckb || clip.headline || clip.clip_id);
+            meta.append(title);
+            if (typeof clip.grill_passed === 'boolean') {
+              const badge = document.createElement('span');
+              badge.className = 'grill-badge ' + (clip.grill_passed ? 'pass' : 'fail');
+              badge.textContent = clip.grill_passed ? 'GRILL PASSED ✓' : 'GRILL FAILED';
+              meta.append(badge);
+            }
+            cardInner.append(meta);
+            button.append(cardInner);
+            button.addEventListener('click', () => selectClip(clip, button));
+            $('clipTabs').append(button);
+          }
+        } catch (error) {
+          if (epoch !== state.selectionEpoch) return;
+          message('jobError', error.message);
+          message('candidateMessage', 'کاری هەڵبژێردراو نەتوانرا بخوێندرێتەوە.');
+        }
+      }
+      async function selectClip(clip, button) {
+        clearPreview();
+        state.clip = clip;
+        const epoch = state.previewEpoch;
+        const jobId = state.job.job_id;
+        for (const item of $('clipTabs').children)
+          item.setAttribute('aria-pressed', String(item === button));
+        $('previewPanel').hidden = false;
+        $('headlineText').textContent = clip.hook_title_ckb || clip.headline || clip.clip_id;
+        const quotes = Array.isArray(clip.source_quotes) ? clip.source_quotes : [];
+        $('sourceQuotes').hidden = !quotes.length;
+        $('selectReason').textContent = clip.editorial_reason || '';
+        $('quoteList').replaceChildren(...quotes.map(part => {
+          const row = document.createElement('li');
+          row.textContent = (part.in_ms / 1000).toFixed(1) + '–' +
+            (part.out_ms / 1000).toFixed(1) + ' s · ' + part.quote;
+          const id = state.job?.options?.episode_source_id;
+          if (id && state.source?.source_id === id &&
+              Array.isArray(part.words) && part.words.length)
+            row.append(correctionEditor(part.words, id));
+          return row;
+        }));
+        if (typeof clip.grill_passed === 'boolean') {
+          $('grillBadgeRow').hidden = false;
+          $('grillBadge').className = 'grill-badge ' + (clip.grill_passed ? 'pass' : 'fail');
+          $('grillBadge').textContent = clip.grill_passed ? 'GRILL PASSED ✓' : 'GRILL FAILED';
+          $('grillSummaryText').textContent =
+            typeof clip.grill_summary === 'string' ? clip.grill_summary : '';
+        }
+        if (
+          Number.isFinite(clip.duration_s) &&
+          clip.duration_s > 0 &&
+          clip.preview_verified === true
+        )
+          $('measuredDuration').textContent = clip.duration_s + ' چرکە';
+        if (Number.isFinite(clip.hook_score))
+          $('qualityScore').textContent = String(clip.hook_score);
+        if (Number.isFinite(clip.face_share) && clip.face_share >= 0)
+          $('faceShare').textContent = Math.round(clip.face_share * 100) + '%';
+        if (typeof clip.cover_url === 'string' && clip.cover_url.startsWith('/api/')) {
+          $('clipCoverImg').src = clip.cover_url;
+          $('clipCoverImg').hidden = false;
+          $('player').poster = clip.cover_url;
+        }
+        renderClipDownloads(clip);
+        const path =
+          '/api/jobs/' +
+          encodeURIComponent(jobId) +
+          '/clips/' +
+          encodeURIComponent(clip.clip_id) +
+          '/preview';
+        message('previewStatus', 'پشکنینی بایتەکانی پێشبینینی تایبەت…');
+        const controller = new AbortController();
+        state.previewController = controller;
+        const timer = setTimeout(() => controller.abort(), 60000);
+        try {
+          const response = await fetch(path, {
+            method: 'HEAD',
+            cache: 'no-store',
+            signal: controller.signal,
+          });
+          if (epoch !== state.previewEpoch) return;
+          if (
+            !response.ok ||
+            response.headers.get('X-HawEdit-Artifact-State') !== 'private-preview' ||
+            response.headers.get('Content-Type') !== 'video/mp4' ||
+            !/^"[a-f0-9]{64}"$/.test(response.headers.get('ETag') || '')
+          )
+            throw new Error('پێشبینین ڕەت کرایەوە: HTTP ' + response.status);
+          const player = $('player');
+          player.src = path;
+          player.hidden = false;
+          player.load();
+          const link = $('privateCopy');
+          link.href = path;
+          link.download = clip.clip_id + '-private.mp4';
+          link.hidden = false;
+          message('previewStatus', 'پێشبینینی تایبەت؛ پەسەندکردنی بڵاوکردنەوە نییە.');
+        } catch (error) {
+          if (epoch !== state.previewEpoch) return;
+          message('previewError', error.message);
+          message('previewStatus', 'پێشبینین ئامادە نییە.');
+          $('retryPreviewBtn').hidden = false;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      function recordedDate(value) {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+          return unknown;
+        const date = new Date(value * 1000);
+        if (!Number.isFinite(date.getTime())) return unknown;
+        return date.toLocaleString('ckb');
+      }
+      function renderHistory(selected = state.historySelected) {
+        const normalize = (value) => value.normalize('NFKC').toLocaleLowerCase('ckb');
+        const query = normalize($('historySearch').value.trim());
+        const matched = state.historyJobs.filter((job) =>
+          normalize(job.job_id + ' ' + (job.source || '')).includes(query),
+        );
+        const matches = new Set(matched.map((job) => job.job_id));
+        const selectedOutside = Boolean(selected) && !matches.has(selected) &&
+          state.historyJobs.some((job) => job.job_id === selected);
+        const select = $('jobSelect');
+        select.replaceChildren();
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = 'کارێک هەڵبژێرە';
+        select.append(empty);
+        const isolate = (value) => '\u2068' + value + '\u2069';
+        for (const job of state.historyJobs) {
+          if (!matches.has(job.job_id) && job.job_id !== selected) continue;
+          const item = document.createElement('option');
+          item.value = job.job_id;
+          item.dir = 'auto';
+          let label = statusLabels[job.status] || unknown;
+          if (job.status === 'completed' && job.publication_verified !== true)
+            label = statusLabels['unverified-historical'];
+          item.textContent = [
+            job.job_id,
+            recordedDate(job.created_at),
+            job.source || unknown,
+            label,
+          ].map(isolate).join(' · ');
+          select.append(item);
+        }
+        state.historySelected = selected;
+        select.value = selected;
+        $('historySearch').disabled = !state.historyLoaded;
+        message('historySelectionWarning', selectedOutside
+          ? 'کاری هەڵبژێردراو لە ئەنجامی گەڕاندا نییە؛ هەڵبژاردنەکە پارێزراوە.'
+          : '');
+        message('historyMessage', state.historyLoaded
+          ? '\u2066' + matched.length + ' / ' + state.historyJobs.length + '\u2069' +
+            ' کار؛ هیچ بڵاوکردنەوەیەک پشتڕاست نەکراوەتەوە.' +
+            (state.historyTruncated ? ' هەموو مێژوو نیشان نەدراوە.' : '')
+          : 'مێژووی کارەکان ئامادە نییە؛ لیستی بەتاڵ ئەنجامی پشتڕاستکراو نییە.');
+      }
+      async function refreshHistory(selected = state.historySelected) {
+        const epoch = ++state.historyEpoch;
+        const selectionEpoch = state.selectionEpoch;
+        $('refreshBtn').disabled = true;
+        try {
+          const history = await api('/api/history');
+          if (epoch !== state.historyEpoch) return;
+          if (selectionEpoch !== state.selectionEpoch) selected = $('jobSelect').value;
+          if (history.schema !== 1 || !Array.isArray(history.jobs))
+            throw new Error('تۆماری مێژوو نادروستە.');
+          state.historyJobs = history.jobs;
+          state.historyLoaded = true;
+          state.historyTruncated = history.truncated === true;
+          renderHistory(selected);
+          const select = $('jobSelect');
+          diagnostics('historyDiagnostics', history.diagnostics);
+          if (selected) {
+            select.value = selected;
+            if (select.value !== selected) {
+              ++state.selectionEpoch;
+              clearJob();
+              message(
+                'jobError',
+                'کاری هەڵبژێردراو لە مێژووی بینراودا نییە؛ ناسنامەکە پارێزراوە.',
+              );
+            } else await selectJob(selected);
+          }
+        } catch (error) {
+          if (epoch !== state.historyEpoch) return;
+          state.historyJobs = [];
+          state.historyLoaded = false;
+          renderHistory(state.historySelected);
+          if (selectionEpoch === state.selectionEpoch) {
+            ++state.selectionEpoch;
+            clearJob();
+            message('jobError', error.message);
+          }
+          diagnostics('historyDiagnostics', error.data && error.data.diagnostics);
+          message(
+            'historyMessage',
+            'مێژووی کارەکان ئامادە نییە؛ لیستی بەتاڵ ئەنجامی پشتڕاستکراو نییە.',
+          );
+        } finally {
+          if (epoch === state.historyEpoch) $('refreshBtn').disabled = false;
+        }
+      }
+      async function readiness() {
+        const epoch = ++state.readinessEpoch;
+        state.runnerReady = false;
+        controls();
+        try {
+          const result = await api('/api/status');
+          if (epoch !== state.readinessEpoch) return;
+          state.runnerReady = result.runner_ready === true;
+          message(
+            'engineStatus',
+            state.runnerReady ? 'ئامادەی دروستکردن' : 'دروستکردن ئامادە نییە',
+          );
+          message(
+            'generationReason',
+            state.runnerReady
+              ? state.source
+                ? ''
+                : 'سەرەتا ڤیدیۆیەک بار بکە.'
+              : 'کارکەری پارێزراوی ستۆدیۆ و ڕێکخستنی مۆدێلەکان هێشتا نەبەستراونەتەوە.',
+          );
+        } catch (error) {
+          if (epoch !== state.readinessEpoch) return;
+          message('engineStatus', 'ئامادەیی نەزانراوە');
+          message('generationReason', 'پشکنینی کارکەر شکستی هێنا: ' + error.message);
+        } finally {
+          controls();
+        }
+      }
+      function syncEngineVisibility() {
+        const isV8 = $('optEngine').value === 'v8';
+        $('v8Controls').hidden = !isV8;
+      }
+      function renderDoctor(report) {
+        const strip = $('v8HealthStrip');
+        strip.replaceChildren();
+        const labels = {
+          gpu_nvenc: 'GPU / NVENC',
+          ffmpeg_rtl: 'FFmpeg RTL',
+          skia_harfbuzz: 'Skia + HarfBuzz',
+          wsl_asr: 'WSL ASR',
+          gemini_director: 'Gemini',
+          local_omni_director: 'Local Omni',
+          disk_space: 'Disk',
+        };
+        const checks = report && Array.isArray(report.checks) ? report.checks : [];
+        if (!checks.length) {
+          const pill = document.createElement('span');
+          pill.className = 'health-pill';
+          pill.dataset.status = 'warn';
+          pill.textContent = 'V8 Preflight: Unavailable';
+          strip.append(pill);
+          return;
+        }
+        for (const check of checks) {
+          const pill = document.createElement('span');
+          pill.className = 'health-pill';
+          const status = ['ok', 'warn', 'fail'].includes(check.status) ? check.status : 'warn';
+          pill.dataset.status = status;
+          pill.dataset.check = String(check.name || '');
+          const label = Object.hasOwn(labels, check.name)
+            ? labels[check.name]
+            : String(check.name || 'check');
+          const icon = status === 'ok' ? '✓' : status === 'warn' ? '!' : '✗';
+          pill.textContent = label + ' ' + icon;
+          if (typeof check.summary === 'string' && check.summary) pill.title = check.summary;
+          strip.append(pill);
+        }
+      }
+      async function loadDoctor() {
+        const epoch = ++state.doctorEpoch;
+        try {
+          const report = await api('/api/v8/doctor');
+          if (epoch !== state.doctorEpoch) return;
+          renderDoctor(report);
+        } catch (error) {
+          if (epoch !== state.doctorEpoch) return;
+          renderDoctor(null);
+        }
+      }
+      function renderPresets() {
+        const grid = $('stylePresetGrid');
+        grid.replaceChildren();
+        if (!state.presets.length) return;
+        for (const preset of state.presets) {
+          const name = String(preset.name || '');
+          if (!name) continue;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'preset-card';
+          btn.dataset.preset = name;
+          btn.setAttribute('aria-pressed', String(state.stylePreset === name));
+          const swatches = document.createElement('div');
+          swatches.className = 'swatch-row';
+          const colors =
+            Array.isArray(preset.swatches) && preset.swatches.length
+              ? preset.swatches
+              : [
+                  preset.active_pill_hex,
+                  preset.power_pill_hex,
+                  preset.progress_bar_hex,
+                ].filter(Boolean);
+          for (const hex of colors) {
+            if (typeof hex === 'string' && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
+              const dot = document.createElement('span');
+              dot.className = 'swatch';
+              dot.style.background = hex;
+              dot.title = hex;
+              swatches.append(dot);
+            }
+          }
+          const title = document.createElement('span');
+          title.className = 'preset-title';
+          title.textContent = String(preset.display_name || name);
+          const desc = document.createElement('span');
+          desc.className = 'preset-desc';
+          desc.textContent = String(preset.description || '');
+          btn.append(swatches, title, desc);
+          btn.addEventListener('click', () => {
+            if (state.busy || state.requestUncertain) return;
+            state.stylePreset = name;
+            renderPresets();
+            save('options', options());
+            controls();
+          });
+          grid.append(btn);
+        }
+      }
+      async function loadPresets() {
+        const epoch = ++state.presetsEpoch;
+        try {
+          const data = await api('/api/v8/presets');
+          if (epoch !== state.presetsEpoch) return;
+          const rows = Array.isArray(data) ? data : Array.isArray(data.presets) ? data.presets : [];
+          state.presets = rows;
+          message('presetStatus', rows.length ? '' : 'هیچ شێوازێک نەدۆزرایەوە.');
+          renderPresets();
+        } catch (error) {
+          if (epoch !== state.presetsEpoch) return;
+          message('presetStatus', 'شێوازەکان ئامادە نین: ' + error.message);
+        }
+      }
+      function renderClipDownloads(clip) {
+        const bar = $('clipDownloads');
+        bar.replaceChildren();
+        const links = [];
+        const dl = clip && typeof clip.download_urls === 'object' && clip.download_urls
+          ? clip.download_urls
+          : {};
+        const specs = [
+          ['MP4', dl.mp4, true],
+          ['SRT', dl.srt, true],
+          ['EDL', dl.edl, true],
+          ['OTIO', dl.otio, true],
+          ['Social ZIP', dl.social_zip, true],
+          ['Cover', clip && clip.cover_url, true],
+          ['Director JSON', dl.director_json, true],
+          ['Grill JSON', dl.grill_json, true],
+          [
+            'Review Sheet',
+            (clip && clip.review_sheet_url) || (state.job && state.job.review_sheet_url),
+            false,
+          ],
+        ];
+        for (const [label, url, isDownload] of specs) {
+          if (typeof url !== 'string' || !url.startsWith('/api/')) continue;
+          const anchor = document.createElement('a');
+          anchor.className = 'download-chip';
+          anchor.href = url;
+          anchor.textContent = label;
+          if (isDownload) anchor.setAttribute('download', '');
+          else {
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+          }
+          links.push(anchor);
+        }
+        bar.hidden = !links.length;
+        for (const anchor of links) bar.append(anchor);
+      }
+      $('videoFile').addEventListener('change', () => {
+        state.file = $('videoFile').files[0] || null;
+        state.source = null;
+        state.ticket = null;
+        save('source', null);
+        save('upload', null);
+        message('sourceIdentity', '');
+        message('sourceError', '');
+        message('uploadMessage', '');
+        $('uploadProgress').hidden = true;
+        $('uploadProgress').removeAttribute('value');
+        message(
+          'fileInfo',
+          state.file
+            ? state.file.name + ' · ' + state.file.size + ' bytes'
+            : 'هیچ فایلێک هەڵنەبژێردراوە.',
+        );
+        controls();
+      });
+      async function importYouTube(url, resume = false) {
+        if (!url || state.busy || state.requestUncertain || state.uploadUncertain) return;
+        state.busy = true;
+        controls();
+        message('sourceError', '');
+        message('uploadMessage', 'ئەڵقەکە دەهێنرێت…');
+        try {
+          state.source = null;
+          state.file = null;
+          state.ticket = null;
+          $('videoFile').value = '';
+          $('optSpeakerName').value = '';
+          $('optSpeakerRole').value = '';
+          message('sourceIdentity', '');
+          message('fileInfo', '');
+          if (!save('source', null) || !save('upload',null))
+            throw new Error('پاشەکەوتکردن شکستی هێنا.');
+          if (!save('youtube', url)) throw new Error('پاشەکەوتکردن سەرکەوتوو نەبوو.');
+          let endpoint = resume ? 'status' : 'import';
+          for (;;) {
+            const result = await api('/api/youtube/' + endpoint, {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({url}),
+            });
+            if (result.state === 'ready') {
+              showSource(result.source);
+              save('youtube', null);
+              break;
+            }
+            if (result.state !== 'importing') {
+              save('youtube', null);
+              throw new Error(result.error || 'هێنانی ئەڵقەکە وەستا. دووبارە هەوڵ بدە.');
+            }
+            endpoint = 'status';
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        } catch (error) {
+          message('uploadMessage', '');
+          message('sourceError', error.message);
+        } finally {
+          state.busy = false;
+          controls();
+        }
+      }
+      $('youtubeBtn').addEventListener('click', () => importYouTube($('youtubeUrl').value.trim()));
+      $('uploadBtn').addEventListener('click', upload);
+      $('recoverUploadBtn').addEventListener('click', recoverUpload);
+      $('startBtn').addEventListener('click', generate);
+      $('settingsFields').addEventListener('change', () => {
+        save('options', options()); controls();
+      });
+      $('optEngine').addEventListener('change', () => {
+        syncEngineVisibility();
+        save('options', options());
+        controls();
+      });
+      $('v8Controls').addEventListener('change', () => {
+        const opts = options();
+        if (validOptions(opts)) {
+          message('sourceError', '');
+          save('options', opts);
+        } else {
+          message('sourceError', 'ڕەنگی براند دەبێت بە شێوەی #RRGGBB بێت (بۆ نموونە #FF2E63).');
+        }
+        controls();
+      });
+      $('historySearch').addEventListener('input', () => renderHistory());
+      $('jobSelect').addEventListener('change', () => {
+        state.historySelected = $('jobSelect').value;
+        renderHistory();
+        selectJob(state.historySelected);
+      });
+      $('refreshBtn').addEventListener('click', async () => {
+        await readiness();
+        await loadDoctor();
+        await refreshHistory();
+      });
+      $('retryPreviewBtn').addEventListener('click', () => {
+        if (state.clip)
+          selectClip(
+            state.clip,
+            Array.from($('clipTabs').children).find(
+              (item) => item.getAttribute('aria-pressed') === 'true',
+            ),
+          );
+      });
+      $('player').addEventListener('loadedmetadata', () => {
+        if (!state.clip || !$('player').hasAttribute('src')) return;
+        const duration = $('player').duration;
+        $('playerDuration').textContent =
+          Number.isFinite(duration) && duration > 0
+            ? duration.toFixed(1) + ' چرکە'
+            : unknown;
+      });
+      $('player').addEventListener('error', () => {
+        if (!state.clip || !$('player').hasAttribute('src')) return;
+        $('player').hidden = true;
+        $('privateCopy').hidden = true;
+        $('playerDuration').textContent = unknown;
+        message(
+          'previewError',
+          'پلەیەر نەتوانی ڤیدیۆکە بکاتەوە؛ پێشبینین دووبارە پشکنین بکە.',
+        );
+        $('retryPreviewBtn').hidden = false;
+      });
+      async function initialize() {
+        const source = read('source');
+        const ticket = read('upload');
+        const request = read('request');
+        const savedOptions = read('options');
+        if (savedOptions !== null) applyOptions(reusableOptions(savedOptions));
+        if (source && validSource(source)) {
+          state.source = source;
+          message('sourceIdentity', source.filename + ' · ' + source.source_id);
+        } else if (source !== null) {
+          state.storageReady = false;
+          message('storageError', 'ناسنامەی سەرچاوەی پاشەکەوتکراو نادروستە.');
+        }
+        if (ticket && typeof ticket.upload_id === 'string' &&
+            sourceIdPattern.test(ticket.upload_id) &&
+            Number.isSafeInteger(ticket.size) && ticket.size > 0 &&
+            Number.isFinite(ticket.expires_at) && ticket.expires_at > 0) {
+          state.ticket = ticket;
+          state.uploadUncertain = true;
+          if (state.source && ticket.upload_id !== state.source.source_id) {
+            state.storageReady = false;
+            message('storageError', 'ناسنامەی سەرچاوە و بارکردن ناگونجێن.');
+          }
+        } else if (ticket !== null) {
+          state.storageReady = false;
+          message('storageError', 'ناسنامەی بارکردنی پاشەکەوتکراو نادروستە.');
+        }
+        if (request !== null) {
+          if (
+            request && typeof request === 'object' && !Array.isArray(request) &&
+            request.schema === 1 &&
+            Object.keys(request).sort().join(',') ===
+              'client_token,options,schema,source_id' &&
+            sourceIdPattern.test(request.source_id) &&
+            typeof request.client_token === 'string' &&
+            /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(request.client_token) &&
+            validOptions(request.options) &&
+            state.source &&
+            request.source_id === state.source.source_id
+          ) {
+            state.request = request;
+            state.requestUncertain = true;
+            applyOptions(request.options);
+            message(
+              'sourceError',
+              'داواکاریی پێشوو ئەنجامی نەزانراوە؛ تەنها هەمان داواکاری پشکنین بکەرەوە.',
+            );
+          } else {
+            state.storageReady = false;
+            message(
+              'storageError',
+              'داواکاریی پاشەکەوتکراو ناسنامەی گونجاوی نییە؛ دووبارەی نوێ نانێردرێت.',
+            );
+          }
+        }
+        syncEngineVisibility();
+        controls();
+        await Promise.all([readiness(), loadDoctor(), loadPresets()]);
+        await refreshHistory(read('selected') || '');
+        if (state.ticket) await recoverUpload();
+        const pendingUrl = read('youtube');
+        if (typeof pendingUrl === 'string' && !state.requestUncertain) {
+          $('youtubeUrl').value = pendingUrl;
+          await importYouTube(pendingUrl, true);
+        }
+      }
+      initialize();
+    </script>
+  </body>
+</html>
+"""

@@ -13,7 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeDecision, JudgeVerdict, ShadowVerdict
+from hawedit.judge import (
+    JUDGE_SHADOW,
+    KURDISH_EDITORIAL_JUDGE,
+    JudgeDecision,
+    JudgeVerdict,
+    ShadowVerdict,
+)
 from hawedit.promotion import (
     PromotionOutcome,
     PromotionRecord,
@@ -25,8 +31,8 @@ from hawedit.promotion import (
     rollback_judge,
 )
 
-JUDGE = "gemini-2.5-pro"
-SHADOW = "gemini-3.1-pro"
+JUDGE = KURDISH_EDITORIAL_JUDGE
+SHADOW = JUDGE_SHADOW
 
 
 def a_shadow_verdict(**overrides: object) -> ShadowVerdict:

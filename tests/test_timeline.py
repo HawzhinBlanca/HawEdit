@@ -17,6 +17,7 @@ from hawedit.clip import (
     Sv6d,
 )
 from hawedit.delivery import publish_delivery_bundle, publish_episode_timeline
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.timeline import (
     build_clip_markers,
     build_episode_otio_timeline,
@@ -68,7 +69,7 @@ def a_clip(
             misleading_edit_risk=0.05,
             cultural_landing=0.86,
             narrative_role="payoff",
-            judge="gemini-2.5-pro",
+            judge=KURDISH_EDITORIAL_JUDGE,
             self_contained=True,
             payoff_at_ms=payoff_at_ms,
             sv6d=Sv6d(

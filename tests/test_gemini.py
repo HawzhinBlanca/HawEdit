@@ -125,7 +125,7 @@ def a_judge(transport: Any, **kwargs: Any) -> GeminiJudge:
 
 def test_a_verdict_comes_back_fully_validated() -> None:
     verdict = a_judge(Api()).judge(a_request())
-    assert verdict.judge == "gemini-2.5-pro"
+    assert verdict.judge == KURDISH_EDITORIAL_JUDGE
     assert verdict.candidate_id == "c1"
     assert verdict.payoff_at_ms == 4_000
     assert verdict.hashtags_ckb == ("#کوردی",)
@@ -749,9 +749,9 @@ def test_each_public_entry_point_gates_confidential_material_on_its_own(
 
 
 def test_the_shadow_cannot_be_constructed_as_the_judge() -> None:
-    """§3 Stage 4: gemini-3.1-pro is "evaluated, not routed"."""
+    """§3 Stage 4: shadow model is "evaluated, not routed"."""
     with pytest.raises(NotRoutable):
-        a_judge(Api(), model_id="gemini-3.1-pro")
+        a_judge(Api(), model_id=JUDGE_SHADOW)
 
 
 def test_model_routing_remains_eager_while_credentials_are_deferred(
@@ -764,7 +764,7 @@ def test_model_routing_remains_eager_while_credentials_are_deferred(
 
     monkeypatch.setattr("hawedit.gemini.read_credential", credential_must_not_be_read)
     with pytest.raises(NotRoutable):
-        GeminiJudge(api_key=None, model_id="gemini-3.1-pro", transport=Api())
+        GeminiJudge(api_key=None, model_id=JUDGE_SHADOW, transport=Api())
 
 
 def test_a_model_outside_section_7_cannot_be_constructed() -> None:

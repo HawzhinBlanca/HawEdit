@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.workflow_recovery import (
     CheckpointSchemaMigrationResult,
     ExternalCallStatus,
@@ -116,7 +117,7 @@ def test_visual_workflow_recovery_preserves_evidence_and_publication_identity(
     with pytest.raises(ExternalReconciliationError, match="operator reconciliation is required"):
         reconcile_external_billed_call(
             call_id="call_gemini_critic_77",
-            provider="gemini-2.5-pro",
+            provider=KURDISH_EDITORIAL_JUDGE,
             status=ExternalCallStatus.UNCERTAIN_DISCONNECTED,
             recorded_ledger={},  # Empty ledger = unconfirmed
         )
@@ -124,7 +125,7 @@ def test_visual_workflow_recovery_preserves_evidence_and_publication_identity(
     # Reconciles cleanly when recorded in provider ledger
     confirmed_outcome = reconcile_external_billed_call(
         call_id="call_gemini_critic_77",
-        provider="gemini-2.5-pro",
+        provider=KURDISH_EDITORIAL_JUDGE,
         status=ExternalCallStatus.UNCERTAIN_DISCONNECTED,
         recorded_ledger={"call_gemini_critic_77": "success"},
     )
@@ -433,7 +434,7 @@ def test_unknown_billed_outcome_is_not_blindly_retried(tmp_path: Path) -> None:
     # 2. Simulate external billed model call (e.g. Gemini critic / editorial judge)
     # The call drops connection after sending bytes: outcome is UNKNOWN / UNCERTAIN
     call_id = "call_gemini_critic_ack_timeout_99"
-    provider = "gemini-2.5-pro"
+    provider = KURDISH_EDITORIAL_JUDGE
 
     # Save the uncertain state into workflow checkpoint
     mgr.save_checkpoint(

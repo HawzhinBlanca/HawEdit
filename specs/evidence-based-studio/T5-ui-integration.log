@@ -1,0 +1,12 @@
+.F....................................                                   [100%]
+================================== FAILURES ===================================
+________________ test_studio_ui_upload_and_submission_contract ________________
+
+    def test_studio_ui_upload_and_submission_contract() -> None:
+        assert "api('/api/uploads'" in DASHBOARD_HTML
+>       assert "JSON.stringify({filename: file.name, size: file.size})" in DASHBOARD_HTML
+E       assert 'JSON.stringify({filename: file.name, size: file.size})' in '<!DOCTYPE html>\n<html lang="ckb" dir="rtl">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" conte...;\n        if (state.ticket) await recoverUpload();\n      }\n      initialize();\n    </script>\n  </body>\n</html>\n'
+
+tests\test_studio_ui.py:61: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_ui.py::test_studio_ui_upload_and_submission_contract

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hawedit.caption_layout import (
@@ -144,3 +146,190 @@ def test_caption_layout_models_and_errors() -> None:
     assert cue.duration_ms == 1500
     cue_dict = cue.to_dict()
     assert cue_dict["placement"] == "bottom"
+
+
+def test_caption_layout_protects_table_objects_teaser_label_and_time_scoped_faces() -> None:
+    """D5 AC3. TABLE_OBJECT, SOURCE_ON_SCREEN_TEXT, and timed SPEAKER_FACE trigger TOP cleanly."""
+    from hawedit.caption_layout import (
+        BOTTOM_BAND_BOX,
+        caption_layout_to_avoidance_intervals,
+    )
+
+    assert BOTTOM_BAND_BOX == (0.05, 0.70, 0.95, 0.80)
+    # 9 words -> 3 popups across 0..6s
+    spoken = (
+        Word("یەکەم", 0, 500, 0.98),
+        Word("بەش", 500, 1000, 0.98),
+        Word("تەواوە.", 1000, 1500, 0.98),
+        Word("دووەم", 2000, 2600, 0.98),
+        Word("بەش", 2600, 3200, 0.98),
+        Word("لێرەیە.", 3200, 3800, 0.98),
+        Word("سێیەم", 4200, 4800, 0.98),
+        Word("بەش", 4800, 5400, 0.98),
+        Word("ئارامە.", 5400, 6000, 0.98),
+    )
+    table_reg = ProtectedContentRegion(
+        region_id="table_mid_shot",
+        kind=ProtectedRegionKind.TABLE_OBJECT,
+        box=(0.05, 0.60, 0.95, 0.92),
+        start_ms=2000,
+        end_ms=3900,
+    )
+    teaser_reg = ProtectedContentRegion(
+        region_id="teaser_banner_start",
+        kind=ProtectedRegionKind.SOURCE_ON_SCREEN_TEXT,
+        box=(0.06, 0.72, 0.94, 0.88),
+        start_ms=0,
+        end_ms=1600,
+    )
+    plan = plan_caption_layout(spoken, (teaser_reg, table_reg), max_words_per_event=3)
+    assert len(plan.cues) == 3
+    assert plan.cues[0].placement == CaptionPlacement.TOP
+    assert plan.cues[1].placement == CaptionPlacement.TOP
+    assert plan.cues[2].placement == CaptionPlacement.BOTTOM
+    assert plan.canonical_text == " ".join(w.w for w in spoken)
+
+    intervals = caption_layout_to_avoidance_intervals(plan)
+    assert len(intervals) >= 1
+    assert intervals[0][0] == 0 and intervals[-1][1] == 3800
+
+
+def test_captions_avoid_detected_teaser_pill_and_table_regions_in_rendered_frames(
+    tmp_path: Path,
+) -> None:
+    """D5 AC4. End-to-end visual region probe relocates captions out of bottom pill/table bands."""
+    import subprocess
+
+    import cv2
+    import numpy as np
+
+    from hawedit.caption_layout import (
+        caption_layout_to_avoidance_intervals,
+        detect_protected_visual_regions,
+    )
+    from hawedit.captions import (
+        POPUP_MAX_CHARS,
+        POPUP_MAX_WIDTH_PX,
+        VIRAL_FONT_SIZE,
+        VIRAL_THEME,
+        CaptionStyle,
+        build_ass,
+        find_ffmpeg,
+        subtitle_filter,
+    )
+    from hawedit.sentences import Sentence
+
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg required")
+
+    # Synthetic 6s 1280x720 video (matches 16:9->9:16 crop geometry):
+    # - 0..2s: burned-in dark-blue lower teaser pill at y=72%..84%
+    # - 2..4s: studio table horizontal foreground lines across y=65%..88%
+    # - 4..6s: clean dark studio frame
+    vid = tmp_path / "scenes.mp4"
+    vw, vh = 640, 360
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(vid), fourcc, 10.0, (vw, vh))
+    assert writer.isOpened()
+    for f_idx in range(60):
+        frame = np.full((vh, vw, 3), 24, dtype=np.uint8)
+        if f_idx < 20:
+            # Saturated dark-blue teaser banner in lower band inside center 9:16 crop
+            cv2.rectangle(frame, (225, int(0.71 * vh)), (415, int(0.84 * vh)), (185, 30, 15), -1)
+        elif f_idx < 40:
+            # Dense horizontal table edges and laptop highlights across lower band
+            for row_y in range(int(0.62 * vh), int(0.89 * vh), 7):
+                val = 220 if (row_y % 14 == 0) else 60
+                cv2.line(frame, (220, row_y), (420, row_y), (val, val, val), 2)
+        writer.write(frame)
+    writer.release()
+
+    regions = detect_protected_visual_regions(
+        vid,
+        0,
+        6000,
+        source_dimensions=(vw, vh),
+        sample_step_ms=500,
+    )
+    kinds = {r.kind for r in regions}
+    assert ProtectedRegionKind.SOURCE_ON_SCREEN_TEXT in kinds
+    assert ProtectedRegionKind.TABLE_OBJECT in kinds
+
+    s1 = Sentence(
+        words=(Word("بڕگەی", 200, 900, 0.95), Word("یەکەم.", 900, 1700, 0.95)), complete=True
+    )
+    s2 = Sentence(
+        words=(Word("بڕگەی", 2200, 2900, 0.95), Word("دووەم.", 2900, 3700, 0.95)), complete=True
+    )
+    s3 = Sentence(
+        words=(Word("بڕگەی", 4200, 4900, 0.95), Word("سێیەم.", 4900, 5700, 0.95)), complete=True
+    )
+    words_all = tuple(w for s in (s1, s2, s3) for w in s.words)
+
+    plan = plan_caption_layout(
+        words_all,
+        regions,
+        max_chars_per_line=POPUP_MAX_CHARS,
+        max_line_width_px=POPUP_MAX_WIDTH_PX,
+        max_words_per_event=3,
+    )
+    intervals = caption_layout_to_avoidance_intervals(plan)
+    ass = build_ass(
+        (s1, s2, s3),
+        theme=VIRAL_THEME,
+        font_size=VIRAL_FONT_SIZE,
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        max_chars_per_line=POPUP_MAX_CHARS,
+        max_words_per_event=3,
+        max_popup_width_px=POPUP_MAX_WIDTH_PX,
+        face_intervals=intervals,
+        clip_in_ms=0,
+        clip_duration_ms=6000,
+    )
+    ass_p = tmp_path / "avoid.ass"
+    ass_p.write_text(ass, encoding="utf-8")
+
+    # Verify rendered pixels: at 1.0s (teaser pill) & 3.0s (table) captions sit at TOP (y < 600);
+    # at 5.0s (clean) caption sits in lower-middle safe zone (y > 1200).
+    for ts, expect_top in ((1.0, True), (3.0, True), (5.0, False)):
+        out_png = tmp_path / f"chk_{ts:.0f}.png"
+        vf = (
+            f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+            f"{subtitle_filter(ass_p, Path('assets/fonts'))}"
+        )
+        subprocess.run(
+            [
+                str(ffmpeg),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(vid),
+                "-vf",
+                vf,
+                "-ss",
+                f"{ts:.2f}",
+                "-frames:v",
+                "1",
+                "-y",
+                str(out_png),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30.0,
+        )
+        im = cv2.imread(str(out_png))
+        assert im is not None
+        ink_mask = (im[:, :, 2] > 180) & (im[:, :, 1] > 150)
+        ys, _ = ink_mask.nonzero()
+        assert ys.size > 0, f"no caption ink at t={ts}"
+        mean_y = float(ys.mean())
+        if expect_top:
+            assert mean_y < 600, (
+                f"at t={ts} caption overlapped lower protected zone: mean_y={mean_y:.1f}"
+            )
+        else:
+            assert mean_y > 1200, (
+                f"at t={ts} clear frame stayed at top unnecessarily: mean_y={mean_y:.1f}"
+            )

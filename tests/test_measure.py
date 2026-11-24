@@ -8,13 +8,16 @@ import pytest
 
 from hawedit.captions import find_ffmpeg
 from hawedit.measure import (
+    MIN_FACE_HEIGHT_SHARE,
     ClipMeasurement,
+    FaceTrackMeasurement,
     MeasureError,
     detect_caption_ink_in_band,
     main,
     measure_caption_events_contrast,
     measure_clip,
     probe_caption_ink,
+    probe_face_tracking,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -287,3 +290,75 @@ def test_measured_carries_speaking_face_share(tmp_path: Path) -> None:
     restored = ClipMeasurement.from_dict(payload)
     assert restored.faces.speaking_face_share == 1.0
     assert restored.faces.speaking_samples_count == 8
+
+
+Box = tuple[int, int, int, int]
+
+
+def _probe_blank_clip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, frontal: list[Box], profile: list[Box]
+) -> FaceTrackMeasurement:
+    """Run the real probe on a blank 1080x1920 clip with the cascades' answers stubbed (D-335)."""
+    import cv2
+    import numpy as np
+
+    class _Cascade:
+        def __init__(self, boxes: list[Box]) -> None:
+            self._boxes = boxes
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: object, **kwargs: object) -> list[Box]:
+            return list(self._boxes)
+
+    monkeypatch.setattr(
+        cv2, "CascadeClassifier", lambda p: _Cascade(profile if "profile" in str(p) else frontal)
+    )
+    video_path = tmp_path / "blank.mp4"
+    out = cv2.VideoWriter(str(video_path), cv2.VideoWriter.fourcc(*"mp4v"), 10.0, (1080, 1920))
+    for _ in range(10):
+        out.write(np.zeros((1920, 1080, 3), dtype=np.uint8))
+    out.release()
+    return probe_face_tracking(video_path)
+
+
+# 58 px is the tallest caption-text hit measured for D-335: 3.02 % of a 1920 frame.
+_CAPTION_TEXT_BOX: Box = (500, 1470, 58, 58)
+
+
+def test_a_detection_below_the_height_floor_is_not_a_face(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-335 AC1: a box under 5 % of the frame height is caption text, not a face."""
+    faces = _probe_blank_clip(tmp_path, monkeypatch, frontal=[_CAPTION_TEXT_BOX], profile=[])
+    assert faces.samples_count > 0
+    assert faces.face_detected_frames_count == 0
+    assert faces.face_detected_share == 0.0
+    assert faces.median_face_height_share is None
+    assert faces.median_y_center_share is None
+    assert faces.first_frame_face_share == 0.0
+
+
+def test_a_detection_at_the_height_floor_is_a_face(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-335 AC2: 96 px on a 1920 frame is exactly 5 % and still counts."""
+    assert MIN_FACE_HEIGHT_SHARE == 0.05
+    faces = _probe_blank_clip(tmp_path, monkeypatch, frontal=[(400, 600, 96, 96)], profile=[])
+    assert faces.samples_count > 0
+    assert faces.face_detected_share == 1.0
+    assert faces.median_face_height_share == 0.05
+    assert faces.median_y_center_share == 0.3375
+    assert faces.first_frame_face_share == 0.05
+
+
+def test_an_undersized_frontal_box_does_not_stop_the_profile_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-335 AC3: caption text seen by the frontal cascade must not hide a profile face."""
+    faces = _probe_blank_clip(
+        tmp_path, monkeypatch, frontal=[_CAPTION_TEXT_BOX], profile=[(300, 500, 200, 200)]
+    )
+    assert faces.face_detected_share == 1.0
+    assert faces.median_face_height_share == 0.1042

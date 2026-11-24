@@ -34,14 +34,16 @@ import gc
 import hashlib
 import importlib
 import json
+import math
 import os
 import stat
+import struct
 import subprocess
 import tempfile
 import threading
 import time
 import wave
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -126,11 +128,23 @@ class SpeechSegment:
 
 def _run(command: list[str], *, timeout: float = 300.0) -> subprocess.CompletedProcess[bytes]:
     env_timeout = os.environ.get("HAWEDIT_INGEST_TIMEOUT_S")
-    effective_timeout = float(env_timeout) if env_timeout else timeout
+    setting = "HAWEDIT_INGEST_TIMEOUT_S" if env_timeout else "Ingest timeout"
+    try:
+        effective_timeout = float(env_timeout) if env_timeout else timeout
+    except (ValueError, OverflowError) as exc:
+        raise IngestError(f"{setting} must be finite, positive and at most 43200 seconds") from exc
+    if (
+        type(effective_timeout) not in (int, float)
+        or not 0 < effective_timeout <= 43200
+        or not math.isfinite(effective_timeout)
+    ):
+        raise IngestError(f"{setting} must be finite, positive and at most 43200 seconds")
     try:
         result = subprocess.run(command, capture_output=True, timeout=effective_timeout)
     except subprocess.TimeoutExpired as exc:
         raise IngestError(f"{Path(command[0]).name} timed out after {effective_timeout}s") from exc
+    except OSError as exc:
+        raise IngestError(f"{Path(command[0]).name} could not launch: {exc}") from exc
     if result.returncode != 0:
         raise IngestError(
             f"{Path(command[0]).name} failed ({result.returncode}): "
@@ -338,7 +352,13 @@ def _atomic_json(path: Path, document: dict[str, object]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
+def _extract_once(
+    source: Path,
+    dest: Path,
+    command: Sequence[str],
+    *,
+    validate_cached: Callable[[Path], None] | None = None,
+) -> Path:
     """Reuse exact verified output, otherwise encode privately and publish atomically (D-162)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     sidecar = dest.with_suffix(dest.suffix + ".provenance.json")
@@ -360,13 +380,18 @@ def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
                 previous, intact = None, False
             if (
                 isinstance(previous, dict)
-                and set(previous) == {"schema", "source_sha256", "command", "output_bytes"}
-                and previous.get("schema") == 1
+                and set(previous)
+                == {"schema", "source_sha256", "command", "output_bytes", "output_sha256"}
+                and type(previous.get("schema")) is int
+                and previous.get("schema") == 2
                 and previous.get("source_sha256") == digest
                 and previous.get("command") == command_key
                 and intact
             ):
-                return dest
+                if validate_cached is not None:
+                    validate_cached(dest)
+                if previous["output_sha256"] == _source_digest(dest):
+                    return dest
 
         staging: Path | None = None
         try:
@@ -381,15 +406,17 @@ def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
             if _source_digest(source) != digest:
                 raise IngestError(f"Stage 0 source changed while extracting {dest.name}")
             output_bytes = staging.stat().st_size
+            output_sha256 = _source_digest(staging)
             os.replace(staging, dest)
             staging = None
             _atomic_json(
                 sidecar,
                 {
-                    "schema": 1,
+                    "schema": 2,
                     "source_sha256": digest,
                     "command": command_key,
                     "output_bytes": output_bytes,
+                    "output_sha256": output_sha256,
                 },
             )
         except OSError as exc:
@@ -400,7 +427,15 @@ def _extract_once(source: Path, dest: Path, command: Sequence[str]) -> Path:
         return dest
 
 
-def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
+def _threads_arg(threads: int) -> str:
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 0:
+        raise ValueError("Stage 0 ffmpeg threads must be a non-negative integer")
+    return str(threads)
+
+
+def extract_audio(
+    source: Path, dest: Path, ffmpeg: Path | None = None, *, threads: int = 1
+) -> Path:
     """§3 Stage 0's audio pass: 16 kHz mono PCM, loudness-normalised.
 
     `-threads 1` is deliberate (§3 Stage 0 / §6): parallelism belongs across files, not
@@ -416,7 +451,7 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-loglevel",
             "error",
             "-threads",
-            "1",
+            _threads_arg(threads),
             "-i",
             str(source),
             "-vn",
@@ -431,6 +466,7 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-y",
             str(dest),
         ],
+        validate_cached=_assert_audio_format,
     )
     _assert_audio_format(dest)
     return dest
@@ -447,7 +483,9 @@ def _assert_audio_format(wav_path: Path) -> None:
         )
 
 
-def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
+def extract_proxy(
+    source: Path, dest: Path, ffmpeg: Path | None = None, *, threads: int = 1
+) -> Path:
     """§3 Stage 0's video proxy: 1 fps, 720p, CRF 28, no audio.
 
     One frame per second is right for keyframe and visual work and **wrong for shot
@@ -463,7 +501,7 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-loglevel",
             "error",
             "-threads",
-            "1",
+            _threads_arg(threads),
             "-i",
             str(source),
             "-vf",
@@ -761,6 +799,8 @@ def ingest(
     work_dir: Path,
     media_id: str | None = None,
     ffmpeg: Path | None = None,
+    *,
+    threads: int | None = None,
 ) -> IngestResult:
     """Run §3 Stage 0 over one media file.
 
@@ -776,13 +816,39 @@ def ingest(
         IngestError: ffmpeg is unavailable, a pass failed, the audio is the wrong format, or
             a VAD segment exceeds the ASR ceiling.
     """
+    effective_threads = 1 if threads is None else threads
+    _threads_arg(effective_threads)
+    try:
+        source_size = source.stat().st_size
+    except OSError as exc:
+        raise IngestError(f"cannot inspect Stage 0 source {source}: {exc}") from exc
+    if source_size == 0:
+        raise IngestError("Source media is empty")
+    try:
+        with source.open("rb") as stream:
+            header = stream.read(16)
+    except OSError as exc:
+        raise IngestError(f"cannot read Stage 0 source {source}: {exc}") from exc
+    if len(header) >= 8:
+        box_size, box_type = struct.unpack(">I4s", header[:8])
+        if box_type == b"ftyp":
+            minimum_size = 16
+            if box_size == 1:
+                if len(header) < 16:
+                    raise IngestError("Source media has an incomplete ISO header")
+                box_size = struct.unpack(">Q", header[8:16])[0]
+                minimum_size = 24
+            elif box_size == 0:
+                box_size = source_size
+            if not minimum_size <= box_size <= source_size:
+                raise IngestError("Source media has an incomplete ISO header")
     binary = _ffmpeg(ffmpeg)
     work_dir.mkdir(parents=True, exist_ok=True)
     identifier = media_id or source.stem
     source_sha256 = _source_digest(source)
 
-    audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary)
-    proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary)
+    audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary, threads=effective_threads)
+    proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary, threads=effective_threads)
     duration_ms = probe_duration_ms(source, ffmpeg=binary)
     speech = _clip_speech_to_media(detect_speech(audio), duration_ms)
     assert_within_asr_ceiling(speech)

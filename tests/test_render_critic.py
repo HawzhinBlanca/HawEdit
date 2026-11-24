@@ -238,6 +238,7 @@ def test_render_critic_approves_grounded_clean_render() -> None:
         fps=25.0,
         width=1280,
         height=720,
+        source_video_path=fixture_path,
         planned_shots=(shot_clean,),
         caption_plan=caption_plan_clean,
         landing_beat_ms=3800,
@@ -478,3 +479,63 @@ def test_critic_rejects_mid_clause_entry() -> None:
     assert any(d.defect_kind == DefectKind.MID_CLAUSE_ENTRY for d in result.defects)
     with pytest.raises(UnsupportedAllClearError):
         result.assert_verdict_grounded()
+
+
+def test_critic_cannot_accept_boolean_source_claim_without_readable_source(tmp_path: Path) -> None:
+    sequence = RenderedSequenceContext(
+        render_path="tests/fixtures/kurdish-speech-3cuts.mp4",
+        duration_ms=4120,
+        has_source_context=True,
+        source_video_path=tmp_path / "missing-source.mp4",
+    )
+    result = inspect_rendered_sequence(sequence, claim_all_clear=True)
+    assert not result.is_all_clear
+    assert result.all_clear_refused
+    with pytest.raises(UnsupportedAllClearError):
+        result.assert_verdict_grounded()
+
+
+def test_critic_reports_decoded_frame_counts_instead_of_window_estimates() -> None:
+    fixture = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+    result = inspect_rendered_sequence(
+        RenderedSequenceContext(render_path=fixture, source_video_path=fixture, duration_ms=4120),
+        claim_all_clear=True,
+    )
+    assert result.is_all_clear
+    assert all(w.frame_count == 2 for w in result.windows if w.is_observed)
+    assert all(w.has_temporal_motion for w in result.windows if w.is_observed)
+
+
+def test_generated_critique_plan_does_not_claim_observed_frames() -> None:
+    windows = generate_critique_windows(4120, fps=25.0)
+    assert windows
+    assert all(not window.is_observed for window in windows)
+
+
+@pytest.mark.parametrize("output_in,output_out", [(0, 1000), (1000, 4120)])
+def test_critic_refuses_source_maps_that_do_not_cover_the_output(
+    output_in: int, output_out: int
+) -> None:
+    fixture = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+    shot = PlannedShot(
+        shot_id="partial-map",
+        source_in_ms=0,
+        source_out_ms=output_out - output_in,
+        output_in_ms=output_in,
+        output_out_ms=output_out,
+        editorial_purpose=ShotEditorialPurpose(reason="partial mapping", focal_subject="speaker"),
+        layout_strategy=ShotLayoutStrategy.HOLD,
+        supporting_evidence_ids=("source-map",),
+    )
+    result = inspect_rendered_sequence(
+        RenderedSequenceContext(
+            render_path=fixture,
+            source_video_path=fixture,
+            duration_ms=4120,
+            planned_shots=(shot,),
+        ),
+        claim_all_clear=True,
+    )
+    assert not result.is_all_clear
+    assert result.all_clear_refused
+    assert "source context" in (result.refusal_reason or "")

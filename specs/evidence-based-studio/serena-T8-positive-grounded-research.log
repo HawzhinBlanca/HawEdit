@@ -1,0 +1,22 @@
+Could not find containing symbol for src\hawedit\release_approval.py:39:5. Returning file symbol instead
+Could not find containing symbol for tests\test_release_approval.py:17:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:61:5. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:23:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:63:5. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:25:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:69:5. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:31:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\editorial_acceptance.py:67:5. Returning file symbol instead
+Could not find containing symbol for tests\test_editorial_acceptance.py:29:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\clip.py:72:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\comparison_kit.py:23:25. Returning file symbol instead
+Could not find containing symbol for src\hawedit\delivery.py:53:35. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:98:4. Returning file symbol instead
+Could not find containing symbol for tests\test_clip.py:34:4. Returning file symbol instead
+Could not find containing symbol for tests\test_delivery.py:36:43. Returning file symbol instead
+Could not find containing symbol for tests\test_pipeline.py:52:4. Returning file symbol instead
+Could not find containing symbol for tests\test_prompt_injection.py:43:25. Returning file symbol instead
+Could not find containing symbol for src\hawedit\delivery.py:68:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\pipeline.py:114:4. Returning file symbol instead
+Could not find containing symbol for tests\test_delivery.py:47:4. Returning file symbol instead
+Captured 22 actual source-confirmed positive-path records

@@ -1,0 +1,35 @@
+{
+  "scope": "Observed enabled controls with advanced settings collapsed; final focus left the document and :focus had no match. Not NVDA or full workflow acceptance",
+  "sequence": [
+    {
+      "id": "videoFile",
+      "outline": "rgb(255, 220, 138) solid 2.66667px",
+      "tag": "INPUT"
+    },
+    {
+      "id": "recoverUploadBtn",
+      "outline": "rgb(255, 220, 138) solid 2.66667px",
+      "tag": "BUTTON"
+    },
+    {
+      "id": "",
+      "outline": "rgb(255, 220, 138) solid 2.66667px",
+      "tag": "SUMMARY"
+    },
+    {
+      "id": "jobSelect",
+      "outline": "rgb(255, 220, 138) solid 2.66667px",
+      "tag": "SELECT"
+    },
+    {
+      "id": "refreshBtn",
+      "outline": "rgb(255, 220, 138) solid 2.66667px",
+      "tag": "BUTTON"
+    },
+    {
+      "id": "",
+      "outline": "rgb(245, 247, 248) none 2.66667px",
+      "tag": "BODY"
+    }
+  ]
+}

@@ -16,7 +16,7 @@ from hawedit.edit_plan import (
     SourceTimeMapping,
     VisualEditPlan,
 )
-from hawedit.judge import JudgeVerdict, tournament_rank_verdicts
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeVerdict, tournament_rank_verdicts
 from hawedit.sentences import Sentence
 from hawedit.story import (
     EditorialProposal,
@@ -868,7 +868,7 @@ def test_high_hook_score_cannot_override_meaning_failure() -> None:
         title_ckb="سەردێڕی دەستکاری کراو",
         description_ckb="وەسف",
         hashtags_ckb=("#کورد",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=1000,
         clip_out_ms=7500,
     )
@@ -884,7 +884,7 @@ def test_high_hook_score_cannot_override_meaning_failure() -> None:
         title_ckb="سەردێڕی ڕاستەقینە",
         description_ckb="وەسف",
         hashtags_ckb=("#کورد",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=1000,
         clip_out_ms=7500,
     )

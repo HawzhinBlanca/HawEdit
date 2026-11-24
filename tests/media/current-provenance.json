@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "profile": "current-zar",
+  "provenance": "D:/HawEdit-media/README.md, 2026-11-18 hashes; sizes and container clocks independently probed on HawaPC01 2026-11-22 with FFmpeg 8.1.1. No editorial/ASR accuracy claim.",
+  "records": [
+    {
+      "path": "sources/zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4",
+      "size_bytes": 2030532996,
+      "sha256": "17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72",
+      "duration_ms": 2391694,
+      "width": 3840,
+      "height": 2160,
+      "fps": "25/1",
+      "video_codec": "vp9",
+      "audio_codec": "opus",
+      "sample_rate": 48000,
+      "channels": 2
+    },
+    {
+      "path": "sources/zar-mjewr-cooking-with-hawzhin-2026-10-26__k_jxP903t5w.mp4",
+      "size_bytes": 3718273320,
+      "sha256": "b594c941d7a95dbf68b6eee9fb103c14bead4593ef9ed3cf7ae3ee848221b273",
+      "duration_ms": 4062074,
+      "width": 3840,
+      "height": 2160,
+      "fps": "25/1",
+      "video_codec": "vp9",
+      "audio_codec": "opus",
+      "sample_rate": 48000,
+      "channels": 2
+    },
+    {
+      "path": "sources/zar-ep54-younis-gardwni-cosmos-2026-11-12__xMEcurfWjic.mp4",
+      "size_bytes": 7438680646,
+      "sha256": "d5e3066558f25eacef44fd6ba932ecefa18d74050ddbd0c72280f4e50593bada",
+      "duration_ms": 6460974,
+      "width": 3840,
+      "height": 2160,
+      "fps": "25/1",
+      "video_codec": "vp9",
+      "audio_codec": "opus",
+      "sample_rate": 48000,
+      "channels": 2
+    },
+    {
+      "path": "excerpts/zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4",
+      "size_bytes": 264329839,
+      "sha256": "6f784e239a371306313882d3377906eb6d3d0afd3927804dc37c68d567aaf4e0",
+      "duration_ms": 300014,
+      "width": 3840,
+      "height": 2160,
+      "fps": "25/1",
+      "video_codec": "vp9",
+      "audio_codec": "opus",
+      "sample_rate": 48000,
+      "channels": 2
+    }
+  ]
+}

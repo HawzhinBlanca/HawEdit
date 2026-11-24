@@ -6,6 +6,388 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 - Gate: `bash hawedit/scripts/verify.sh` (lint + format + typecheck + tests)
 - Blocked items: `BLOCKED.md` · Deviations: `DECISIONS.md`
 
+## Original Thread Registry (WIP)
+
+Typed Snapshot diagnostic controller, D-329: code b9acc71ee36cba8d11e92a6c13410ce4094ff38a,
+424affected tests pass/0errors/skips,151.97s, recorded Windows/WSL hardware.
+Actual copied ELF/Python, output/deadline/owner-loss/manifest refusals and original
+drain are covered. Fast407files and formatting pass; exact full gate/current CI
+remain required. Evidence: evidence/typed-rooted-controller-20261014.md.
+GPU/SDK/model/protected ASR and real captioned ZAR remain open; no promotion.
+
+| Task | Work | Status | Evidence / Remaining |
+| --- | --- | --- | --- |
+| M9.105 | Adopt bounded original copied worker into the typed Snapshot controller | WIP | `src/hawedit/linux_rooted_launch.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_controller.py`; approved D-329 launch plan. Initial module accounting, not promotion. GPU/SDK/model/resource/producer/real ZAR editorial output and current independent security/CI acceptance remain open. |
+| M9.106 | Enforce original copied-worker diagnostic kernel resource limits | WIP | `src/hawedit/linux_worker_resources.py`, `src/hawedit/linux_rooted_worker.py`, `tests/test_worker_resources.py`, `tests/test_rooted_controller.py`; approved protected-ASR PA2/D-329. Initial module accounting, not promotion. Actual334 affected tests pass; full0346500 gate6431pass/5fail/3errors includes three documentation omissions being corrected, dirty-checkout builds and stale independent VEX. Production CUDA/RSS/VRAM/effect admission, protected ASR/checkpoints, ZAR reel and exact gate/current CI remain open. |
+| M9.107 | Share canonical inference with host-owned protected ASR checkpoints | WIP | `src/hawedit/asr_checkpoint.py`, `src/hawedit/asr_resume.py`, `src/hawedit/asr_worker.py`, `tests/test_asr_checkpoint.py`; approved PA3/D-329. Initial accounting only. Real private storage/pipe tests use explicitly controlled speech responses, not model quality evidence. Typed authenticated launch endpoints/deadlines/drain, complete runtime/resources, protected producer adoption, current VEX, actual ZAR ASR and exact gate/current CI remain open. |
+
+Approved private-view handoff, D-329: initial RT2A preparation precondition is
+implemented in LinuxScope, not the complete prepared-view transition or launch.
+Actual122-case Scope/Bootstrap/Registry/preparation cohort passes, zero failures,
+errors or skips, 29.000s on HawaPC01/Windows26300/CPython3.12.10 and real WSL.
+Strict fast checks401files pass; full committed gate/current CI remain required.
+No ledger promotion, copied SDK/model release, new ZAR reel or quality verdict.
+Evidence: evidence/original-preparation-boundary-20261013.md.
+
+RT2A prepared-view witness, D-329: captures before preparation and verifies
+original PID1's private user/mount/root through genuine kernel evidence; original
+PID2 remains held. Real PID1 thread, restored-descriptor uncertainty and partial
+anchor-allocation leaks reproduced and fixed. Whole310-case isolation cohort
+passes, zero failures/errors/skips,106.175s on recorded Windows/WSL hardware.
+No actual worker join, copied runtime, model, protected producer or ZAR output
+yet. Full committed gate/current CI required; all ledger targets remain WIP.
+Evidence: evidence/original-prepared-view-20261013.md.
+
+| Task | Deliverable | Status | Evidence |
+| --- | --- | --- | --- |
+| M9.102 | Anchor original worker threads through kernel birth/exec stops before driver release | WIP | `src/hawedit/linux_thread_registry.py`, `tests/test_linux_thread_registry.py`, `tests/original_registry_kernel_probe.py`; D-328, `specs/rooted-thread-name/registry-plan.md`, `evidence/original-thread-registry-20261013.md`. Initial module-accounting row, not a promotion. Whole235-case isolation cohort passes; real current-source private CUDA readback and foreign/listener-loss refusals observed. Exact44e9ece gate6243pass/3fail: two agent documentation omissions being corrected and stale independent VEX source binding. Typed command/broker, fresh copied SDK/model/resource/external-owner/protected producer adoption, new ZAR reels, full gate and same-SHA CI remain required. |
+
+## Bounded Original Thread-Name Broker (WIP)
+
+| Task | Deliverable | Status | Evidence |
+| --- | --- | --- | --- |
+| M9.103 | Service genuine original-thread comm notifications through the production broker | WIP | `src/hawedit/linux_thread_name.py`, `tests/test_linux_thread_name.py`, `tests/thread_name_broker_probe.py`; D-328, `specs/rooted-thread-name/broker-research.md`, `evidence/thread-name-broker-20261013.md`. Initial accounting, not promotion. Actual libc injection, foreign/shape/listener/custody/deadline and watchdog refusals; real NVIDIA private readback with source registry and broker, original2-6 all reaped. Source preparation failures retained. Typed stopped-worker command, fresh copied Python/Torch/model/resources/original owner, producer/ZAR output, exact full gate and same-SHA CI still required. |
+
+## Fenced Original Worker Execution (WIP)
+
+Actual423case affected cohort passes,142.89s/0failures/errors/skips, including
+28worker and67claims cases. Existing copied base Python3.12.0 starts under the
+original fenced worker with zero caps/NNP/seccomp/readonly root; no SDK/model.
+Code5723617, measured host/versions/source hashes/failures in
+evidence/fenced-original-worker-20261014.md. Exact committed full gate/current
+CI and qualified security review remain required; no new ZAR deliverable.
+
+| Task | Deliverable | Status | Evidence |
+| --- | --- | --- | --- |
+| M9.104 | Execute copied bytes only after original worker namespace/root/capability/FD/policy checks | WIP | `src/hawedit/linux_rooted_worker.py`, `src/hawedit/linux_snapshot.py`, `tests/test_rooted_worker.py`; D-329, approved `specs/rooted-thread-name/launch-plan.md`. Initial module accounting, not a promotion. Actual copied ELF and existing base Python diagnostics, kernel broker notification ordering and refusal tests. Complete production typed Snapshot controller, copied Torch/SDK/model/input/resources, protected producer, new ZAR output, full gate/current CI/security review remain required. |
+
+## Ingest Mutation Readiness (WIP)
+
+specs/ingest-mutation-readiness T1: deliberate copied-FFmpeg byte drift now waits
+only for Windows5/32permission refusal within a finite10second budget, still
+fails visibly on retained locks and rejects invalid budgets before mutation.
+Original cache/decode/hash/recovery assertions unchanged; production untouched.
+Actual20call baseline10fail/Windows Restart Manager association recorded, not
+universal-cause proof. Nine real controls7baseline failures; whole25cases pass.
+Strict fast lint/type382files and changed-file format pass. Exact committed
+gate/current CI required; no DONE/security approval/publication/system10/10.
+Evidence: evidence/ingest-mutation-readiness-20261009.md. No service shutdown,
+installed-binary/fixture/golden/harness/model/policy changes or mocked files.
+
+## Revision Review Truth (WIP)
+
+D-322/specs/revision-review-truth: render proposals now refuse occupied
+artifacts/retained claims with read-only reconciliation context. Both revision
+renderers carry explicit unreviewed QC from the start, not invented reviewer/
+timestamp/zero-hash approval. Prior invalidation derives from original review
+marker, not a temporary synthetic review. Real103case red14fail/first correction
+pass; strengthened actual renderer-input checks reproduce16failures on baseline.
+Frozen whole affected570cases pass, zero failures/errors/skips; strict fast
+lint/type380files and changed-file format pass. Exact committed gate/current CI
+remain required; no DONE. Preliminary nonfrozen publication run correctly refused
+source drift caused by a concurrent formatter; final unchanged-source run passes.
+Evidence: evidence/revision-review-truth-20261009.md. Not HTTP workflow,
+authenticated final-byte review/export, protected model admission or ZAR quality.
+
+## Immutable Revision Artifacts (WIP)
+
+D-321, specs/immutable-revision-artifacts: duplicate caption/boundary revision
+identifiers refuse instead of overwriting prior JSON. Owned unique text staging
+publishes with no-replace; rendering refuses occupied artifacts, burns staged
+ASS, and never deletes a competing final MP4. Persistent original-record-bound
+claims admit one render writer and refuse uncertain replay. Actual14baseline
+failures plus4claim failures reproduced; whole affected222cases pass without
+renderer mocks/skips/golden changes. Strict fast checks380files and format pass.
+Final frozen committed gate/current CI remain required; no ledger DONE.
+First8b07f12 exact frozen gate5933pass/2fail: missing evidence provenance header
+(agent omission, now corrected without checker change) and stale qualified-policy
+binding. Corrected-document committed rerun remains required; no security rebind.
+Evidence: evidence/immutable-revision-artifacts-20261009.md. Not HTTP editing,
+authenticated export, model admission, new ZAR quality or system acceptance.
+
+## Original Owner Bootstrap (WIP)
+
+D-320, specs/linux-owner-bootstrap: selected utility ELF is sealed/hash-bound,
+original creator pidfd/description anchors retained; only direct fork child
+installs verified parent-death/no-new-privileges and executes fixed namespaces.
+Actual first18cases pass, followed by four reproduced STD inheritance failures
+and one malformed-FD contextual-refusal failure; original red reports preserved.
+STD correction passes22cases. Further real closed-creator-STD faults now refuse
+before owned allocation. Final whole affected269cases pass;10actual retained
+Python3.12/glibc2.43/kernel6.18 CPU observations pass, unchanged source/ref.
+Failed external observer extraction is preserved separately from kernel evidence.
+Renewed strict fast checks379files and two-file format check pass; exact full
+committed gate and current CI remain required. No complete producer/model/
+GPU/effect/billing/Windows-owner EOF/HTTP/review/export or new reel acceptance.
+Evidence: evidence/linux-owner-bootstrap-20261009.md. No ledger DONE/current CI.
+
+Later exact aeca0ae clean committed gate finished5917pass/1historical-qualified-
+policy binding failure/zero errors/skips. Source unchanged; no self-rebind.
+Full terminal evidence is external HawEdit-linux-owner-bootstrap-verdict-20261009.md.
+Earlier pending statements describe their observation time, not a green gate.
+
+Prior b11d5d9 exact clean gate FINAL5883pass/1stale-qualified-VEXfail/0error/skip;
+source/ref/package unchanged and original commands gone/session14062closed.
+No security-policy source/date/reviewer rebinding or10/10 claim.
+
+## Held Original Linux Scope (WIP)
+
+D-319; actual current Serena/CPU research, EARS/impact/approved-parent plan in
+specs/linux-original-scope. Baseline25missing-API reds; actual duplicate and
+unsealed sender acceptance reproduced separately. Reentry never admitted a
+second scope but hid retained ownership behind autobound-socket diagnostics.
+EOF sealing, original kernel namespace queries, creator ownership and anchored
+member stop now pass the expanded38case component suite. Full strict fast
+checks377files pass after explicit Linux capability/type correction. Current
+whole235affected tests and four actual retained-runtime scope cases pass;
+independent Python3.12 entropy control explains the preserved first-use FD
+measurement failure without closing/filtering foreign descriptors or weakening
+assertions. Exact clean committed gate and same-SHA CI remain required.
+No owner-death/bootstrap/model/GPU/provider/billing/DBOS/HTTP or new reel quality
+acceptance. Evidence: evidence/linux-original-scope-20261009.md. No ledger DONE.
+
+Current prior81de681 exact clean gate FINAL5845pass/1stale-qualified-VEXfail,
+0error/skip/5846; source unchanged, original commands gone/session53216closed.
+No independent policy binding, expiry or reviewer approval manufactured.
+
+## Complete Worker Result Publication Evidence (WIP)
+
+Current local-only1d750e1 exact clean gate FINAL5806pass/1stale-VEXfail/0error/skip,
+5807tests; source unchanged. All8new worker regressions pass. No same-SHA CI,
+policy rebind, ledger promotion or10/10. Full external verdict:
+C:/Users/Wareen/HawEdit-worker-result-publication-verdict-20261009.md.
+
+D-317; actual Serena/EARS/approved-parent plan in specs/worker-result-publication.
+Primary test-first4fail/4pass reproduces empty final results after encoding error
+and original-child death, plus inference before occupied-name refusal. Complete
+UTF8 staging/fsync/atomic no-replace link now passes8named regressions. Whole
+affected caller modules335pass; static/format372files pass. No canonical/model/
+routing change or neural-quality claim. Evidence:
+evidence/worker-result-publication-20261009.md. Exact committed gate and same-SHA
+required CI remain required; task WIP, no ledger promotion/10/10 claim.
+
+Prior6bbe exact clean gate5798pass/1stale-VEX-fail/0error/skip. Evidence header
+correction passes; expired/currently unbound independent policy remains refused.
+No qualified security attestation is manufactured or re-bound.
+
+## Bounded Audit Output Deadline (WIP)
+
+D-318; actual Serena/EARS/approved-parent plan in specs/audit-output-deadline.
+Test-first22fail/11pass; initial33new regressions pass and whole239caller checks
+pass. Type corrections pass full fast checks375files. Extended304pass/2fail
+exposes only missing README/module-status inventory; these WIP entries repair
+that accounting. Exact corrected callers/full gate/current CI and actual
+configured WSL retest remain required. No trusted security or worker admission.
+Evidence: evidence/audit-output-deadline-20261009.md.
+
+Corrected whole callers plus claims312pass/0failure/error/skip; all39new
+regressions pass, full fast/static/format375files pass. These are component
+checks, not exact committed gate/current CI, accepted security or completed
+pipeline. No policy binding or test is weakened; current VEX refusal remains.
+
+## Truthful ASR Routing Reports (M9.95, WIP)
+
+D-316, baselinef6e6773. Actual Serena defs/references and EARS/plan/callers in
+specs/asr-routing-report. Test-first corrected fixture12behavior failures/
+2canonical-roundtrip passes; expanded19report cases pass. Original trace
+alone supplies original escalation; legacy selected-output and partial unbound
+summaries stay visible as diagnostics. Console uses the same source and no longer
+claims model routing was human validation. No model/policy/canonical/timing change.
+Absent scores cannot imply zero replay; unbound records cannot infer policy
+triggers. Preliminary11-module caller cohort525passed at package210542d before
+these final guards. Current369file lint/strict types/format pass.
+Evidence: evidence/asr-routing-report-20261009.md. Exact committed gate/CI pending,
+no ledger promotion or improved speech/reel/10/10 claim.
+
+## ASR Segment Origin (M9.94, WIP)
+
+D-315, baseline6ef4d4a. Actual pre-edit Serena maps and unchanged source hashes
+recorded in specs/asr-segment-origin. Test-first27fail/1legacy-pass; expanded36
+trace contract cases and21whole affected modules1153pass/0failure/error/skip.
+Full ruff/mypy/format pass368files. Original/validator/selected immutable trace,
+original-batch replay and exact canonical binding; no changed model, routing,
+resume payload, canonical history or caption timings. Actual retained ZAR
+5769words/158segments preserve exact923239bytes and SHA256; origins stay unknown.
+Evidence: evidence/asr-segment-origin-20261009.md. Exact committedf6e6773 full
+gate5741pass/1stale-VEX failure/0error/skip, unchanged; current CI absent.
+No ledger promotion, model accuracy, protected worker/HTTP, new reel, authenticated
+delivery, independent acceptance or10/10 claim.
+
+## Native Member Transition (M9.93, WIP)
+
+D-314, baseline b290ae8. Actual complete gate5702pass/2fail: incomplete native
+member enumeration and stale VEX. Bounded re-observation preserves exact-list,
+original-capability and sticky cleanup checks. Final six whole affected modules
+171pass/0failure/error/skip,27.862s JUnit /28.23s pytest on
+HawaPC01/Win26300/Python3.12.10/pytest9.1.1. Test-first16-cycle regression also
+passed against old code; original full-suite red is retained, no deterministic
+short-list reproduction claimed. Actual wrong-type Win32 API error still refuses.
+Evidence: evidence/native-member-transition-2026-10-09.md. Exact corrected clean
+gate and same-SHA required CI pending; no ledger promotion, inference, new reel,
+producer registration, publication or10/10 acceptance.
+
+Corrected clean6ef4d4a gate final5705pass/1stale-qualified-VEX failure/0error/skip,
+unchanged. Original native failure did not recur in this run; no future race
+impossibility, green gate/CI or DONE claim. The pending gate text above is historical.
+
+## Owned Scanner Cleanup (M9.82, WIP)
+
+D-304 local-only407de326f09ee8e57d630d55cfd6cc565d436600 replaces prohibited
+recursive shell cleanup with original-identity, descriptor-bound owned storage
+and closes requirements-write failure cleanup.189 complete affected/claims/CLI
+cases and seven actual pinned-Linux filesystem observations pass. Initial four
+full-gate failures are retained; corrected exact committed gate:5419/5420 passes,
+zero errors/skips, unchanged source, sole historical VEX source-binding refusal.
+No harness/assertion weakening, policy refresh, CI or ledger promotion.
+
+Supported Ubuntu source refresh succeeds. Actual repaired locked scanner audits
+141packages/21raw vulnerabilities/15alias groups and cleans its owned directory;
+actual VEX evaluation refuses expiry/source/lock drift and three missing
+dispositions. Every diagnostic setup/observer failure is distinguished in
+specs/scanner-cleanup/verification.md. No paid model call or transcript egress.
+Protected host/ID-only worker and HTTP/review/revision/export integration remain
+engineering work; qualified VEX, trusted signed authority and independent/sustained
+acceptance remain separate. Original ZAR media/canonical transcription unchanged.
+
+## Real ZAR Retest And Repair Adoption (M9.81, WIP)
+
+2026-10-08, original c163511 ZAR actual offline ASR:158 drafts/76 validators/
+76 alignments,5769 canonical timed words, no recorded alignment gaps/rejected
+corrections. Original source/raw/provenance/integrity verified unchanged; CLI
+correctly incomplete because seven further stages were omitted. No full reel,
+native accuracy, paid calls or performance acceptance. Diagnostic13288.420588s
+on HawaPC01/Windows26300, native3.11.15/Torch2.13cu130 and pinned WSL3.12.0/
+Torch2.8cu128, two3090Ti, concurrent gate/PATH FFmpeg8.1.1 unqualified.
+
+After quiescence, clean primary locally adopted90f5955/D-302/D-303. Supported
+named WSL generation setup0/unchanged783.772345s. Genuine predeclared16.476s
+repaired Qwen consumer passes exact samples/identical original text,169 tokens
+endingEOS151645 below512; actual CUDA1 placement, load170.141447s/infer27.435791s.
+Not a production completion guard or proof of other historical validator outputs.
+Real new-root verified-canonical CLI replay155.809597s preserves raw, rechecks
+fresh audio/source/producer/policy, writes Stage1/Stage2 checkpoints, indexes68
+documents, correctly remains incomplete with no candidates/reels/paid calls.
+Two external diagnostic-copy refusals preserved, not hidden or counted successful.
+
+Evidence: specs/validator-startup/verification.md and external
+C:/Users/Wareen/HawEdit-real-validator-and-cache-retest-20261008.md. Original
+full verdict C:/Users/Wareen/HawEdit-ZAR-ASR-final-verdict-20261008.md. All owned
+required processes/sessions quiescent. Existing c5aab9f exact gate5399/5400pass,
+sole stale qualified-VEX binding,0errors/skips; no current CI or ledger promotion.
+Protected studio worker/HTTP/review/revisions/export and independent/sustained
+acceptance remain engineering/evidence work, not complete-system/10/10.
+
+## Native Studio Profile (M9.74, WIP)
+
+D-297 / approved phase1 / specs/studio-host-profile. Actual pinned maintainer
+generated14 target locks: eight base/model-fetch locks unchanged, five gate/GPU
+graphs change only NumPy2.2.1 to2.2.2, one new133-wheel Windows3.11/cu130 studio
+graph. Whole new24-case module passes after22 test-first failures; strict types
+and lint pass on HawaPC01/Windows26300/CPython3.12.10. Actual isolated installation,
+runtime/decoder/telemetry observations, full gate/current CI, qualified security,
+protected worker and independent/sustained acceptance remain required. No task
+promotion or claim that generation is enabled.
+
+## Diarizer PCM And Privacy Controls (M9.75, WIP)
+
+D-298 / approved phase1 / specs/diarizer-runtime. Real WAV parsing and exact
+in-memory samples remove this adapter's file-decoder dependency. Held local SDK
+import refusals, process metrics off, malformed/partial-frame audio refusals and
+guard cleanup have named tests. Initial source21 cases:18 test-first failures;
+additional partial-frame22-case run:one failure. Whole608 callers pass before the
+last tightening, final161 model/adapter cases pass after it; zero skips/errors.
+Actual native studio Python3.11.15/cu130/Pyannote4.0.7 decoded8-second ZAR API
+roundtrip passes. No pretrained neural, DER, full-source/reel, native-egress or
+10/10 claim. The previous committed644643c full gate had5284/5285 passes, solely
+stale qualified VEX binding; this candidate still requires its exact gate/current
+CI. Actual worker/review/revision/export adoption and independent/sustained
+acceptance remain open. No ledger row is promoted.
+
+## Trusted Producer Configuration (M9.76, WIP)
+
+D-299 / approved phase1/2 / specs/trusted-producer-parity. Host Vertex location
+and existing confidentiality/ZDR/attribution now pass through the shared parser
+and canonical job identity. Existing defaults/positional fields preserved;
+malformed values, incompatible routes and reopened-job drift refuse. Browser
+options cannot supply these host grants. Source42-case RED33 failures; final473
+whole affected cases pass without skips/errors. Lint/types/format pass345 files
+on HawaPC01/Windows26300/CPython3.12.10; no models/cloud calls. Exact new gate,
+same-SHA CI and qualified review remain required. Parent bbcc4c2 exact gate
+finished5306/5307 passes, sole stale VEX source binding; it is not green or current
+acceptance for this repair. Actual worker/review/revisions/export remain open.
+No ledger promotion, full ZAR/reel, authority or 10/10 claim.
+
+## Studio Activation Fence (M9.77, WIP)
+
+D-300 / approved phase2 / specs/studio-activation-fence. Bounded callback startup
+wait retains active-only real verification; main-thread startup, timeout, failed
+startup, drain/close and runtime drift refuse. Genuine DBOS crash23/PENDING and
+controlled recovered callback ordering pass; inert workflow only. Source23-case
+RED23 failures; initial two setup errors retained/corrected via actual Serena.
+Final23 regressions and496 whole callers pass, no errors/skips, on
+HawaPC01/Windows26300/CPython3.12.10/DBOS2.29.0; strict checks346 files pass.
+Parent427c899 exact gate finished5348/5349 passes, sole stale qualified VEX binding.
+This candidate's exact committed gate/current CI and qualified review remain
+required. HTTP/actual producer/review/revisions/export and independent/sustained
+acceptance are still open; source-bound staging needs revalidation. No ledger
+promotion, full ZAR/reel, native preemption/child-death or10/10 claim.
+
+## Truthful Count Refusals (M9.78, WIP)
+
+D-301 / approved phase2 / specs/count-refusal-diagnostics. Pre-count policy expiry
+retains its original refusal; native journal failure has a distinct diagnostic
+under the established external-count error contract. Actual HTTP disconnect
+still reports provider failure. Source3-case RED2 failures; first whole242 run
+240 passes/two compatibility failures retained; corrected whole242 pass with
+zero errors/skips. Existing assertions unchanged. Strict checks347 files pass
+on HawaPC01/Windows26300/CPython3.12.10/DBOS2.29.0. Parent a0707d9 exact gate
+finished5370/5372 passes: billing expiry diagnostic plus stale qualified VEX.
+This candidate still requires exact committed gate/current CI and qualified
+review. No ledger promotion, producer/HTTP activation, paid call, full ZAR reel
+or independent/sustained acceptance claim.
+
+## Review Candidate File Binding (M9.79, WIP)
+
+D-302 / approved phases1-3 / specs/review-projection-binding. Real decoded media,
+native hardlinks, malformed records and exact private candidate scope have named
+test-first cases. Generation projection now consumes existing preview file
+primitives and shared measurement validation; raw measurement is reopened after
+MP4 hashing. A restored-size/mtime mutation exposes why metadata alone is not
+enough on this host. The new race-test's initial Windows newline setup failure
+and failed whole caller run are retained separately. No publication, fresh media
+quality, complete worker/HTTP integration, same-SHA CI or ledger promotion claim.
+Original c163511 checkout remains frozen for real full-source ZAR local ASR.
+
+Actual ac04cc47 full gate finished5384/5385 passes,0errors/skips,exit1;
+sole failure is stale qualified VEX source binding. New cases pass, source and
+controller unchanged throughout. ReportSHA256
+abe5c8ef19d46c3d167df496b67cf709e012fe40a4127ee497196e0063fe1a25;
+see verification.md for exact runtime,command,times and limits. WIP unchanged,
+no current CI, qualified policy alteration, ledger promotion or DONE claim.
+
+## Validator Startup Repair (M9.80, WIP)
+
+D-303 / approved phases1/5/6 / specs/validator-startup. Actual seven-pair Serena
+map and real unsupported UNC errno22 probe preceded edits. Permanent locking
+errors now refuse without contention retries; historical contention/deadline
+and lock ownership preserved. Qwen's supported tuple API receives canonical
+bounded mono16kPCM16 through existing wave/NumPy, other inputs retain their
+original path route. No model/decoder/text/checkpoint policy change or dependency.
+Six test-first failures; whole177 affected cases pass,0errors/skips. One lint
+style failure retained and corrected without assertion changes; strict checks
+and format349 pass. All158 real ZAR samples equal independent decoded samples
+and installed Qwen normalization, including actual first string-path parity.
+Actual unsupported CLI refusal in0.4906003000069177s, not native-Linux runtime
+support. Exact committed gate/current CI and qualified review remain required;
+no ledger promotion, current primary ZAR inference change, accuracy or10/10.
+
+Exact clean c5aab9f full gate ended2026-10-08T09:19:37.71267+03:00:
+5399/5400 passes,1stale qualified VEX source-binding failure,0errors/skips,
+exit1, all watched inputs unchanged. ReportSHA256
+9179a87fabc904d40fdd7d800554cc35121c912511ca430f3e1cb61087787c09.
+New regressions pass; verification.md records runtime/commands/timing and the
+cancelled initial run separately. No current CI, security rebind or task promotion.
+
 ## Status legend
 
 | Mark | Meaning |
@@ -17,6 +399,75 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | BLOCKED | Needs Hawa / hardware / credentials — see `BLOCKED.md` |
 
 ## Milestones (§9)
+
+Champion held-input repair 2026-10-07 (WIP, D-285): default champion and canonical
+CTC now construct through held verified assets; direct AssetCard objects avoid
+global name-lookup overrides. At dd43dda, 240 affected native tests and eight
+actual Linux regressions pass without skips. The real champion/CTC constructor
+consumed held inputs; all 560 LoRA tensors matched, and one decoded ZAR38 window
+reproduced its historical draft's text/CTC/word values exactly. Inference was
+84.1581717 seconds for 16.476-second development audio on HawaPC01/2x RTX 3090 Ti,
+not a throughput or native fidelity pass. See evidence/champion-held-assets-2026-10-07.md
+for versions/hashes/commands. Current exact gate and applicable CI remain pending;
+qualified VEX, full studio delivery and sustained acceptance are not implied.
+
+The dated ASR entries below retain their historical state. Closed 36c2d01 evidence
+is in the vault incident and external asr-segment-recovery results-20261007.md:
+fresh full episode still times out, same-source recovery completes ASR only,
+and no rendered or published reel was produced. That is not a full-system pass.
+
+ASR segment recovery 2026-10-06 (WIP, D-284): the fresh 422a3be ZAR38 run
+times out during independent validation, 19201.437921 controller seconds on
+HawaPC01/shared 2x RTX 3090 Ti. No raw transcript or reel. A bound owner-private
+operation journal is being integrated to avoid redrafting successful segments
+after interruption. Exact 422a3be gate: 4912 passed / one historical VEX-binding
+failure. No gate/CI, editorial-quality, publication, performance or 10/10 pass.
+See specs/asr-segment-checkpoints and the external full-source terminal record.
+
+ASR context grouping development checkpoint 2026-10-06 (T2 remains WIP): actual
+frozen-champion investigation reproduces the numeric repetition and supports a
+speech-boundary/context interaction. A conditional bounded grouping candidate is
+implemented only in the attached single-writer worktree; primary 899ab32 remains
+frozen for development comparison. All 50 wider-window invocations are now
+collected: original 22 aligned/three refused, grouped 23 aligned/two refused.
+The two new control regressions reject that prototype. The predeclared 25-invocation
+narrower-budget study on unchanged primary source closes all 25 samples
+(24 unique windows, one episode)
+with observed EOS and actual CTC alignment, zero refusals, unchanged inputs/source
+and owned process closure. Select it only for fresh source-bound producer testing;
+native fidelity and full producer completion are not measured by this collection.
+Test-first wider 24 and narrower four failures retained; latest diagnostic 233 passes,
+zero failures/errors/skips; full-scope lint/types/format pass (323 files).
+These worktree checks are not the exact gate or CI. D-283 and
+evidence/asr-context-grouping-development-2026-10-06.md preserve versions, source
+hashes, failed diagnostics, scope and remaining gates. No native accuracy,
+publication, security closure, performance acceptance, ledger promotion or 10/10.
+
+Transcript stage reporting checkpoint 2026-10-04 (T2 remains WIP): after actual ZAR38
+ASR terminal evidence, move the existing start event before producer/cache work and report
+its operational refusal as a skip. Three additive native-media observer regressions:
+test-first 19 cases/two failures, then 19 passes/zero errors/skips; native fast lint/types
+(315 files) and two-file format check pass. Complete caller diagnostics pass 575 cases,
+zero failures/errors/skips (786.543 JUnit seconds), with source hashes unchanged.
+Local-only ff3411b exact gate: 4734 passes/two failures/zero errors/skips, JUnit 2115.470 s;
+missing evidence-header metadata (this unit) and the independent qualified VEX binding.
+Metadata repair passes all 67 claim checks; corrected committed full gate and same-SHA CI
+remain required. Observer doubles are not model quality evidence. Actual ZAR38 has three unaligned regions and two rejected corrections;
+no production continuation, publication, ledger promotion or 10/10. Details and versions:
+evidence/transcript-start-checkpoint-2026-10-04.md and specs/evidence-based-studio/
+transcript-start-{research,spec,plan}.md. Prior model artifacts retain their original SHA.
+
+Owned startup correction checkpoint2026-10-04 (M9.58 remains WIP): actual shared-pool
+foreign engine bypass reproduced, four new native resource regressions initially failed.
+Capture exact proven DBOS database/OptionEngine and refuse drift before shutdown flags.
+Complete caller diagnostic386passes/zero failures/errors/skips,376.88s at producer
+ab4803f763eaa5b0c1cdb25d00ab11e2ae1f3b5feec7c28f6ea6ee7c359aa3ef on HAWAPC01,
+Windows26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/SQLAlchemy2.0.52/pytest9.1.1;
+owned-resource-verification.md preserves original red and corrected XML hashes. Prior7da
+full gate4728passes/one expired VEX binding failure/zero errors/skips,2190.28s,exit1;
+same-SHA Actions zero runs. Corrected committed gate/current CI remain required. Billing
+projection repair, actual protected producer and all independent/sustained obligations remain;
+no ledger promotion, VEX rebind, push, verified candidate or10/10.
 
 | Milestone | Deliverable | Blocks | Status |
 |---|---|---|---|
@@ -31,6 +482,222 @@ judgment**: DONE requires code + test + the gate green + evidence linked below.
 | **M8** | Auto-reframe (SAM 3 / Molmo2) | Vertical formats | **BLOCKED — `BLOCKED.md` #9. Neither SAM 3 nor Molmo2 is in §7. §3 Stage 6 says to add SAM 3 *only if* face-centred cropping proves insufficient on real footage, and that prerequisite is now built and has its own row (M8.1, PARTIAL) — so the accurate statement is no longer "not startable": the step §3 asks for first is taken, and the *decision* it is supposed to inform cannot be made, because judging "insufficient on real footage" needs real footage (`BLOCKED.md` #1) as much as it needs Hawa's answer on the two models.** |
 
 ## Where this stops, and why
+
+**Current local studio checkpoint 2026-10-03 (WIP):** frozen45e3726's exact gate has
+4,506 passes/one VEX source-binding failure, zero errors/skips,1544.64s; clean source and
+raw terminal evidence retained externally. Its shared screener repairs grant no provider
+authority. The next bound-ingest repair has79 focused passes/no failures/errors/skips
+at producer4ba71b63f68ece3a83199c2a1cfa32867cd8528fd2e604cf4ab83f259873c672,
+not a full gate. Research, actual eleven-query caller map and diagnostic history are in
+specs/evidence-based-studio/ingest-cache-*. Stage0 and nested extraction caches bind actual
+bytes/context, retain damaged or legacy evidence before rebuilding, and keep current
+diarization out of unbound base-cache reuse. Pending clean-commit full gate and same-SHA CI;
+no ledger row is promoted. Actual protected startup/worker/billing/session/revision/export,
+current security/owner resources and independent sustained acceptance remain unfulfilled.
+The generation API still refuses studio_runner_unavailable. No release or10/10 claim.
+
+**Current-source correction 2026-10-02:** the historical completion summary below is not
+current acceptance. The dashboard audit found filename-only submission, bypassed producers,
+fabricated quality/duration/completion, ambiguous media/history and inaccessible/mobile
+controls. `specs/evidence-based-studio/` records the approved repair program. Its first full
+gate reported 3,816 passed, four failed and three errors; source/documentation, clean-build
+and VEX review prerequisites remain open. No new end-to-end reel or 10/10 claim is made.
+
+Latest T2 boundary gate: 3,869 passed, two failed, three errors, zero skipped in 953.11s;
+lint/types/format passed (256 files). All 29 generation and 38 upload cases passed. Current
+source remains uncommitted/unaccepted; clean-build prerequisites and VEX source binding
+remain red. Evidence: `specs/evidence-based-studio/T2-boundary-test-evidence.json` and
+`gate-T2-boundary.log`. The valid generation API still reports its missing durable runner;
+legacy reads/static fallback are unaccepted, not verified publication. T3 integration research
+is in `durable-studio-research.md`; no recovery or queue acceptance follows from research.
+
+The next T3 mechanism unit adds `src/hawedit/studio_submissions.py` and
+`src/hawedit/studio_queue.py`, with `tests/test_studio_submissions.py` and
+`tests/test_studio_queue.py`. Real SQLite/DBOS checks cover immutable token binding,
+transaction failure, serial execution, duplicate reuse and second-process enqueue recovery.
+The protected producer worker, runtime/governance/billing controls, read/migration adoption,
+green full gate and exact-SHA CI remain required. Dispatch confirmation is not reel completion;
+HTTP generation remains explicitly unavailable. No task row is accepted from these checks.
+
+Latest T3 mechanism gate: 3,899 passed, two failed, three errors, zero skipped in 1,035.03s;
+lint/types/format passed (260 files). Canonical JUnit confirms all 30 new outbox/queue cases,
+29 generation and 38 upload cases passed. The same clean-build prerequisites and current-source
+VEX binding remain red. Evidence: `specs/evidence-based-studio/T3-outbox-test-evidence.json`
+and `gate-T3-outbox.log`; source digest `830f77b6...`, baseline HEAD unchanged/uncommitted.
+`protected-worker-research.md` records the next producer/billing integration obligations,
+not executed paid-call safety. No CI pass, publication or task completion is inferred.
+
+Latest T3 billing gate: 3,943 passed, two failed, three errors, zero skipped in 1,058.88s;
+lint/types/format passed (262 files). Canonical JUnit confirms all 44 new billing cases and
+the earlier upload/generation/outbox/queue cases passed. Evidence:
+`specs/evidence-based-studio/T3-billing-test-evidence.json` and `gate-T3-billing.log`;
+source digest `69528dcc...`, baseline HEAD unchanged/uncommitted. Native SQLite/loopback
+and abrupt-process probes establish mechanism behavior, not actual bills or authenticated
+authority. Protected worker adoption, prompt-overhead semantics, separate screener controls,
+private storage, legacy reads, current VEX and exact-SHA CI remain open. No row was flipped.
+
+The T4 prerequisite read-boundary unit adds `src/hawedit/studio_artifacts.py` and
+`tests/test_studio_artifacts.py`: explicit routes, job/clip private preview snapshots/ranges,
+local pinned font and unavailable status. It removes generic GET/HEAD filesystem serving and
+recursive unscoped media lookup. Preview availability is not authenticated publication.
+Migration/history, frontend adoption, protected worker, current gate/CI and full acceptance
+remain open; this unit does not mark M9.40 or any task complete.
+
+Latest T4 read-boundary gate: 4,003 passed, three failed, three errors, zero skipped in
+1,047.02s; lint/types/format passed (264 files). Canonical JUnit confirms all 61 new artifact
+cases and the earlier upload/generation/outbox/queue/billing cases passed. Evidence:
+`specs/evidence-based-studio/T4-read-test-evidence.json` and `gate-T4-read.log`;
+source digest `510bfb7e...`, baseline HEAD unchanged/uncommitted. Failures are dirty-checkout
+wheel refusal, three dependent build fixture errors, current-source VEX binding, and the
+newly staged font copyright notice absent from HEAD's Git archive. The last is a new release
+provenance prerequisite, not an old failure or permission to unstage it to hide evidence.
+Native decoded-media snapshots, ranges and installed-data RECORD checks do not establish
+clean-install, browser/accessibility, producer or publication acceptance. No row was flipped.
+`statistical-acceptance-research.md` records synthetic counterexamples to order-invariant
+comparison, repeated-reviewer confidence, sealed blinding and the historical 10/10 scorecard;
+these are diagnostic experiments, not real study results or a repaired evaluation engine.
+
+Latest T3 historical-read adoption gate: 4,066 passed, three failed, three errors, zero skipped
+in 1,039.58s; lint/types/format passed (266 files). All 63 new history/input cases and the
+earlier six studio modules passed. Evidence: `specs/evidence-based-studio/T3-history-test-evidence.json`
+and `gate-T3-history.log`; current source digest `48785704...`, baseline HEAD unchanged.
+Original historical records/media remain byte-identical; HTTP no longer treats legacy flags,
+cache entries, scores or stage percentages as verified current work. Metadata-only HTTP edits
+refuse without mutation. The same dirty-build, missing-HEAD font notice and stale VEX failures
+remain; no row was flipped. Native ACL probes reject current storage under the existing private
+Windows policy, without changing permissions or testing another account's access. Fresh browser
+DOM reports 608px content at 320px and retains the ready badge; desktop capture was rejected
+and empty-input interaction stalled browser controls. `history-ui-audit/notes.md` records the
+limited visual baseline and verification gap. Protected lifecycle, private storage, frontend/
+rendered revisions, authenticated delivery, current CI and independent acceptance remain open.
+
+Latest T5 studio-adoption gate: 4,080 passed, three failed, three setup errors, zero skipped
+in 1,017.13s; lint/types/format passed (268 files). All 14 new UI cases, 67 claim cases and
+all seven earlier studio groups passed. Evidence: `specs/evidence-based-studio/T5-ui-test-evidence.json`,
+`T5-ui-junit.xml` and `gate-T5-ui-final.log`; source digest `66a377da...`, baseline HEAD
+unchanged/uncommitted. The first full run's two collection-time module-documentation failures
+remain preserved separately, not relabelled as passes. Current module map and WIP ledger entries
+resolve them in the fresh full run. Dirty-build, missing-HEAD font notice and stale VEX failures
+remain; no row was flipped or current-SHA CI claimed.
+
+The Sorani frontend now adopts visible real-byte upload, persisted response-loss identity,
+exact submission intent, explicit historical selection and guarded private preview recovery.
+Fresh native fixture uploads, reload/settings, five-width layout, bounded keyboard, seeking/
+private copy and stale-sidecar refusal/retry are recorded in `history-ui-audit/next-ui/notes.md`.
+A real committed upload with its transport acknowledgement dropped stays unknown/locked;
+guarded recovery and reload retain one source without a second upload. Native disk/log evidence
+binds actual bytes, one reservation/commit and zero generation requests. This is not automated
+complete browser, NVDA/zoom/full AA or real creator-workflow acceptance. Protected execution,
+private storage/authentication, rendered revisions, signed review/export and all independent/
+sustained acceptance remain open. No paid call, inference, release or 10/10 verdict.
+
+Latest T3 private-journal gate: 4,112 passed, three failed, three setup errors, zero skipped
+in 1,076.93s; lint/strict types/format passed (270 files). All 26 new private-path cases,
+50 billing cases (including the original 44), seven earlier studio groups and 67 claim cases
+passed. Evidence: `specs/evidence-based-studio/T3-private-journal-test-evidence.json`,
+`T3-private-journal-junit.xml` and `gate-T3-private-journal.log`; current uncommitted package
+digest `637e9acc...`, unchanged baseline HEAD. Clean-build prerequisites, staged font notice
+absent from HEAD archive and stale VEX remain red; no row was flipped or current-SHA CI claimed.
+Native Windows CPython 3.12.10/SQLite 3.49.1 journal checks now fence SQLite and every upstream
+request/result. A separately bound existing Linux CPython 3.12.0/SQLite 3.43.1 probe passed
+12 bounded owner/mode/alias/sidecar/WAL observations on actual /tmp, not a Linux canonical gate.
+Whole-studio storage/authentication, persistent pool/root authority, provider/runtime preflight,
+protected worker, revisions/review/export and every independent/sustained threshold remain open.
+No paid call, model inference, accepted candidate, studio completion or 10/10 follows.
+
+Latest T3 private upload/outbox adoption gate: 4,137 passed, three failed, three setup
+errors, zero skipped in 1,034.68s; lint/strict types/format pass (272 files). All 25 new
+storage cases, the 173 earlier upload/generation/outbox/queue/billing/private cases and
+the artifact/history/UI/claim groups passed. Evidence: `specs/evidence-based-studio/T3-storage-test-evidence.json`,
+`T3-storage-junit.xml` and `gate-T3-storage.log`; package digest `6bde42cb...`, unchanged
+uncommitted HEAD. All 288 frozen source/test/script/document files matched at terminal.
+Dirty-build/dependent fixtures, missing-HEAD font notice and stale qualified VEX remain red;
+no row was flipped or exact-SHA CI claimed. Actual Windows runtime and decoded-media fixture/
+FFmpeg 8.1.1 executable hashes are in `T3-storage-host.json`, not inferred from a pinned label.
+
+The new checks refuse unsafe/lost upload/outbox state without repair or empty recreation,
+preserve unrelated bytes after real staging-junction substitution, keep old error imports/
+deserialization and all original recovery assertions, and validate actual supported containers.
+Fresh native HTTP children test both private startup root choices and exact finalized bytes.
+Separate existing Linux CPython 3.12.0/SQLite 3.43.1 probes pass seven directory/metadata/outbox
+and twelve journal/WAL observations against the same package identity on actual /tmp, not
+a Linux canonical gate or production mount certificate. Fresh Serena has 42 unit and 17
+acceptance research records; CPython 3.14.6/serena-agent 1.7.1.dev0/tool hashes are captured.
+T8's synthetic current-package probe still reproduces unsupported 10/10 admission; it is a
+defect record, not human evaluation or an accepted score. Protected worker/root authority,
+whole-studio authentication/storage, signed rendered review/export, statistics repair and
+all independent/sustained thresholds remain required. The whole goal remains active.
+
+Latest paired-data canonical run (2026-10-03 local): 4,183 passed, three failed, three
+setup errors, zero skipped and one warning in 1039.88s. Lint, strict types and format pass
+for 273 files. All 150 comparison-contract/comparison-kit/visual-scorecard/editorial-study/
+claims cases pass, including the 46 new contract cases and existing actual signed-media
+checks. Frozen package a42bb02b387fd4c556235e971298d9a6d4e7517b408030d61c6d43e6b449a686;
+HEAD remains 372a16645d7a8558bc6cedcff34a9fbfa13f712f. Evidence is in
+specs/evidence-based-studio/T8-paired-test-evidence.json and its terminal canonical XML/
+source manifest. Native Windows CPython 3.12.10 on recorded HAWAPC01/Threadripper 3990X/
+two RTX 3090 Ti and all runtime/executable identities are in T8-paired-host.json. Four
+grouped Linux CPython 3.12.0 observations pass against the same package, not a Linux gate.
+Current full gate still refuses dirty-checkout wheel generation (plus three dependent
+setup errors), staged font-notice absence from HEAD archive and stale VEX source identity.
+No ledger row is flipped, VEX rebound, commit made or CI/release verdict inferred. Separate
+synthetic flags and native fixture-sampler diagnostics preserve unsupported verdict and
+overlapping holdout defects; no human study or production measurement is claimed. Verified
+clustered inference, sealed real-option studies, authenticated verdicts, protected producer/
+review/revision/export and every independent/sustained threshold remain mandatory work.
+
+| Task | Definition of Done | Status | Evidence |
+|---|---|---|---|
+| M9.82 | Owned ephemeral scanner storage with exact gate and same-SHA CI | WIP | `src/hawedit/wsl_scanner_storage.py`, `src/hawedit/wsl_vex_gate.py`, `tests/test_wsl_scanner_storage.py`, `tests/test_wsl_vex_gate.py`; D-304, `specs/scanner-cleanup`. Test-first lifecycle refusals, 36 affected native tests and seven actual pinned-Linux filesystem observations. First frozen 686b1e5 gate: 5416/5420 passes, three module-map/document-stream omissions plus historical VEX binding, zero errors/skips. Corrections require a fresh exact committed gate; no qualified VEX, CI, worker adoption or completed-system claim. |
+| M9.83 | Actual producer admission and raw owner-route binding before protected execution | WIP | `src/hawedit/studio_host.py`, `tests/test_studio_host.py`; D-305, `specs/studio-host-admission`. Actual current-source Serena definition/reference maps, test-first host composition and genuine SSH/SQLite protocol probes. No production readiness, paid run, qualified VEX, connected HTTP worker, publication or completed-system claim; exact committed gate and same-SHA CI remain required. |
+| M9.84 | Fresh all-job billed-effect observations with raw authority fences and current gate/CI | WIP | `src/hawedit/studio_billing.py`, `src/hawedit/studio_authorization.py`, `tests/test_studio_billing.py`, `tests/test_studio_authorization.py`, `tests/test_studio_effect_limits.py`; D-306, `specs/studio-billing-effects`. Actual Serena maps and real private-journal/SSH refusal cases. No provider invoice, quiescence, refund/replay authority, terminal-job permission, current gate/CI or completed-studio claim. |
+| M9.85 | Genuine caption measurements, bounded contextual cache and selected-font caller parity | WIP | `src/hawedit/captions.py`, `tests/test_caption_measurement.py`, `tests/test_caption_context.py`; D-307, `specs/caption-measurement`. T1 frozen e1f07fe gate: 5489/5490 pass, sole stale qualified VEX binding failure; T2 selected-font/canvas forwarding and 29 actual renderer regressions implemented, final exact gate pending. No golden change, native speech accuracy, accepted reel, green gate/current CI or completed-system claim. |
+| M9.86 | Original native process lifetime and observed-descendant shutdown before protected worker adoption | WIP | `src/hawedit/native_process.py`, `tests/test_native_process.py`; D-308, `specs/native-worker-owner`. 39 real native cases pass after reproducing and fixing empty-job-before-original-handle-signaling race; lint/strict typing pass. Bounded IO and complete native/Linux producer-resource handshake remain separate; no HTTP enablement, attempt completion, paid call, green whole gate/current CI or completed-system claim. |
+| M9.87 | Fair bounded overlapped native IO with actual ACL/cancellation/death evidence | WIP | `src/hawedit/native_io.py`, `tests/test_native_io.py`; D-309, `specs/native-worker-io`. Actual private ACL, simultaneous input/output, overflow/deadline, cancellation, uncertain-resource quarantine and pending-IO owner-death tests implemented. Complete producer/native/Linux/resource/billing handshake remains T3; no HTTP enablement, accepted reel, green exact gate/current CI or completed-system claim. |
+| M9.98 | Retain original Linux namespace/member capabilities before protected producer adoption | WIP | `src/hawedit/linux_scope.py`, `tests/test_linux_scope.py`; D-319, `specs/linux-original-scope`, `evidence/linux-original-scope-20261009.md`. Actual original pidfd namespace queries, kernel credentials, EOF-sealed handoff, description anchors, finite admitted-member stop, creator/exclusion and uncertainty refusals. Component regressions are not owner-death bootstrap, byte/model/GPU/effect admission, durable attempt release, HTTP generation or publication. Exact gate/current CI required. |
+| M9.99 | Adopt original owner-death and sealed utility bootstrap into real namespace launch | WIP | `src/hawedit/linux_bootstrap.py`, `tests/test_linux_bootstrap.py`; D-320, `specs/linux-owner-bootstrap`, `evidence/linux-owner-bootstrap-20261009.md`. Real LinuxScope chain/original normal/forced owner death, pre-handler refusal, immutable utility and child STD/control separation. Not full source/runtime/model/input/security/resource/effect admission or DBOS/HTTP generation. Exact gate and required current CI pending. |
+| M9.100 | Owned immutable consumed-byte data tree before protected producer adoption | WIP | `src/hawedit/linux_snapshot.py`, `tests/test_linux_snapshot.py`; D-323, `specs/owned-linux-snapshot`, `evidence/owned-linux-snapshot-20261009.md`. Initial module-accounting row, not a promotion. Actual275affected pass/36new kernel cases, preserved same-inode foreign-description cleanup red. Exact2d43b23gate5992pass/4fail: three documentation omissions being corrected and stale independent qualified-policy source binding. Conservative32GiB capacity is not complete canonical runtime/model/producer admission; corrected exact gate/current CI, full protected producer, new ZAR output and full acceptance still required. |
+| M9.101 | Observe genuine validator completion and invalidate text-only canonical/recovery caches | WIP | `src/hawedit/qwen_completion.py`, `tests/test_qwen_completion.py`; D-324, `specs/qwen-completion`, `evidence/qwen-completion-20261009.md`. Initial module-accounting row, not a promotion. Actual public text-only admission/swallowed refusal/input mutation reds preserved; original token/configuration checks and legacy cache/journal refusals implemented. Exact committed gate/current CI, genuine admitted SDK consumer, bad ZAR acoustic/native-editor evidence, complete owned producer/studio and full acceptance remain required. |
+| M9.97 | Bound audit EOF/root waits without reducing independent scanner stream caps | WIP | `src/hawedit/bounded_audit_io.py`, `src/hawedit/wsl_vex_gate.py`, `src/hawedit/native_io.py`, `tests/test_audit_output_deadline.py`, `tests/test_native_independent_output.py`; D-318, `specs/audit-output-deadline`, `evidence/audit-output-deadline-20261009.md`. Actual test-first deadline/budget failures repaired; original Job/cancellable native IO and POSIX owned nonblocking descriptors, finite root cleanup, uncertainty refusal. Existing native combined callers unchanged. No launcher substitution, security policy rebind, admitted Linux/GPU/provider/billing/HTTP or media-quality claim. Exact corrected gate/current CI required. |
+| M9.88 | Native IO arena survives Python view teardown without guessed cleanup | WIP | `src/hawedit/native_io.py`, `tests/test_native_io_memory.py`; D-309 lifetime correction, `specs/native-worker-io/memory-lifetime.md`. Explicit read/write VirtualAlloc arena and checked post-drain release, independently observed actual native pages/cancellation/GC/uncertainty; no producer adoption or clean gate/current CI acceptance claim. |
+| M9.89 | Sticky event-persistence refusal without media-failure misclassification | WIP | `src/hawedit/events.py`, `tests/test_event_persistence.py`, `tests/test_studio_attempts.py`; D-310, `specs/event-persistence-fence`. Seven valid real-fault test-first failures; expanded 119 caller cases pass, including corrected exact-cause checkpoint interruption expectations with all seven resumed MP4 hash checks retained. Full static checks pass 363 files. Corrected clean committed 6fe060d gate:5614pass/1stale-VEX failure/0error/skip, unchanged source/observer/HEAD/package/status. Prior private executable replacement denial remains unexplained. No qualified security/CI/ledger promotion, protected producer pre-effect adoption, billing/resource reconciliation or completed-system claim. |
+| M9.90 | Preserve original native capabilities after cleanup refusal | WIP | `src/hawedit/native_process.py`, `tests/test_native_capability_retention.py`; D-311, `specs/native-capability-retention`. Five valid tracked real fault reds then complete396affected pass/0failure/error/skip, static364files pass. Exact clean committed7546659 gate5619pass/1stale-qualified-VEX failure/0error/skip; source unchanged. Sticky original-capability retention, no automatic retry/new create, detached snapshot finalization. No qualified security/CI/ledger, Linux/GPU/provider, producer/HTTP, billing or reel-quality acceptance. |
+| M9.91 | Fixed bounded native control frames without false scope completion | WIP | `src/hawedit/native_io.py`, `tests/test_native_control.py`; D-312, `specs/native-control-channel`.32valid missing-API test-first reds then complete428affected pass/0failure/error/skip, full static365files pass.17new actual native-child cases,14prelaunch validation cases and1synthetic parser budget. Exact clean committeded2840c gate5650pass/2fail/0error/skip: FFmpeg replacement WinError5 and stale qualified VEX; unchanged. Fresh current141package scan refused expired/source/runtime-lock drift/three missing dispositions. No green gate/CI/ledger or security acceptance. Not Linux/GPU/model/provider, durable attempt release or protected producer/HTTP/reel quality. |
+| M9.92 | Original bounded Linux owner protocol with real pipe regressions | WIP | `src/hawedit/linux_control.py`, `tests/test_linux_control.py`; D-313, `specs/linux-owner-control`, `evidence/linux-owner-control-20261009.md`.45missing-API reds; actual named-FIFO, same-inode reopen and recycled-thread reds fixed. Earlier whole17module574pass unchanged baseline; final five-module163pass/0failure/error/skip, full static367files pass. Calibrated kernel file-description identity, creator Thread retention, bounded strict protocol, sticky refusal/uncertain cleanup. Exact clean committed49b2649 gate5701pass/3fail/0error/skip, unchanged: evidence header, README map and stale qualified VEX. Documentation correction includes whole claims module; corrected gate/CI required. No admitted worker/model/GPU/provider, attempt release, HTTP generation or new reel/quality acceptance. |
+| M9.59 | Source-bound per-operation ASR interruption recovery with current gate and same-SHA CI | WIP | `src/hawedit/asr_resume.py`, `src/hawedit/asr_worker.py`, `tests/test_asr_resume.py`; D-284, `evidence/asr-segment-recovery-2026-10-06.md`. Component storage/controlled-composition checks pass; first exact f18a0d6 gate has 4930 passes / four failures (three documentation omissions, historical VEX binding). Real producer recovery and current gate/CI remain unproved. No publication or quality claim. |
+| M9.60 | Default champion held-input loading with real consumers, current gate and same-SHA CI | WIP | D-285; `specs/champion-held-assets`, `tests/test_champion_held_assets.py`, `evidence/champion-held-assets-2026-10-07.md`. Native/Linux regressions and real champion/CTC development-window verification recorded; full gate, qualified review and CI not accepted. No model quality or completed-delivery claim. |
+| M9.62 | Instance-owned champion PEFT configuration with real weights, gate and same-SHA CI | WIP | D-287; `specs/peft-config-isolation`, `tests/test_champion_held_assets.py`, `evidence/peft-config-isolation-2026-10-07.md`. Clean 11077a1 components: 327 pass, no failures/errors/skips. Actual pinned PEFT constructor remains unchanged, all 560 saved LoRA tensors match, decoded ZAR development sample preserves text/CTC/words/clocks. Exact current gate, qualified review and CI are not accepted; no native accuracy, complete reel or 10/10 claim. |
+| M9.63 | Reconstruct protected studio worker inputs from persisted identity and shared configuration | WIP | D-288; `src/hawedit/studio_execution.py`, `tests/test_studio_execution_input.py`, `specs/studio-execution-input`. Actual native private upload/outbox regressions, semantic refusal before work creation and no receipt-authorized execution. Exact current gate and same-SHA CI remain required; protected runtime/model/owner/governance/billing/attempt/session and review/revision/export adoption remain separate. No paid call, publication or complete studio claim. |
+| M9.64 | Recheck retained private media packets before reporting recovery results | WIP | D-289; `src/hawedit/review_candidate_cache.py`, `tests/test_review_candidate_cache.py`, `specs/review-cache-integrity`. Actual changed-byte/missing-measurement counterexample; bounded packet/source/clock and fresh decoded physical checks, preserved refusal evidence and unchanged valid reuse. Exact current gate/current VEX/CI required. Full render-input equivalence, request-inferred render metadata, protected worker and independent editorial/release acceptance remain separate; no paid call or publication claim. |
+| M9.65 | Derive optional VMAF from native complete compatible decoded observations | WIP | D-290; `src/hawedit/measure.py`, `tests/test_measure_vmaf.py`, `specs/vmaf-observation`. Native Windows/exact pinned Linux counters, full decoded clock guards, private bounded reports, typed finite/indexed/consistent mean and unknown on refusal instead of static95. Final53 native/parser regressions pass on recorded working-source hashes; exact committed gate/current qualified VEX/CI required. Undefined global PSNR and reference provenance remain separate; no editorial, publication or complete-system claim. |
+| M9.66 | Bind retained private previews to reconstructed render requests | WIP | D-291; `src/hawedit/render_identity.py`, `src/hawedit/review_candidate_cache.py`, `tests/test_render_identity.py`, `tests/test_review_candidate_cache.py`, `specs/render-request-identity`. T2 preserves exact retained editing metadata and plan output duration; unsigned QC is not pixel identity or approval. Focused221 cases pass; clean d942897 exact gate5113/5114 with only historical VEX/source binding failure. Original unchanged private-reuse regression now passes. `evidence/retained-preview-reporting-2026-10-07.md`; current qualified VEX/CI and protected worker, runtime attestation, revision UI and independent acceptance remain required. |
+| M9.67 | Preserve pre-existing evidence during resource preflight | WIP | D-292; `src/hawedit/workflow_recovery.py`, `tests/test_recovery_preflight.py`, `specs/recovery-preflight-ownership`. Actual Serena caller map and13-case test-first with11 failures; exclusive owned temporary probe, synchronized byte roundtrip, strict budget validation and original OS error cause. Native88-case affected/recovery/claims checks pass; exact clean gate/current VEX/CI required. Historical M9.38 does not certify current helper safety or protected-worker adoption. |
+| M9.68 | Isolate runtime HTTP utility security patches | WIP | D-293; `specs/runtime-security-migration`, `tests/test_runtime_security_migration.py`. Actual Serena maps and independently downloaded urllib3/Werkzeug wheel hashes; test-first4 cases with3 failures, frozen affected/claims144 cases pass. Only the two WSL utility entries change; model/host migrations, real candidate install, qualified VEX, exact gate, CI and full studio remain unaccepted. `evidence/runtime-http-security-patch-2026-10-07.md`. |
+| M9.69 | Refuse unsafe checkpoint shard indexes before loading | WIP | D-294; `src/hawedit/models.py`, `tests/test_model_shards.py`, `specs/runtime-security-migration`. Actual Serena callers and real tiny-model traversal reproduction; test-first37 cases with34 failures, separate nonfinite/Unicode regressions failed before repair. Complete257-case model/ASR/visual caller suite passes. Real hardlink/junction controls, bounded index reads and contained shard validation; actual current-snapshot loader checks, exact gate, qualified review and CI still required. `evidence/model-shard-boundary-2026-10-07.md`. |
+| M9.70 | Searchable distinct studio history and RTL marker/count reflow | WIP | Approved evidence-based-studio T5; `specs/studio-history-reflow`, `tests/test_studio_ui_history.py`, actual pre-edit Serena/caller map. Six test-first failures plus separate RTL count failure; complete120-case affected suite passes. Actual real-history browser search/selection/refresh/keyboard and five-width reflow assertions; measured320 client/scroll305/306 repaired to305/305 on HawaPC01/Windows26300/in-app browser. Scoped layout proof, not full AA, protected worker, authenticated delivery, qualified security, gate/CI or10/10. |
+| M9.71 | Refuse corrupt legacy event replay without hiding later state | WIP | Approved T3/D-276; `specs/event-replay-integrity`, actual Serena reader/sink map and preserved native counterexample. Eleven intended test-first failures/eight valid controls; actual reader19cases and complete affected caller111cases pass/no errors/skips on HawaPC01/Windows26300/CPython3.12.10. Preserve LF/CRLF/live/billed/final-valid records and plausible incomplete final prefix; corrupt complete/middle/UTF-8 records refuse without rewriting bytes. Correct legacy flush-versus-fsync wording. Protected attempts/worker, current canonical gate/CI and qualified VEX remain required; no actual charge, new reel or publication claim. |
+| M9.72 | Preserve private producer attempts and transactional event identity | WIP | Approved phase2/T3, D-295; `src/hawedit/studio_attempts.py`, `tests/test_studio_attempts.py`, `specs/studio-attempt-journal`, actual current17-pair Serena map. Initial34 test-first missing-module failures retained. Distinct existing-private-control SQLite journal binds real immutable submission, refuses duplicate/parallel launches, atomically persists contiguous run events and cursor, retains uncertainty after process exit and refuses damaged storage/schema/types. No automatic retry, inferred WSL quiescence, spending, completed publication or web enablement. Whole affected diagnostics, exact full gate and same-SHA CI required. |
+| M9.73 | Community-1 checkpoint identity held through actual consumer boundary | WIP | Approved phase1, D-296; `src/hawedit/pyannote_adapter.py`, `tests/test_pyannote_checkpoint.py`, `tests/test_pyannote_adapter.py`, `tests/test_pyannote_wire.py`, `specs/diarizer-checkpoint-consumer`; actual original and refreshed seven-pair Serena maps. Original15 test-first failures retained. Isolated34 passes did not establish integration: exact f083a896 gate5260 cases/9 failures/zero errors/skips; eight stale model-reload exception bindings, one security policy refusal. Real138-case sequence reproduced7 failures; new subprocess regression failed before source repair. Module-bound access/errors then139 whole model/adapter cases pass,10.102s on HawaPC01/Windows26300/CPython3.12.10/pytest9.1.1/Torch2.13.0+cpu. Real temporary hash-bound files, independent OS-lock/reload probes; upstream inference double, not weights/SDK-egress/DER/accuracy. Both paths verify before import and hold reader through load/device/inference/conversion; rechecks/failure unlock/canonical identity refusal and existing output assertions retained. Protected model-manifest correction, actual neural runtime, final whole gate/current CI, qualified VEX, worker and independent/sustained acceptance remain required. |
+| M9.61 | CTC-only correction and completed-draft resource handoff with real runtime, gate and same-SHA CI | WIP | D-286; `specs/asr-model-lifecycle`, `tests/test_asr_model_lifecycle.py`, `evidence/asr-model-lifecycle-2026-10-07.md`. Clean 12145f3 components:324 pass, no failures/errors/skips. Actual decoded ZAR development window preserves exact clocks/results after releasing 14.6909289 GiB of draft tensor memory on recorded hardware/runtime; real validator correction succeeds. Cold 15-minute test is not a performance pass. Exact final gate/current CI and qualified review remain pending; no accuracy, delivery or 10/10 claim. |
+| M9.58 | Owned guarded DBOS startup/lifetime adopted by the protected producer with current gate and same-SHA CI | WIP | `src/hawedit/studio_runtime.py`, `src/hawedit/studio_admission.py`, `src/hawedit/studio_queue.py`, `tests/test_studio_runtime.py`; D-276, OS1-OS7, actual Serena baseline/correction maps. Actual native lease, publisher/DDL rollback, same-transaction refusal, singleton race, crash/restart, completed duplicate, bounded contention and live shutdown tests; inert mechanism only. Corrected complete caller diagnostic:382 passes/zero failures/errors/skips,347.93s at producer `e8e37994285622371f269862c942664451bfc5f2805e3709c89ad78da98f3eaa` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/pytest9.1.1. Original unsafe controls and first380-pass/two missing-documentation failures preserved in owned-startup-verification.md. Exact committed gate/current CI remain required; no VEX rebind or task promotion. Actual ID-only producer/source/model/authorization/billing/attempt/replay/session, signed review/revisions/export and every independent/sustained threshold remain unproved. |
+| M9.57 | Exact original-byte projections and malformed-state refusal adopted across protected recovery with current gate and same-SHA CI | WIP | `src/hawedit/studio_admission.py`, `src/hawedit/studio_submissions.py`, `tests/test_studio_admission.py`; D-276, NP1-NP3, five fresh actual Serena queries. Complete callers plus claims diagnostic:316 passes,zero failures/errors/skips,201.12s at producer `49c71aa17cab05876d03299a9ff984f3ce2874bb7c4996e97a9c3aad9841d356` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/pytest9.1.1. Real NUL prefix counterexamples, original data, fourteen genuine refusals and three setup failures, corrected test setup and interrupted3d9 gate are distinguished in nul-projection-verification.md. No schema/CHECK/assertion weakening or VEX rebind. Exact corrected committed gate/current CI, protected startup/worker/replay and every independent/sustained threshold remain required. |
+| M9.56 | Raw DBOS admission adopted before protected startup and later guarded reads, with current gate and same-SHA CI | WIP | `src/hawedit/studio_admission.py`, `tests/test_studio_admission.py`; D-276, RA1-RA7 and eleven actual Serena queries. Complete callers plus claims diagnostic:299 passes,zero failures/errors/skips,192.71s at producer `46479aef802e28ee129018a9d44c61452f1d36f437230943a603485559fffaa8` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/DBOS2.29.0/pytest9.1.1. Real private publisher migrations, preserved unsafe rows, inert DBOS output and original failure evidence; not model/creator/AA acceptance. Inspector grants no execution/replay/publication authority. Exact committed gate/current CI, owned engine/lease/bootstrap/worker/attempt/runtime/billing/session/revision/export and every independent/sustained threshold remain required; no VEX rebinding or task promotion. |
+| M9.55 | Bounded immutable outbox intake adopted by protected startup/recovery with preserved work, current gate and same-SHA CI | WIP | `src/hawedit/studio_submissions.py`, `tests/test_studio_intake.py`, `tests/test_studio_submissions.py`, `tests/test_studio_storage.py`, `tests/test_studio_queue.py`, `tests/test_studio_generation.py`; D-276, BI1-BI10 and eight actual Serena queries. Current complete callers plus claims diagnostic:184 passes,zero failures/errors/skips,83.437s at producer `691e77160ee1548216a052c574578dca93a5b9237eabf53845219b05e7de3b1e` on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1/pytest9.1.1/DBOS2.29.0. Native interrupts, malformed/null records, isolated Python-heap prefetch and oversized-integer deadline counterexamples retain original data. Earlier failures and interrupted b85 full run are preserved separately in bounded-intake-verification.md. Bounds do not certify native memory/RSS, blocked-I/O deadlines, runtime/authentication or DBOS serialization safety. Replacement exact frozen gate/current CI and actual raw admission/owned engine/lease/bootstrap/guarded worker/attempt/runtime/billing/session/revision/export and independent/sustained acceptance remain required; no source-policy rebinding or task promotion. |
+| M9.54 | Pinned diarization output reaches exclusive validated turns without ordinary/legacy fallback, with current gate and same-SHA CI | WIP | `src/hawedit/pyannote_adapter.py`, `tests/test_pyannote_wire.py`, `tests/test_pyannote_adapter.py`, `tests/test_ingest.py`, `tests/test_pipeline.py`; D-252/D-276 and five fresh actual Serena queries. Eleven test-first wire cases fail against the prior selector. Complete four-module diagnostic:394 passes,zero failures/errors/skips,522.433s at producer `3689baa16b8bf43afb03b4063d3882bb448f16eba49f5cf51e2ad3602a1c9ea3` on HAWAPC01/Windows build26200/CPython3.12.10/SQLite3.49.1/pytest9.1.1/DBOS2.29.0/Torch2.13.0+cpu. After extra positive immutable attachment assertions, complete wire/original-adapter modules:19 passes,zero failures/errors/skips,4.668s; producer unchanged. Upstream dependency doubles exercise the actual adapter/factory/attachment, not inference, weights or DER; ingest/pipeline run decoded fixture/Silero VAD. Both test-body versions and raw failures are distinguished in diarizer-wire-verification.md. Exact committed gate/current CI and gated model/runtime/rights, protected worker/bootstrap/attempt/billing/session/revision/signed export and every independent/sustained threshold remain required; no policy rebinding or task promotion. |
+| M9.53 | Stage0 and extraction reuse bind observed bytes and effective producers, retain invalidated evidence, and refuse persistence failure, with current gate and same-SHA CI | WIP | `src/hawedit/ingest_cache.py`, `src/hawedit/ingest.py`, `src/hawedit/pipeline.py`, `tests/test_ingest_cache.py`, `tests/test_checkpoint.py`, `tests/test_ingest.py`; D-276 and eleven actual Serena pre-edit queries. Final focused diagnostic:79 passes,zero failures/errors/skips,133.759s at producer `4ba71b63f68ece3a83199c2a1cfa32867cd8528fd2e604cf4ab83f259873c672` on HAWAPC01/Windows build26200/CPython3.12.10/pytest9.1.1/DBOS2.29.0. Actual decoded media and Silero ONNX VAD run, not canonical ASR/editorial/DER acceptance. Clean b49211c exact gate:4520 passes,three failures (two omitted inventories and current VEX source binding),zero errors/skips,1915.91s; immutable external source/runtime/log/XML retained. This new WIP inventory row and README entry address those omissions; corrected exact gate and same-SHA CI remain required. Historical size-only extraction descriptions are superseded by output-SHA binding. Private protected worker/startup/attempt/billing/session/revision/export, authenticated review and independent/sustained acceptance remain unfulfilled. |
+| M9.52 | Every selected screener uses the shared protected producer route without fabricated measurements, with current gate and same-SHA CI | WIP | `src/hawedit/screener.py`, `src/hawedit/pipeline.py`, `tests/test_screener_integrity.py`, `tests/test_pipeline.py`; D-276 explicit transport injection, early unguarded-path refusal and strict bounded score/JSON contracts. Frozen879 gate:4504 passes/one current VEX binding failure,1535.14s; immutable clean-source evidence retained, no policy rebinding. Read-only probe found false-valued explicit transport replacement; two actual-factory test-first cases and None-identity fallback correct it. Final correction focused diagnostic at producer `3ea1304dd140d89ab756d68647ea7d309e9a4b3ed4e5a22257690b9ce965335c`:73 passes,zero failures/errors/skips,21.883s on native Windows build26200/CPython3.12.10/SQLite3.49.1/pytest9.1.1/DBOS2.29.0. Real decoded fixture and loopback HTTP prove mechanics, not model/editorial quality or authority. Earlier failed diagnostics preserved. Twenty-one actual Serena queries and SG1-SG8 remain unaccepted pending correction exact gate and same-SHA CI. Current Jev wire/policy, authenticated route/pool, protected worker/attempt/runtime/session/revision/export and independent/sustained acceptance remain required. |
+| M9.48 | Exact signed-review authentication adopted by every publication/export boundary, with fresh media reconciliation, current gate and same-SHA CI | WIP | `src/hawedit/candidate_review.py`, `tests/test_candidate_review.py`, `tests/test_candidate_review_configuration.py`; D-277 immutable final JSON and raw proof/source/context/trust bindings. SD-A checkpoint at `9bec30986dded0a77b3d1299c20b29a03de1520d`: 68 focused native passes on recorded HawaPC01/CPython 3.12.10/OpenSSH 9.5p2/Gyan FFmpeg 8.1.1; exact clean gate had 4356 passes and one VEX source-package binding failure (#24), not acceptance. APIs were test-only at that checkpoint; subsequent SD-B adoption is tracked separately in M9.49. SD-C job/revision/export and current gate/CI remain required. Original partial runs remain incomplete diagnostics. No ledger status is promoted; signed-delivery rows remain unticked. |
+| M9.49 | Signed publication consumption, private generation and current producer/media evidence adopted end to end | WIP | `src/hawedit/candidate_publication.py`, `tests/test_candidate_publication.py`, `tests/test_caption_ink_contrast.py`; D-277 raw-proof revalidation, fresh decode/measurement, exact proof-bearing atomic bundle and production policy. Caption contrast uses actual detected stroke/surround linear luminance, retaining thresholds. Clean local `2598e8ee7284dba572f790e22226ff5301f4c01c` exact gate: 4382 passed, one VEX source-binding failure (#24), zero errors/skips, 1455.41 seconds on HawaPC01/CPython 3.12.10; immutable LocalAppData/HawEditEvidence/studio-commit-2598e8ee7284dba572f790e22226ff5301f4c01c/test-evidence.json binds source/runtime/log/JUnit. No gate or CI acceptance; SD-C and independent/native/AA/sustained acceptance remain required. |
+| M9.50 | Raw signed owner execution authority adopted by the protected worker and all billed/replayed paths | WIP | `src/hawedit/studio_authorization.py`, `tests/test_studio_authorization.py`; D-276 purpose-separated canonical raw policy verification and actual private journal composition, including replay and revocation/uncertainty fences. Frozen focused native diagnostic: 89 passes, zero errors/failures/skips, 103.484 seconds on HawaPC01/Windows build 26200/CPython 3.12.10/pytest 9.1.1/DBOS 2.29.0, package `8dc4fe8550ec6e54a1abf02b51faee8284fdc11d4992f6f6ed4110fa97b66a1b`; first source-edit-overlapped run preserved as invalidated. EA1-EA8 remain unaccepted. No production owner keys, paid execution, runtime/cloud certification or connected HTTP worker. Current exact gate/CI and full SD-C adoption remain required. |
+| M9.51 | Actual three-input ASR identity bound across reuse, cached backend and native/WSL request/result boundaries, with current gate and same-SHA CI | WIP | `src/hawedit/asr_completion.py` (D-281, completion/cache admission under verification; no native-accuracy claim), `src/hawedit/asr.py`, `src/hawedit/asr_worker.py`, `tests/test_adapter_identity.py`, `tests/test_asr.py`; D-276 full versioned config/weights/tokenizer digest, real input-drift refusals, foreign worker provenance refusal and non-destructive resume guidance. Four-suite diagnostic at producer `54bace6a7c0138aec424d26876537adcf25926f881fbec61e4ff338a578e1c4e`: 625 passes, zero failures/errors/skips, 279.848s. After recovery-message regression, final ASR/identity diagnostic at `3de6c080ab1d7824cfdca44e61e03304f8d03db1903a6d403e3bfdd3699669e3`: 88 passes, zero failures/errors/skips, 2.757s. Native Windows build 26200/CPython 3.12.10/SQLite 3.49.1/pytest 9.1.1/DBOS 2.29.0; actual PCM cutting uses Gyan FFmpeg 8.1.1, not pinned-release inference evidence. Research, fourteen actual Serena queries and EARS AI1-AI8 remain unaccepted pending exact committed gate and same-SHA CI. No real model/quality/performance or held-load security claim; protected worker/session/revision/export and full independent/sustained acceptance remain required. |
+| M9.47 | Descriptive acceptance intake cannot authorize release/ratings from supplied flags, counts or names, with current gate and exact-SHA CI | WIP | `src/hawedit/editorial_acceptance.py`, `src/hawedit/visual_scorecard.py`, `tests/test_acceptance_authority.py`; AG-1-AG-6 claim/type/floor/construction regressions and preserved accounting/refusal tests. Actual signed study mechanisms remain narrower than full release acceptance. Historical M9.39's verified-provenance/complete holdout and leadership claims are contradicted by current research; old DONE status is not current acceptance. Positive bound-evidence admission, sealed disjoint real-option studies, preregistered episode/reviewer inference, protected production/revision/export, independent trials and 30-day owner/editor acceptance remain mandatory. Gate/CI unaccepted; T8 remains unticked. |
+| M9.46 | Truthful versioned paired review data and refusal of preference-derived QC/superiority, with current gate and exact-SHA CI | WIP | `src/hawedit/comparison_kit.py`, `tests/test_comparison_contract.py`, `tests/test_comparison_kit.py`; PC1-PC7 strict A/B/legacy schemas, duplicate/map refusals, order-invariant differences, actual option flag attribution, unknown legacy measurements, requested Wilson confidence and separate nonauthorizing pooled references. Historical M9.26's sealed-blinding, superiority and QC claims are contradicted by current research; neither that old DONE label nor helper tests certify independent acceptance. Sealed study preparation, scorecard authority, verified episode/reviewer inference, signed review and all human/sustained thresholds remain required. Full gate/CI remain unaccepted; T8 is unticked. |
+| M9.45 | Mandatory private upload/outbox storage, owned-transfer cleanup and actual supported-container validation, with current gate and exact-SHA CI | WIP | `src/hawedit/studio_private.py`, `src/hawedit/studio_submissions.py`, `src/hawedit/studio_uploads.py`, `src/hawedit/web.py`, `tests/test_studio_storage.py`, `tests/studio_test_storage.py`, `tests/test_studio_uploads.py`, `tests/test_studio_submissions.py`, `tests/test_studio_queue.py`, `tests/test_studio_generation.py`; native shared-root/hardlink/replacement/deleted-main refusals, preserved unrelated bytes after actual junction substitution, old exception compatibility, genuine remux/decode cases for seven suffixes and actual private-startup HTTP uploads. Original recovery/token/DBOS/billing assertions remain intact in real private fixtures. Research/PS7-PS14/actual Serena mapping are in `specs/evidence-based-studio/`. Full gate and exact-SHA CI remain unaccepted; protected worker/root authority, whole-studio storage/authentication, media sandboxing and independent/sustained acceptance remain required. No paid work, publication, task completion or 10/10 is inferred. |
+| M9.44 | Mandatory owner-private billed journal and drift refusal preserve actual crash recovery, with current gate and exact-SHA CI | WIP | `src/hawedit/studio_private.py`, `src/hawedit/studio_billing.py`, `tests/test_studio_private.py`, `tests/test_studio_billing.py`; native shared-root, hardlink, sidecar, filename-normalization, root/database replacement and abrupt-WAL/response-loss regressions. All 44 earlier billing contracts retain their original assertions in actual private test storage. `specs/evidence-based-studio/private-journal-research.md` records the measured prior privacy hole and scope. Full gate and CI remain unaccepted; whole-studio OS-private storage/authentication, persisted supervisor authority, provider cap/invoice semantics and actual protected worker adoption remain required. No paid call, production safety or completed task is inferred. |
+| M9.43 | Accessible truthful Sorani studio adopts real-byte upload, explicit history and private preview recovery, with full browser workflow, current gate and exact-SHA CI | WIP | `src/hawedit/studio_ui.py`, `src/hawedit/studio_youtube.py`, `src/hawedit/web.py`, `tests/test_studio_ui.py`, `tests/test_web.py`, `tests/test_robustness_audit.py`; structural contracts and declared-color contrast regressions, native fixture uploads, preserved source/settings on reload, explicit history, seeking/private download and stale-sidecar refusal/retry. Fresh accepted screenshots and bounded DOM observations are in `specs/evidence-based-studio/history-ui-audit/next-ui/`. Protected worker, OS-private storage/authentication, actual revisions/review/export, automated complete browser regressions, NVDA/zoom/full AA, current full gate/CI and independent acceptance remain required. No completed task, publication or accepted studio is inferred. |
+| M9.42 | Fresh non-destructive studio history, visible persistence diagnostics and refusal of metadata-only burned-in edits, with current gate and exact-SHA CI | WIP | `src/hawedit/studio_history.py`, `src/hawedit/studio_artifacts.py`, `src/hawedit/web.py`, `tests/test_studio_history.py`, `tests/test_studio_artifacts.py`, `tests/test_web.py`; raw-record binding, historical unverified/interrupted states, sanitized source display, scoped manifest candidates and non-mutation refusals. Native corruption/link/refresh and scan/storage evidence is under verification. Authoritative worker lifecycle, protected persistence, full UI/revision adoption, current gate/CI and independent acceptance remain open. No completed task or accepted migration is inferred. |
+| M9.41 | Explicit studio read boundary, measured manifest-bound private preview playback and offline font with current gate and exact-SHA CI | WIP | `src/hawedit/studio_artifacts.py`, `src/hawedit/web.py`, `src/hawedit/release.py`, `tests/test_studio_artifacts.py`, `tests/test_web.py`, `tests/test_robustness_audit.py`, `tests/test_release.py`; native snapshots/ranges and file/HTTP refusals, digest-bound source/installed font and distinct SBOM entry. Private preview is not authenticated export. Clean-build, current VEX, exact-SHA CI, OS ACL preflight, truthful history/frontend adoption and browser/accessibility/performance acceptance remain open. No completed task or release is inferred. |
+| M9.40 | Real uploaded bytes reach shared production generation and verified review/export with current gate and exact-SHA CI | WIP | `src/hawedit/studio_uploads.py`, `src/hawedit/studio_generation.py`, `src/hawedit/studio_submissions.py`, `src/hawedit/studio_queue.py`, `src/hawedit/studio_billing.py`, `src/hawedit/web.py`, `tests/test_studio_uploads.py`, `tests/test_studio_generation.py`, `tests/test_studio_submissions.py`, `tests/test_studio_queue.py`, `tests/test_studio_billing.py`; real-byte uploads, immutable SQLite submission outbox, real DBOS serial dispatch/reconciliation, strict source-ID preparation and measured candidate/event projections. Billed transport now journals intent/reservation and response evidence with distinct repeated-content occurrences; shared-builder optional injection keeps one producer graph. Policy values are not authenticated authority or measured invoices. Dispatch acknowledgement does not certify generation or publication. HTTP server-path generation is refused; valid requests report the missing protected producer worker. Frontend, trusted runtime/governance/spending policy, queued producer execution, legacy read/migration adoption, authenticated delivery and full acceptance remain open. Full gate is not green; VEX #24 must be reviewed for current source, not silently rebound. `specs/evidence-based-studio/tasks.md` remains unticked. |
 
 Everything that does not require credentials, model weights, a GPU, human annotators, or a
 decision from Hawa is built, tested and gated. `bash scripts/setup.sh` takes a clone to a green
@@ -133,7 +800,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M2.1 | §2 text index: BM25 + character 3-grams over normalized Sorani | PARTIAL | `src/hawedit/index.py` + `tests/test_index.py`. The clitic-attachment failure §2 describes is measured: word BM25 scores the stem query **0.0**, n-grams retrieve it. Invariant #3 enforced at the index boundary. Weighting: D-016. **Corrected 2026-08-10 (D-164):** the runner built one document for the whole episode, so BM25 had no passages to rank and its only hit spanned the entire media. Measured on the 38-minute transcript: **1 → 186 documents**, **1 → 37 distinct IDF values**, and the widest sentence window is **4.43%** rather than 100% of the episode. The runner now indexes sentences and the report binds document count to sentence count; nonpositive search limits are refused. **Shortfall:** `Bm25Index.search` still has no production caller because §3 Path A says full normalized transcript while M2 says `transcript → BM25 → Gemini`; product intent is `BLOCKED.md` #18. |
 | M2.2 | §5 clip contract + §3 Stage 5 boundary fusion + Kurdish invariant #2 | DONE | `src/hawedit/boundary.py` + `src/hawedit/clip.py`. Invariant #2 is swept over **78,125** combinations — every sign of all seven optional `BoundaryInputs` fields — and enforced again at an explicit render gate. Contract choices: D-017. **Amended 2026-08-09 (D-078), found by the adversarial pass:** this cell said "exhaustively over 3,125 soft-input combinations", and that sweep covered five of the seven fields, omitting `media_duration_ms` and `natural_silence_ms` — the latter wired into the runner by D-070 without extending the sweep this row cites. Now 46,875 boundaries built and 31,250 refused (the two duration offsets that place the media end before `anchor_out`, refused by design because clamping an anchor that does not fit would violate the invariant), 0 violations, 0.40 s. The test asserts those counts, so a field dropped from the product is caught. **What the sweep is worth, measured:** four invariant-breaking mutations are caught with *or* without it, so it is defence-in-depth and never the sole catcher — kept as cheap cover on a non-negotiable invariant, but this row no longer rests on the word. `evidence/exhaustive-sweep.md`. |
 | M2.5 | §3 Stage 3 dual-path candidate merge — "union, never intersect" | DONE | `src/hawedit/discovery.py` + `tests/test_discovery.py`. Nothing is dropped (property test over 200 generated inputs); per-path attribution survives so §8.2's `recall_at_k_by_path` and `path_unique_wins` still mean something — **and as of 2026-08-09 (D-101) that survival is checked in the artifact**: hardcoding `DiscoveryPath.VERBAL.value` in `Clip.to_dict` left five test files green, because the shared `a_clip()` fixture is verbal, so both the shape and round-trip tests compared "verbal" against "verbal". Now parametrized over every member on both emitting sites, with a control that three members render as three distinct strings; overlap does not chain; a path never dedupes itself; spans are the anchor's, never widened — §3 Stage 5 owns boundaries. Refuses to invent a cross-path score. D-029. Built ahead of both producers (`BLOCKED.md` #2, #3). **Audited 2026-08-09 by adversarial pass #11 (D-124):** six of ten mechanisms held — union-never-intersect, the anchor's span rather than the union, one claim per visual candidate, no self-deduplication within a path, no cross-media merging, `None` rather than `0.0` for an unmeasured score, and SV6D survival. **Three survivors, all of them fixtures that could not tell two behaviours apart, and no production code was wrong.** The claim-order test asserts *the lower-ranked verbal candidate should claim it* with a fixture where `v1` is rank 1 — id order and rank order agree, so sorting by id alone passed; the new test makes them disagree (`v2` at rank 1). The determinism test shuffles inputs against a reference but leaves no leftovers, so the merge's internal anchor order is already stable and deleting the promised `(media, in_ms, id)` sort was free; pinned now with a visual-only candidate that *starts before* the first anchor, which leftover-append would place last. And `to_retrieved`'s `min` — §8.2's *earliest position at which either path surfaced it* — could become `max`, because the one test exercising it scores at `k=20`; pinned at verbal 9 / visual 2 with a control at verbal 2 / visual 7. 10/10 after. `evidence/adversarial-pass-11-2026-08-09.md`. |
-| M2.6 | §3 Stage 4 editorial judge contract: routing interface, verdict, cost model, shadow rule | DONE | `src/hawedit/judge.py` + `tests/test_judge.py` + `tests/test_judge_calibration.py`. The shadow is refused at `route()` and again at `to_editorial()` and again at §5's `Editorial`; promotion needs a clear win on ≥20 real items, never a tie or an empty set, and `decide_judge` takes no date argument by design; the 200K tier ceiling is enforced as arithmetic against §3's own 360K with-video figure; a survivor Path A already scored cannot be re-sent for discovery. Kurdish title/description/hashtags are refused if they contain no Kurdish script. D-030, D-031. The call itself is `BLOCKED.md` #3 — and `src/hawedit/smoke.py` is the one place that spends money against it: an opt-in `python -m hawedit.smoke --video sample.mp4` that runs Path A then Stage 4 with real keyframes (M2.9) and announces the cost before spending it. It exists because every other Gemini test uses an injected transport, which can only confirm what the mock was written to believe; the questions it answers — is `gemini-2.5-pro` enabled on the approved paid Vertex project, does the structured-output schema survive a real response, does the model actually answer in Kurdish — remain unanswered because this checkout has no approved paid Vertex project/ADC/ZDR record or matching authorised video. Named in this cell as of D-069; it had no ledger entry at all. |
+| M2.6 | §3 Stage 4 editorial judge contract: routing interface, verdict, cost model, shadow rule | DONE | `src/hawedit/judge.py` + `src/hawedit/screener.py` + `tests/test_judge.py` + `tests/test_judge_calibration.py` + `tests/test_screener.py`. The shadow is refused at `route()` and again at `to_editorial()` and again at §5's `Editorial`; promotion needs a clear win on ≥20 real items, never a tie or an empty set, and `decide_judge` takes no date argument by design; the 200K tier ceiling is enforced as arithmetic against §3's own 360K with-video figure; a survivor Path A already scored cannot be re-sent for discovery. Fast candidate screener funnel (D-275) prunes candidate spans using System One models before Stage 4. Kurdish title/description/hashtags are refused if they contain no Kurdish script. D-030, D-031. The call itself is `BLOCKED.md` #3 — and `src/hawedit/smoke.py` is the one place that spends money against it: an opt-in `python -m hawedit.smoke --video sample.mp4` that runs Path A then Stage 4 with real keyframes (M2.9) and announces the cost before spending it. It exists because every other Gemini test uses an injected transport, which can only confirm what the mock was written to believe; the questions it answers — is `gemini-2.5-pro` enabled on the approved paid Vertex project, does the structured-output schema survive a real response, does the model actually answer in Kurdish — remain unanswered because this checkout has no approved paid Vertex project/ADC/ZDR record or matching authorised video. Named in this cell as of D-069; it had no ledger entry at all. |
 | M2.7 | End-to-end runner: one command over §3, reporting every stage it could not run | DONE | `src/hawedit/pipeline.py`, `src/hawedit/content_type.py` + `tests/test_pipeline.py`, `tests/test_content_type.py`. `python -m hawedit.pipeline VIDEO.mp4` runs Stage 0 on real media and exits **1** naming the four blocked stages. Given a transcript and a verdict as stand-ins it runs six stages end to end — ingest → §4.1 → §2 index → §4.2 segmentation → Stage 5 fusion → Stage 6 render — with Stage 5 fusing against the shot cuts Stage 0 found *on that video*. A skipped stage is a `StageSkipped` naming its blocker, never an empty result. D-032. **Amended 2026-08-09 (D-070):** the runner was joining Stage 5 to **three of §3's five out-point signals**. `fuse_boundary` has always had a `natural_silence` branch and this runner never set it, so the branch was unreachable and every clip's out point was decided by tail / shot cut / TimeLens alone — while `_pauses_between` derived exactly that measurement 150 lines earlier, spent it on §4.2's segmentation and dropped it. Natural silence is now the end of the VAD speech region containing `anchor_out`, the mirror of `_vad_onset_for_anchor`; deliberately **not** the next speech onset, which reaches across the whole pause into the following utterance. No threshold is invented — every value is a measured region edge, so it cannot run into the next region. Proved on the artifact through a real run over real media: with the stock transcript the 200 ms tail wins at 1900 ms over the 1790 ms silence and the out point does not move (asserted as the control, and it is the control that discriminates — the rejected reading gives 1954 ms and passes the positive test), and with the last word ending 200 ms earlier the out point lands on 1790 ms with `out_extended_by == "natural_silence"`. Silero also reports speech to 4180 ms on a 4162 ms file, so `media_duration_ms`'s clamp is load-bearing for a second reason. 5/5 mutations caught, one of them in `boundary.py` rather than here. `evidence/stage-5-natural-silence.md`. **Still three of four advisory out-point signals:** `speaker_turn_end` needs the gated diarization model (`BLOCKED.md` #4, 401 from here) and is absent for a stated reason rather than by omission. **Amended 2026-08-09 (D-071):** the overwrite refusal fired **after** the billed Stage 4 `generateContent` and after Stage 2/3 had loaded Qwen and VideoChat3 — so a re-run into a used work directory paid Google and spent GPU time before raising `FileExistsError` with nothing to show. The condition needs only `work_dir`, the media id and the selection. `_assert_no_existing_artifacts` is now called where the selection first becomes knowable — after `_prepare_selection`, again after `--auto-select` settles one (it cannot know until Stage 3 has ranked), and still before the first write — and `clip_id` plus the five artifact paths derive from one place each, so the guard cannot check different files than the run writes. The tests assert the billed call **count is zero**, because the artifact of this fix is a request that never happened; the control requires a clean directory to reach the judge exactly once, which is what distinguishes the fix from a guard that refuses everything. 4/5 mutations caught by those tests and 5/5 by the full gate — the survivor moves guard and writer together by design, and is caught by `test_distinct_selections_do_not_overwrite_each_others_deliveries`. `evidence/billed-before-refusing.md`. **Amended 2026-08-09 (D-072):** the delivery set is now all-or-none, and the shortfall named above turned out to be reachable on the commonest professional frame rate rather than on a crash. The runner wrote the editing JSON, then the SRT, then *built* the EDL — which legitimately refuses SMPTE drop-frame at 29.97 fps — so a real NTSC transcode produced a complete playable 1080×1920 captioned MP4 plus ASS, JSON and SRT with **no EDL**, stage reported skipped and `complete=False`, while the files on disk looked whole. All three are built before any is written, and the `except` unlinks all three (now also catching `OSError`) so a write failing partway is all-or-none too. The MP4 and ASS are deliberately kept — Stage 6 succeeded and `run.render` reports that path, so deleting it would make the report a lie; a mutation that deletes them is caught. 4/4 mutations, after the audit correctly reported the original defect as SURVIVED: cleanup alone fixes the final disk state, so a test that watches every `Path.write_text` and asserts no sidecar write is *attempted* is what makes the build-first ordering load-bearing. `evidence/partial-delivery-set.md`. **Still open:** an NTSC source produces no EDL at all — correct, since drop-frame is refused rather than faked, but writing real drop-frame timecode is unbuilt. **Corrected 2026-08-09 (D-145):** D-103's record reached `transcript.raw.json` and not the run report, whose `transcript` section is the **normalized** transcript and carries no such field. Measured on the real 38-minute run: the raw named 2 regions totalling **664 ms** of speech with no transcription, and the emitted report mentioned neither `unaligned` nor `segment_confidence` — in a module whose docstring opens "§1: fail visible, not silent". `PipelineRun.transcript_gaps` now carries them and the report totals them as `speech_without_transcription_ms`, with the empty case reported rather than omitted so absence is readable. Rejected making `complete` false for dropped speech: that changes what the CLI's exit code means for automation, so it is named for Hawa rather than taken. 5/5 mutations. `evidence/the-report-did-not-say-what-the-transcript-omits.md`. **Corrected 2026-08-09 (D-146):** the row's own promise — every stage yields a result or a named skip — did not hold for a stage that *ran*. `discovery` and `editorial` are typed `StageSkipped \| None` and success was written as `None`, so the real 38-minute run reported `discovery: null` alongside **7** merged candidates, with discovery absent from `skipped` too; only another key disambiguated. A discovery that ran now reports `{skipped: false, candidates: N, by_path: …}`, derived from the candidates rather than a second flag that could disagree, with the per-path split included because §8.2 partitions on it. An explicit skip still wins, and `None` still means nothing is known. 5/5 mutations, with two controls pulling in opposite directions. `evidence/a-stage-that-ran-reported-nothing.md`. |
 | M2.8 | Gemini credential panel + the real §3 Stage 4 judge | DONE | `src/hawedit/credentials.py` + `src/hawedit/gemini.py` + `src/hawedit/setup_panel.py`. `python -m hawedit.credentials` verifies a key against Google before storing it, refuses any target git tracks, and never prints it. **Extended 2026-08-26 (credentials-panel T1-T4):** `HF_TOKEN` is now a stored credential validated against Hugging Face's whoami endpoint under the same bounded-response and header-safety rules, `credential_status` dispatches by credential name rather than sending every secret to Google, `model_fetch` resolves the token through `read_credential` and passes it to the download as an explicit argument instead of relying on ambient environment state, and `src/hawedit/setup_panel.py` (`hawedit-setup`) puts both behind one window with masked fields, verify-before-store, and a per-credential line naming the stages it unlocks and the numbered blocker it answers. `tests/test_setup_panel.py` runs headless and offline throughout. Neither BLOCKED.md #3 nor #4 is cleared by this: the panel states that gemini-2.5-pro still needs billing and that a valid HF token is not the same act as accepting the gated licence. `GeminiJudge` implements `EditorialJudge` with schema-enforced output, real `countTokens` before the billed call, temperature 0, bounded retries on transient failures only, and §3's ZDR gate as a required value. Every check in `JudgeVerdict` applies to model output. D-034, D-035. **Hardened 2026-08-09 (D-148):** `test_writing_to_a_tracked_path_is_refused` aimed a real credential writer at `Path(__file__)`, making `assert_ignored_by_git` — the thing under test — the only barrier between the suite and its own source. An audit that neutered that guard for one run proved it: 262 lines of this file became eleven `KEY=VALUE` fragments under the header "hawedit credentials. Git-ignored. Never commit this file." Restored from HEAD; nothing reached a commit. The target is now a path that does not exist and is not ignored — `git check-ignore` answers from patterns, not the filesystem — so the refusal is identical and a failure costs one stray file instead of a deleted test, with assertions bracketing the call so a refusal arriving *after* the write is caught too. The guard itself is sound and fails closed, including when git is missing. `evidence/a-test-that-could-delete-itself.md`. **Audited 2026-08-10 by adversarial pass #19 (D-134): 7/7, and the headline claim survives while the runner's index shape did not.** The `0.0` claim reproduces exactly — on the clitic pair, word BM25 scores the stem query **0.000000** and the n-gram field **1.829909**. But `pipeline.py` built `from_transcript` — **one document for the whole episode** — three lines before it computed the sentences. Measured on the real 38-minute transcript: **1** document, and BM25's idf at N=1 is `log(1 + 0.5/1.5) = 0.287682` for **every one of 2,784 terms** — one distinct value against the per-sentence index's **37** over 0.855..4.826 — so rarity is invisible, length normalization compares the document to itself, and every query returned **1 hit whose window was 322..2,313,729 ms, the whole 38.6 minutes**. §3 Stage 5 consumes a window. `from_sentences` — whose own docstring says it is “what lets a hit hand Stage 5 a real time window instead of a whole episode“ — existed and had no caller. The runner now builds it: **186 documents**, 37 idf values, and the widest window any hit can hand Stage 5 is **102,524 ms of 2,313,729 — 4.43%** instead of 100%. Invariant #3 moved with it rather than being left behind: `from_sentences` took a bare `media_id: str`, which cannot be refused, and now takes the `NormalizedTranscript` so `assert_model_input` guards the path the runner uses. **`test_the_run_report_serializes_to_json` asserted `document_count == 1`** — the defect written down as an expectation — proved wrong by the measurement above before being changed, and now asserts the sentence count *and* that it exceeds one. **Second finding: D-090's sibling.** That decision fixed `scored[:k]` in `visual_index.retrieve` for negative `k`; `search` ended in `hits[:limit]` and kept it — measured on a 10-document index, `limit=-1` returned **9** hits (the best nine, silently a different operation) and `limit=-10` returned **0**. Refused as arithmetic, with `limit=1` as the control the over-strict mutation trips against. **Two of my own claims were wrong and the tests caught them:** a single-document index does *not* score rare and common terms equally (0.287682 vs 0.395563 — term frequency still varies), so both tests and both source comments now state what one document actually cannot do. **Still open:** `Bm25Index.search` has **no production caller** — the index is built, reported and never queried, because §3 Path A sends the full transcript “not a filtered subset“ while §9's M2 row describes “transcript → BM25 → Gemini“. `BLOCKED.md` #18 records the disagreement for Hawa rather than inventing a query. `evidence/adversarial-pass-19-2026-08-10.md`. **Audited 2026-08-11 (D-173, adversarial pass 28):** `DEFAULT_NGRAM_SIZE` **3 → 4 left the whole suite green** — bound to the blueprint by nothing and pinned behaviourally by nothing, though §2 states *“BM25 + character 3-grams”* and singles the choice out (*“Character n-grams matter more than usual — Sorani is morphologically rich with heavy clitic attachment”*). Now read from the frozen document. **And a document binding proves the number, not that anything consults it:** a second test asserts on the artifact — the emitted n-grams of a word long enough to distinguish 3 from 4 — and it is the only test that catches `character_ngrams` hard-coding a size. **7/7 mutations lint-clean.** No production code changed. `evidence/adversarial-pass-28-constants-the-blueprint-states.md`. **Audited 2026-08-11 (D-172) — first pass on this row, 4/6.** Six defects that ship a wrong clip rather than raising. **Survivor one, real:** §3 Stage 5 says *“shot_cut within 400 ms”* and “within 400” includes 400 — changing `<=` to `<` on either edge left the whole suite green, worth **200 ms** of delivered clip at the out edge (`14400 by 'shot_cut'` against `14200 by 'tail'`) and **400 ms** at the in edge, plus the attribution §8.2 reads. **Survivor two, a proved no-op:** `anchor_in` is seeded first, so a cut exactly at it ties and `min` returns the seed — measured `final_in 10000 by None` either way; documented, not counted. **And the larger one:** `test_the_constants_are_the_ones_section_3_stage_5_states` asserted `== 120`, `== 200`, `== 400` against **literals typed into the test** and never opened the frozen document it is named after, so a constant and its literal could move together unnoticed. It now parses §3 Stage 5's SOFT ADJUSTMENT block for all three, with non-vacuity taken from the document's own redundancy — the window is stated once per edge and both must agree. Rejected a test that merely follows the constant (D-098's lesson). **7/7 mutations lint-clean**, both edges, all three constants, both drift directions. The floor moved 1558 → 1561: a duplicate test was merged away and the gate refused the shrink until the edit was made visible, which is what it is for. `evidence/the-window-edge-and-a-test-that-never-opened-the-blueprint.md`. **Hardened 2026-08-12 (D-195):** a guard-revert sweep over every `raise` in `clip.py` — located by AST, deleted one at a time, whole suite each time — found **11 of 15 held**, and the four that were not included **both of the judge's halves of `assert_renderable`**, the gate `render_clip` calls before starting an encoder: `if self.editorial is None` and `if self.output is None`. Its docstring says “§8.3 requires this on every shipped clip”; the two QC refusals above them are held by 11 and 3 tests, and these two by nothing — so a clip the judge never scored (no meaning-fidelity, no misleading-edit score) or one with no title/crop target could have reached ffmpeg if the check were refactored away, suite green. Also unheld: `Output.durations` having to be positive seconds, and `Qc.flags` having to be a tuple of non-empty strings — whose `from_dict` sibling **is** held, so the JSON door was covered and the constructor was not. **No production code changed**; all four refusals were already correct. **4/4 mutations caught lint-clean**, each by exactly one named test and by no gate test, file restored byte-identical. `evidence/the-gate-before-the-encoder-had-two-refusals-nothing-held.md`. **Audited 2026-08-09 by adversarial pass #15 (D-128):** six of nine mechanisms held — the 200K ceiling against §3's own 360K figure, an uncounted request refused rather than assumed small, the don't-pay-twice refusal, the 20-item floor, and the empty-set and below-floor refusals. **Three survivors, and one of them is this cell's own sentence.** *"never a tie"* was unheld: `test_a_shadow_that_merely_ties_is_not_promoted` calls `decide_judge(5, 5)` — **10 items, below the 20-item floor** — so the floor answers and the tie rule is never reached, and its reason assertion looks for `"tie"`, which matches **ties 0** in the header line every decision prints. Two reasons to pass, neither the rule; `shadow_wins <= incumbent_wins` → `<` left the suite green and a tie above the floor would have promoted the shadow. Now pinned at ten against ten, asserting the floor did *not* answer, with a control at eleven against ten that promotes — refusing every tie *and* every win would satisfy the first test and pin the incumbent for ever. Also unheld: a request at **exactly 200,000** tokens (§3 says *under* 200K; `>=` → `>` was free, D-098/D-122's shape a third time) and the **20-keyframe cap**, where inline image bytes are billed. 9/9 after; no production code changed. `evidence/adversarial-pass-15-2026-08-09.md`. **Audited 2026-08-11 (D-178, adversarial pass 29) — the contract's own enforcement had never once refused.** Tracing the whole suite with a stdlib `sys.settrace` line tracer: **438 raise statements in `src/hawedit`, 125 never executed**. The standout is here — `_assert_verdict_matches_request` runs on every judged run, its call site and **both** comparisons execute, and **neither of its two refusals ever fires**. It is the only thing between an adapter's answer and §5's editorial block, and D-177 measured one iteration earlier what a verdict for other footage carries there. Each refusal now has its own test — separately, since an adapter answering the right candidate over the wrong seconds passes the identifier check completely — plus a control requiring an adapter that answers its own request to be accepted. **4/4 mutations lint-clean, three caught by the new guards alone.** Rejected installing `coverage` for the measurement (it would reopen D-139's pinned gate environment) and rejected one test for both refusals (D-177's first version made that mistake). **125 is not claimed as 125 defects** — much is unreachable behind BLOCKED #3, #4 and #16. No production code changed. `evidence/adversarial-pass-29-refusals-nothing-reaches.md`. **Corrected 2026-08-09 (D-115):** the runner destroyed the report of a completed run by the act of capturing it. `python -m hawedit.pipeline … --json > report.json` on hawapc01, after a 38-minute Stage 0 and ~10 minutes on two 3090 Ti with 547 regions transcribed, exited **1 with a 0-byte file** — `UnicodeEncodeError: 'charmap' codec`, because Python takes the streams' encoding from the locale and on Windows that is cp1252 while this product's output is Sorani. Two quieter forms of the same cause: characters *inside* cp1252 are written as cp1252 bytes, so a blocked run's captured stdout is **not valid UTF-8** (9 high bytes, `0xB7` for `·`), and stderr defaults to `backslashreplace`, so `✗` reached the log as the literal `\u2717`. None of it shows on a console, where Python writes UTF-16 to the Windows terminal. `src/hawedit/cli.py`'s `use_utf8_streams()` is now the first statement of all five `main()`s; the same command re-run emits **1,010,979 bytes that decode as UTF-8**, 6,104 words and `speech_without_transcription_ms: 664` intact. `tests/test_cli.py` drives every entry point declared in `pyproject.toml` under `PYTHONIOENCODING=cp1252` and asserts the Sorani sentinel's UTF-8 **bytes** — not that the call is present, which a call after the first write would satisfy — so a sixth entry point is covered the day it is added, and the check still discriminates on the Linux runner where the locale is UTF-8 already. Rejected `__init__.py` (the one file the ledger test exempts, and a library must not reconfigure its importer's streams) and documenting `PYTHONUTF8=1` (correct, and not a fix). 8/8 mutations, five of them removing the call from one `main()` at a time — D-105/D-108/D-112's shape. `evidence/the-report-died-on-the-way-to-the-file.md`. **Progressed 2026-08-09 (D-116):** §5's *"Rejection is a first-class outcome … that set is your only measure of recall"* had a type, validation, `to_dict`/`from_dict` and its own tests, and **zero construction sites in `src/`** — never computed, not computed and discarded. The runner decides which candidate survives in two places and returned only the winner: on the real 38-minute run, Stage 3's **7** candidates became 1 chosen and 6 with no trace. `PipelineRun.rejected` now carries every candidate a decision ruled out, with the reason read off a computation the runner already performed — `_complete_sentences_within` is shared with the selector so the record cannot claim an eligibility the selector disagrees with — and `rejected_by_path` names every path that found a candidate, at zero if it lost none, because §8.2 measures Recall@20 *per discovery path*. The survivor is chosen once rather than again inside Stage 4, so a candidate ruled out twice is not counted twice, and the record exists on a run whose Stage 4 is blocked — every run on this machine until `BLOCKED.md` #3 clears. Nothing is recorded when nothing chose. Rejected recording Stage 2's 634 unretrieved and 43 reranked-and-dropped **windows**: a window has no `discovery_path`, and filing it under one credits a path with a rejection it never made. 6/6 mutations. `evidence/the-rejection-set-had-no-producer.md`. **Audited 2026-08-09 by adversarial pass #16 (D-129): 3/7.** The exit code is pinned in both directions — 0 for an incomplete run CAUGHT, and 2 (the code a *refusal* uses) CAUGHT — and the window plan ignoring Stage 0's cuts is CAUGHT. **Four survivors, with one shared cause:** `PipelineRun.complete` decides the exit code and has eleven conjuncts, and three of them (`not self.skipped()`, `bool(self.visual_windows)`, `bool(self.candidates)`) could each be replaced by `True` with 1,302 tests green — because **`complete` was never once True in the suite**. Measured: even `full_run` is incomplete, lacking `candidates` and carrying `visual_index` and `discovery` skips, so a conjunct and a no-op were indistinguishable. There is now a run where every stage produced something (`complete is True`, `skipped() == ()`), built through the real `run_pipeline` with a discovery producer, a composer and a judge rather than fabricated dataclasses, and each conjunct is removed from *that* run. The fourth survivor: Stage 5 fused against cuts from nowhere on this video with nothing noticing — asserted on the **input** now, because §3 takes the *latest* out-point signal and natural silence is the whole file here (measured: anchor 2000..2500 gives `out_extended_by='natural_silence'`, `final_out=4162`), so no anchor lets the cut decide the outcome. 7/7 after; no production code changed. `evidence/adversarial-pass-16-2026-08-09.md`. **Corrected 2026-08-11 (D-171):** *“reporting every stage it could not run”* rested on a hand-written tuple of nine stages inside `PipelineRun.skipped()`. Measured: deleting `("delivery", self.delivery)` from it left the **whole suite green** — while `visual_index`, `discovery` and `editorial` were each caught, 3/4. On the report a reader is handed, a run with render and delivery skipped then printed *“INCOMPLETE — **1** stage(s) did not run”* instead of two, never named the delivery set, and dropped `blocked_by=('§2 delivery set',)`. **Never an exit-code defect:** `complete` separately requires `isinstance(self.delivery, Delivery)`, so the CLI still exited 1 — what failed was §1's *fail visible, not silent*. `delivery` was the survivor precisely because `complete` covers it directly, while `visual_index` and `discovery` are covered only by proxy fields and so depended on the list. `skipped()` now derives from `fields(self)`; declaration order **is** pipeline order, so the sequence is unchanged and the defect is unconstructible rather than guarded. Rejected a second hand-written list to police the first (four prior drifts: D-127, D-129, D-141, D-149) and rejected enumerating every dataclass field in the test, which mypy refused correctly. **3/3 mutations lint-clean**, with a control that must stay green — the complete hand-written list is behaviourally identical and does, so the tests pin the property and not the fix. Two contaminated runs of mine were discarded, not counted. `evidence/a-skipped-stage-the-report-could-not-name.md`. **Audited 2026-08-11 (D-177) — eleven refusals, 10/11.** The argument refusals are exemplary and `test_every_refusal_in_the_source_has_a_case` is derived from the source, so a new one cannot arrive uncovered — it reads the arg-parsing block, and **the survivor lives outside it**: `run_pipeline`'s check that a *supplied* verdict's span is the selected sentence anchors, deletable with the whole suite green. That matters now because `--verdict` is the **only** Stage 4 route while BLOCKED #3 stands, and `JudgeVerdict.__post_init__` cannot see it — a verdict for another clip satisfies `clip_in_ms <= payoff_at_ms <= clip_out_ms` perfectly. Measured on the §5 block that ships: a verdict scored 900000..904000 ms carries **`payoff_at_ms: 902000`** into a clip running 100..4100 ms, with every editorial score reached on footage the clip does not contain. Each end of the span is now covered separately — the first version moved both at once and the audit showed comparing only the in-point still caught it, leaving the right-start, wrong-end case unheld. **2 of 3 counted mutations caught by this guard alone.** The `judge is None` clause survives and is **not counted**: with discovery driving the run, `anchors` is `None` and that path never reaches the check, so its state is unconstructible — the control I wrote for it measured nothing and was removed. No production code changed. `evidence/a-verdict-for-other-footage.md`. **Corrected 2026-08-12 (D-183), D-111 one representation over.** D-111 fixed `report["discovery"]` reading `null` for a stage that ran; the **printed** report — what the documented invocation produces — still said nothing about Stage 3 at all, while a *skipped* discovery printed its `SKIPPED` line. Measured on the full composed run over the real 38-minute file with the champion adapter: the printed report went straight from Stage 2's `7 reranked survivor(s)` to §4.2's `185 sentence(s)`, while the same run's `--json` carried `discovery: {skipped: false, candidates: 7, by_path: {visual: 7}}` — one of those 7 being the window D-182 recovered. Now prints `stage 3 7 candidate(s) [visual 7] · 0 rejected [visual 0]`, read off `_discovery_ran()` so the two reports cannot disagree, with rejections shown even at zero because §5 calls that set the only measure of recall and the set was computed. **5/5 mutations** — after 3/5, the audit having caught a split test of mine that passed for the wrong answer because the rejection split prints the same path names. `evidence/the-printed-report-never-said-what-stage-3-found.md`. **Hardened 2026-08-09 (D-113):** `test_writing_to_a_tracked_path_is_refused` aimed a real credential writer at `Path(__file__)`, making `assert_ignored_by_git` — the thing under test — the only barrier between the suite and its own source. An audit that neutered that guard for one run proved it: 262 lines of this file became eleven `KEY=VALUE` fragments under the header "hawedit credentials. Git-ignored. Never commit this file." Restored from HEAD; nothing reached a commit. The target is now a path that does not exist and is not ignored — `git check-ignore` answers from patterns, not the filesystem — so the refusal is identical and a failure costs one stray file instead of a deleted test, with assertions bracketing the call so a refusal arriving *after* the write is caught too. The guard itself is sound and fails closed, including when git is missing. `evidence/a-test-that-could-delete-itself.md`. **Audited 2026-08-10 by adversarial pass #20 (D-137): 18/18 after two real gaps were closed, and this cell's leading claim was one of them.** *“verifies a key against Google before storing it”* lives entirely in `main()`, and **nothing drove `main()`** — `grep -n "credentials.main" tests/` found no caller. Two mutations survived: storing a key Google **rejected**, and moving the write **above** the validation. The units either side were thoroughly tested (`validate_gemini_key` on four transports, `write_credential` on symlinks, hardlinks, tracked paths and permissive modes, `mask` on two keys) and the gap was exactly between them. Four tests now drive the panel with the network and the writer replaced by recorders, asserting `order == [“validate”, “write”]` rather than only that a key was stored — which a store-first panel also satisfies — plus a blank-entry control that must reach neither. **Second gap: the TOCTOU half of the O_NOFOLLOW reconstruction.** `_O_NOFOLLOW` is measured **0** on Windows, so the guarantee is two halves — refuse a symlink before the open, prove after it that the handle is the file that was checked — and only the first had a test, on the platform where the second actually runs. The race is now forced by making `os.lstat` answer about a different file, with a truthful-lstat control. **Two further survivors were platform artefacts and were measured, not reported as holes:** `0o600` and `0o666` both yield `0o666` on Windows, and removing `_O_NOFOLLOW` from the open flags is a no-op when it is 0 — both properties are held here by the pre-open refusal and `assert_owner_only`'s ACL read, whose mutations are caught. **And one mutation of mine was wrong:** `if attempt < max` only skips the final sleep, so it never made retries unbounded; the bound is held by a test asserting exactly 3 `generateContent` calls. **The audit's own first run was contaminated by the guard it was auditing** — the git-ignore mutation made the guard fail open, D-113's probe file landed in the repo root, and that test's *first* assertion is that the probe does not exist, so 16 of 20 results were red for the wrong reason and only a manual `rm` could clear it. The probe is now removed in `finally` with a message naming what to inspect; the check itself is unchanged. **Everything in `gemini.py` survived the pass** — schema-enforced output, `countTokens` before the billed call, the tier ceiling, temperature 0, no retry on a 400, the retry ceiling and the ZDR gate all redden when reverted. **The first push of this pass was refused by the gate**, and rightly: the identity test skipped where the kernel has `O_NOFOLLOW`, so the runner reported *1372 passed against a floor of 1373 … a skip condition is creeping*. A guard only Windows exercises is a guard CI never checks, so `_O_NOFOLLOW` is patched to **0** instead and the branch runs on both platforms — 26 tests in the file, no skips, and removing the comparison still reddens. `evidence/adversarial-pass-20-2026-08-10.md`. **Audited 2026-08-11 (D-176) — the output half of “never prints it”, 3/4.** Four escape routes for the key were mutated; the header, the mask and the unreachable-API message are all held. **The survivor: the status readout for an *already stored* key.** The existing `test_the_panel_prints_the_mask_and_never_the_key` is not weak — it drives the **entry** path, where the key comes from `getpass`. `_drive_main` stubs the validator, the writer and `getpass` but **not** `credential_status`, so with no key configured `main` takes the `key is None` branch and the `else` — the branch every user with a stored key sees on every run — executed in no test. `--check` was driven by nothing either. Both now run the real `main()` with a stored key and assert the key is **absent** and the mask **present**, the second being the control against “never prints it” becoming true by silence. **3/4 mutations lint-clean, two caught by the new guards alone** — and the second was unlooked for: `--check` returned 0 whatever the API said, so a script gating on it would proceed with a revoked key. A fourth was format-dirty and is not counted. No production code changed. `evidence/the-status-readout-nothing-drove.md`. **Corrected 2026-08-12 (D-191):** a guard-revert sweep over every `raise` in `credentials.py` — located by AST, deleted one at a time, whole suite each time — found **6 of 10 held**. The one that mattered: `restrict_to_owner` ran *after* the body was written, so a failed narrowing left the plaintext key on disk at inherited permissions while the panel printed “Refusing to leave a credential at inherited permissions” and returned 2. Measured against a **real** `icacls` failure (unresolvable principal, exit 1332) in a directory granting `Everyone:(OI)(CI)F`: 95 bytes containing the key, readable by Everyone — **identically whether the refusal was present or deleted**, so the guard's only contribution was the exception. POSIX was never exposed (`O_CREAT` at `0o600` cannot be widened); on Windows the mode argument carries only the read-only bit, so the whole span between the open and the narrowing was a window. The narrowing now happens above the write *and* above `os.ftruncate`, so a refusal exposes an empty file and leaves the previous key intact. `_IS_WINDOWS` became a module constant because the `icacls` refusal was a branch the Linux runner can never execute — patched, never skipped, the repo still runs 0 skips. **5/5 mutations caught**, file restored byte-identical. `evidence/the-refusal-named-the-state-it-had-already-created.md`. |
 | M2.3 | Stage 3 Path A (Gemini reads the full transcript) | DONE | `src/hawedit/path_a.py` + `tests/test_path_a.py`. Sends the **whole** normalized transcript — a test asserts every fragment reaches the judge, because sending a subset is the exact failure §3 built the dual path to prevent and would be invisible in the output. **Amended 2026-08-09 (D-086), found by the third adversarial pass:** that test could not see what it protected. Its three asserted fragments were all entries in the fixture's `words` tuple, so `_timing_table` rendered each of them above the transcript and `fragment in api.prompt` was satisfied by the timing table alone — measured, replacing `text=transcript.text_ckb` with `text=""` left `tests/test_path_a.py` at 21 passed and the **full suite at `exit=0, 0 FAILED`**, with the judge receiving no Kurdish text at all. It now asserts the whole `text_ckb` verbatim, derives the discriminating fragments at runtime as `text_ckb` minus `words` and refuses a fixture where that set is empty, and carries a control requiring a timing row so a prompt dropping timings to keep text cannot pass. 3/3 mutations. Separately, an agent claim that a `RawTranscript` reaches `countTokens` before invariant #3 refuses **did not reproduce**: measured with the suite's recording transport, both `discover` and `build_request` raise with zero endpoints hit and no raw text in any body. `evidence/path-a-transcript-unasserted.md`. Refuses to split a too-long transcript rather than choosing which parts the Kurdish judge reads. Invariant #3 at the door; every returned span checked against the transcript's own range; ranks dense and ordered for §8.2. Wired into `pipeline.py`. D-036. |
@@ -175,7 +842,7 @@ downstream threshold depends on — is not. See `BLOCKED.md`.
 | M3.11 | SRT preserves §4.3.5's word-aligned RTL line breaks | DONE | `src/hawedit/delivery.py` + `tests/test_delivery.py`. SRT and ASS share the same wrapper and measured width; a real 38-minute transcript had 149 of 182 clip-eligible sentences wider than that width. `evidence/the-srt-let-the-player-choose-the-break-points.md`, D-151. |
 | M3.1 | §4.3 caption generation: shaping, stack check, font coverage, own line breaks | DONE | `src/hawedit/captions.py` + `tests/test_captions.py`. Font coverage asserted against the real OFL-1.1 Noto Naskh Arabic shipped in `assets/fonts` — full Kurdish coverage measured (D-018). **Corrected 2026-08-10 (D-163):** the required set omitted `ک` U+06A9 and `ی` U+06CC even though §4.1 normalization produces those exact forms and the golden caption contains them. A real Noto subset retaining Arabic kaf but dropping Kurdish keheh passed the old guard and visibly split `کوردی` across fallback fonts. Both forms are now required and derived from `normalize_sorani` in the regression. The per-file check also had no product caller; `render_clip` now verifies the exact runtime `fonts_dir` and refuses empty/non-covering directories before publishing. |
 | M3.2 | §4.3.6 golden-file render compared per build | DONE | `tests/golden/kurdish-caption.png` rendered on a verified libass build; compared on decoded pixels every gate run. `shaping=simple` must fail the same comparison — without that control the test measures nothing. D-021, `evidence/rtl-shaping.md`. **Adversarially audited 2026-08-08 (D-061):** the reference re-renders byte-identical here, `shaping=simple` differs by only 0.232% of pixels — small enough that any tolerance-based comparison would have to be tuned below it, which is why this one is exact — and CI has a dedicated step that fails if the test skips rather than runs. What the audit found missing was in invariant #4's cell, not this one: the golden line does not wrap, so it never evidenced the line-break claim. `evidence/rtl-shaping-wrapping.md`. |
-| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | PARTIAL | `src/hawedit/render.py` + `src/hawedit/assembly.py` + `src/hawedit/silence.py` + `src/hawedit/cover.py` + `src/hawedit/episode.py` + `src/hawedit/variants.py` + `src/hawedit/brand.py` + `src/hawedit/condenser.py` + `src/hawedit/sanity_gate.py` + `src/hawedit/checkpoint.py` + `src/hawedit/web.py` + `src/hawedit/log.py` + `tests/test_render.py` + `tests/test_assembly.py` + `tests/test_silence.py` + `tests/test_cover.py` + `tests/test_episode.py` + `tests/test_variants.py` + `tests/test_brand.py` + `tests/test_condenser.py` + `tests/test_sanity_gate.py` + `tests/test_checkpoint.py` + `tests/test_web.py` + `tests/test_log.py` + `tests/test_timeouts.py`. Cut, 9:16 crop, `shaping=complex` burn-in and encode all run and are verified on decoded pixels: a captioned render must differ from an uncaptioned one, and a `shaping=simple` render must differ from the shipped one. **NVENC now runs** — a real 1080×1920 clip encoded on hawapc01's 3090 Ti with captions verified in the NVENC pixels (`evidence/m3-3-nvenc.md`, `evidence/m3-3-nvenc-clip.mp4`). Getting there found a defect in the check itself: `encoder_available` probed at **64×64**, below NVENC's minimum frame, so the function written because a capability listing cannot be trusted called a working encoder unavailable — and `render_clip` refuses rather than substitutes, so NVENC would have raised on the one machine §6 puts it on. It probes at Stage 6's own output size now, and a GPU-free test pins that. D-045. **Shortfall (one, was two):** §3 Stage 6 reframes by tracking the active speaker from diarization plus face detection. **Corrected 2026-08-08 (D-069):** this cell said the crop "is static and says so by name, `Reframe.STATIC_CENTRE`, never `SPEAKER_TRACKED`" — a two-value description of a three-value enum, stale from the day `reframe.py` landed. `render.py` has carried `Reframe.FACE_TRACKED` since, and `render_clip` selects it whenever the tracker returns focus points. Face detection *does* run; only the diarization half is still missing (Community-1 measured **401** from here, `BLOCKED.md` #4), so the honest statement is face-aware-not-speaker-aware, carried with its own status in **M8.1** below. **Audited 2026-08-10 by adversarial pass #18 (D-133): 9/11, and this cell's own claim was one of the two that did not hold.** It said *full Kurdish coverage measured* for a set of **11** characters that did not include `ک` U+06A9 or `ی` U+06CC — and `normalize_sorani` converts Arabic `ك`/`ي` into exactly those, which §4.1 calls *the Farsi forms Kurdish uses*, so every normalized transcript is written in two letters no font was required to have. Both appear in this project's own `GOLDEN_CAPTION_TEXT`, and the comment above it claimed the line exercises *`ی` from §4.3.4's required set* while the set held no `ی`. Measured by subsetting the real shipped Noto to drop **only** U+06A9, keeping U+0643: `assert_font_covers_kurdish` **passed**, and the render changed by **15,999 subpixels** — libass fell back to another font for that character, so `کوردی` came apart into a detached, differently sized `ک` and `وردی`, a caption that looks entirely present while the viewer reads one word as two. Worse than §4.3.4's stated boxes, and the frame *gains* ink (8,367 → 9,267 lit subpixels). Set extended by two, derived from what the normalizer returns rather than from an alphabet — the same divergence from the frozen §4.3.4 list that D-013 took for `ھ`. **Second finding:** `assert_font_covers_kurdish` had **no caller in `src/`** — a build-time check its own docstring says must not be trusted, running at neither build time nor the burn, while `render_clip` burned whatever font sat in `fonts_dir` and `pipeline._runtime_fonts_dir()` resolves to an installed path no test has seen. `assert_fonts_dir_covers_kurdish` now runs in `render_clip` beside `assert_rtl_stack`. **Two more mutations survived and are now held:** the `--disable-libass`-beats-`--enable-` precedence, and `render_clip`'s own `assert_rtl_stack` call, which could be deleted unnoticed. **11/11** after. **Shaping and own-line-breaks survived the pass intact** (three mutations each, all caught). **Named shortfall:** the directory check does not verify that the font libass resolves *for the ASS's family name* is the covering one — family-name resolution is not reimplemented here rather than guessed. `evidence/adversarial-pass-18-2026-08-10.md`. **Corrected 2026-08-11 (D-167):** §4.3.5's *own line breaks* held for breaks this module inserts and not for one arriving inside a word. `Word` accepted any non-empty surface form, and an ASS `Dialogue:` event is **one line** — measured on real ffmpeg 8.1.1 and real libass, the frame burned from a word carrying a break is **byte-identical** to one rendered with the tail deleted (`b01fd8a7…` twice), while the intact render differs by 8,277 pixel bytes. The tail sits in `[Events]` as a line libass ignores and `parse_dialogue_times` returns *exactly* the intact file's times, so nothing downstream could see it. **Live, not latent:** `RawTranscript.from_json` accepted such a word, and `--transcript FILE` is a documented flag; canonical ASR cannot produce one because `_align` splits on whitespace. One guard at the chokepoint — `Word.__post_init__` requires `w.splitlines() == [w]`, not `len(...) == 1`, which would pass a trailing break. Rejected escaping it into a `\\N` (that invents a break the alignment never specified) and rejected refusing all whitespace (a space or tab loses no text). **3/3 lint-clean**, and the two threshold mutations discriminate: the length spelling reddens only the trailing-break case, the over-broad one only the four accepted cases. `evidence/a-word-that-was-not-one-line.md`. **Hardened 2026-08-12 (D-194):** a guard-revert sweep over every `raise` in this module — located by AST, deleted one at a time, whole suite each time — found **3 of 11 held by nothing**, and the worst was the last check between ffmpeg and a client: `if result.returncode != 0 or not output.exists()`. Deleting it left the suite green, and the next line probes the output for its duration, so a failed encode became whatever `probe_duration_ms` says about a file that may not be there. Reproduced with a **real** ffmpeg failure — the output path is a directory, exit **4294967283**, *“Error opening output …: Permission denied”* — and the test asserts ffmpeg's own words, not a generic message. Also held now: a source too small to crop (`1x1000`, `1000x1`, `2x2` all reduce to a zero dimension under `yuv420p` rounding) and a `0/0` frame rate (previously `ZeroDivisionError` from inside a rate probe). **No production code changed** — all three refusals were already correct. **3/3 mutations caught lint-clean**, file restored byte-identical. `evidence/three-refusals-in-the-renderer-that-nothing-would-miss.md`. |
+| M3.3 | Stage 6 encode: crop/reframe + NVENC burn-in | PARTIAL | `src/hawedit/render.py` + `src/hawedit/assembly.py` + `src/hawedit/silence.py` + `src/hawedit/sound_design.py` + `src/hawedit/cover.py` + `src/hawedit/episode.py` + `src/hawedit/variants.py` + `src/hawedit/brand.py` + `src/hawedit/condenser.py` + `src/hawedit/sanity_gate.py` + `src/hawedit/checkpoint.py` + `src/hawedit/web.py` + `src/hawedit/log.py` + `tests/test_render.py` + `tests/test_assembly.py` + `tests/test_silence.py` + `tests/test_cover.py` + `tests/test_episode.py` + `tests/test_variants.py` + `tests/test_brand.py` + `tests/test_condenser.py` + `tests/test_sanity_gate.py` + `tests/test_checkpoint.py` + `tests/test_web.py` + `tests/test_log.py` + `tests/test_timeouts.py`. Cut, 9:16 crop, `shaping=complex` burn-in and encode all run and are verified on decoded pixels: a captioned render must differ from an uncaptioned one, and a `shaping=simple` render must differ from the shipped one. **NVENC now runs** — a real 1080×1920 clip encoded on hawapc01's 3090 Ti with captions verified in the NVENC pixels (`evidence/m3-3-nvenc.md`, `evidence/m3-3-nvenc-clip.mp4`). Getting there found a defect in the check itself: `encoder_available` probed at **64×64**, below NVENC's minimum frame, so the function written because a capability listing cannot be trusted called a working encoder unavailable — and `render_clip` refuses rather than substitutes, so NVENC would have raised on the one machine §6 puts it on. It probes at Stage 6's own output size now, and a GPU-free test pins that. D-045. **Shortfall (one, was two):** §3 Stage 6 reframes by tracking the active speaker from diarization plus face detection. **Corrected 2026-08-08 (D-069):** this cell said the crop "is static and says so by name, `Reframe.STATIC_CENTRE`, never `SPEAKER_TRACKED`" — a two-value description of a three-value enum, stale from the day `reframe.py` landed. `render.py` has carried `Reframe.FACE_TRACKED` since, and `render_clip` selects it whenever the tracker returns focus points. Face detection *does* run; only the diarization half is still missing (Community-1 measured **401** from here, `BLOCKED.md` #4), so the honest statement is face-aware-not-speaker-aware, carried with its own status in **M8.1** below. **Audited 2026-08-10 by adversarial pass #18 (D-133): 9/11, and this cell's own claim was one of the two that did not hold.** It said *full Kurdish coverage measured* for a set of **11** characters that did not include `ک` U+06A9 or `ی` U+06CC — and `normalize_sorani` converts Arabic `ك`/`ي` into exactly those, which §4.1 calls *the Farsi forms Kurdish uses*, so every normalized transcript is written in two letters no font was required to have. Both appear in this project's own `GOLDEN_CAPTION_TEXT`, and the comment above it claimed the line exercises *`ی` from §4.3.4's required set* while the set held no `ی`. Measured by subsetting the real shipped Noto to drop **only** U+06A9, keeping U+0643: `assert_font_covers_kurdish` **passed**, and the render changed by **15,999 subpixels** — libass fell back to another font for that character, so `کوردی` came apart into a detached, differently sized `ک` and `وردی`, a caption that looks entirely present while the viewer reads one word as two. Worse than §4.3.4's stated boxes, and the frame *gains* ink (8,367 → 9,267 lit subpixels). Set extended by two, derived from what the normalizer returns rather than from an alphabet — the same divergence from the frozen §4.3.4 list that D-013 took for `ھ`. **Second finding:** `assert_font_covers_kurdish` had **no caller in `src/`** — a build-time check its own docstring says must not be trusted, running at neither build time nor the burn, while `render_clip` burned whatever font sat in `fonts_dir` and `pipeline._runtime_fonts_dir()` resolves to an installed path no test has seen. `assert_fonts_dir_covers_kurdish` now runs in `render_clip` beside `assert_rtl_stack`. **Two more mutations survived and are now held:** the `--disable-libass`-beats-`--enable-` precedence, and `render_clip`'s own `assert_rtl_stack` call, which could be deleted unnoticed. **11/11** after. **Shaping and own-line-breaks survived the pass intact** (three mutations each, all caught). **Named shortfall:** the directory check does not verify that the font libass resolves *for the ASS's family name* is the covering one — family-name resolution is not reimplemented here rather than guessed. `evidence/adversarial-pass-18-2026-08-10.md`. **Corrected 2026-08-11 (D-167):** §4.3.5's *own line breaks* held for breaks this module inserts and not for one arriving inside a word. `Word` accepted any non-empty surface form, and an ASS `Dialogue:` event is **one line** — measured on real ffmpeg 8.1.1 and real libass, the frame burned from a word carrying a break is **byte-identical** to one rendered with the tail deleted (`b01fd8a7…` twice), while the intact render differs by 8,277 pixel bytes. The tail sits in `[Events]` as a line libass ignores and `parse_dialogue_times` returns *exactly* the intact file's times, so nothing downstream could see it. **Live, not latent:** `RawTranscript.from_json` accepted such a word, and `--transcript FILE` is a documented flag; canonical ASR cannot produce one because `_align` splits on whitespace. One guard at the chokepoint — `Word.__post_init__` requires `w.splitlines() == [w]`, not `len(...) == 1`, which would pass a trailing break. Rejected escaping it into a `\\N` (that invents a break the alignment never specified) and rejected refusing all whitespace (a space or tab loses no text). **3/3 lint-clean**, and the two threshold mutations discriminate: the length spelling reddens only the trailing-break case, the over-broad one only the four accepted cases. `evidence/a-word-that-was-not-one-line.md`. **Hardened 2026-08-12 (D-194):** a guard-revert sweep over every `raise` in this module — located by AST, deleted one at a time, whole suite each time — found **3 of 11 held by nothing**, and the worst was the last check between ffmpeg and a client: `if result.returncode != 0 or not output.exists()`. Deleting it left the suite green, and the next line probes the output for its duration, so a failed encode became whatever `probe_duration_ms` says about a file that may not be there. Reproduced with a **real** ffmpeg failure — the output path is a directory, exit **4294967283**, *“Error opening output …: Permission denied”* — and the test asserts ffmpeg's own words, not a generic message. Also held now: a source too small to crop (`1x1000`, `1000x1`, `2x2` all reduce to a zero dimension under `yuv420p` rounding) and a `0/0` frame rate (previously `ZeroDivisionError` from inside a rate probe). **No production code changed** — all three refusals were already correct. **3/3 mutations caught lint-clean**, file restored byte-identical. `evidence/three-refusals-in-the-renderer-that-nothing-would-miss.md`. |
 
 
 ## M5 — task ledger
@@ -616,6 +1283,105 @@ still required because identity of Git trees does not execute the program.
 | M9.37 | Episode visual delivery with shared preprocessing (`hawedit.episode_package`) | DONE | `src/hawedit/episode_package.py` (`CandidateEditorialState`, `CandidateEvaluationItem`, `EpisodePackageConfig`, `EpisodePackageReport`, `EvaluatedCandidateRecord`, `SharedEpisodeContext`, `build_episode_package`, `compute_semantic_similarity`) + `tests/test_episode_package.py`. Step V13 (VE-13). Multi-clip episode packaging sharing preprocessing once, filtering semantic duplicates while preserving distinct perspectives, and reporting truthful per-clip states without forcing filler outputs. |
 | M9.38 | Visual workflow recovery, resource ownership, and publication idempotency (`hawedit.workflow_recovery`) | DONE | `src/hawedit/workflow_recovery.py` (`ExternalCallStatus`, `ExternalReconciliationError`, `PublicationConflictError`, `PublishedVisualPackage`, `ResourceCapacityError`, `ScopedResourceOwnership`, `VisualWorkflowCheckpoint`, `VisualWorkflowRecoveryManager`, `WorkflowResumePlan`, `WorkflowStepStatus`, `publish_visual_package_idempotent`, `reconcile_external_billed_call`, `validate_preflight_resources`) + `tests/test_workflow_recovery.py`. Step V14 (VE-14). Resumes workflows without invalidating verified evidence, enforces fail-stop scratch cleanup and preflight disk/memory checks, requires explicit reconciliation for uncertain billed calls, and enforces atomic publication idempotency. |
 | M9.39 | Holdout evaluation, cluster-aware confidence intervals, and leadership claim refusal (`hawedit.visual_scorecard`) | DONE | `src/hawedit/visual_scorecard.py` (`ClusterSummary`, `CompetitorComparison`, `DatasetSplit`, `EvaluationProposalRecord`, `InsufficientClustersError`, `LeakedHoldoutError`, `ProvenanceRecord`, `StaleEvidenceError`, `UnaccountedClipsError`, `UnsupportedLeadershipClaimError`, `VisualScorecard`, `VisualScorecardConfig`, `assert_no_holdout_leakage`, `compute_cluster_variance`, `compute_visual_scorecard`) + `tests/test_visual_scorecard.py`. Step V15 (VE-15). Requires verified provenance and current evidence, audits holdout contamination, enforces complete accounting of proposals and refusals in the denominator, computes cluster-aware confidence bounds across episodes, and strictly refuses unsupported leadership or 10/10 claims. |
+| M9.40 | Usable-rate scoreboard CSV and Phase F3 tally CLI (`hawedit.usable_rate`) | WIP | `src/hawedit/usable_rate.py` (`record_verdict`, `load_verdict_rows`, `summarize_usable_rate`, `canonicalize_verdict`, `format_summary_markdown`) + `evidence/usable-rate.csv` + `tests/test_usable_rate.py`. Phase A7 (D-352). Records reel verdicts (`publishable`, `needs_fix`, `unusable`) with required reasons, reel SHA-256, and commit provenance, and compares usable rate against the `0.62` OpusClip baseline and `0.80` target; awaiting lead full gate + CI. |
+| M9.41 | CPU-only per-reel inspection contact sheets (`hawedit.contact_sheet`) | WIP | `src/hawedit/contact_sheet.py` (`render_reel_contact_sheet`, `ContactSheetResult`) + post-publish calls in `src/hawedit/pipeline.py` + `tests/test_contact_sheet.py`. Phase E1 (D-353). Saves `<clip_id>.contact-sheet.jpg` next to each MP4 with first frame, pre/post cut pairs, explicit filler cells, and an enlarged caption crop without altering `ArtifactBundle` suffixes; awaiting lead full gate + CI. |
+| M9.42 | Hard edit rules validation, two-sided silence cut padding, and wired post-render critique (`hawedit.edit_plan`, `hawedit.silence`, `hawedit.render_critic`) | WIP | `src/hawedit/edit_plan.py` (`validate_edl`, `EditRuleViolationError`, `EdlValidationResult`, `pipeline_edl_duration_bounds`, `pipeline_edl_padding_bounds`) + `src/hawedit/silence.py` (`_two_sided_keep_ms`) + `src/hawedit/render_critic.py` + `src/hawedit/pipeline.py` + `tests/test_edit_rules.py`. Phase E3 (D-354). Enforces word-split refusal, `[30, 200]` ms edge padding, duration bounds pre-render and inside `render_critic.py`, and multi-frame (`>= 2`) Check #0 sampling; awaiting lead full gate + CI. |
+| M9.43 | Zero-API MIT TextTiling topic-segmentation candidates (`hawedit.topic_segmenter`) | WIP | `src/hawedit/topic_segmenter.py` (`SentenceEmbedder`, `SoraniTfIdfEmbedder`, `TextTilerConfig`, `text_tile_depths`, `discover_topics`) + `src/hawedit/discovery.py` (`combine_verbal_candidates`) + `src/hawedit/pipeline.py` (`--topic-candidates`) + `tests/test_topic_segmenter.py`. Clean-room Hearst (1997) TextTiling over §4.1 normalized Sorani tokens and character 3-grams, emitting sentence-complete `[30 s, 90 s]` `DiscoveryPath.VERBAL` spans with zero API or GPU usage (D-345). |
+| M9.44 | Multimodal acoustic highlight signals and teaser-overlap evaluator (`hawedit.audio_signals`) | WIP | `src/hawedit/audio_signals.py` (`SentenceAudioMetrics`, `analyze_sentence_audio`, `TeaserGoldSpan`, `TeaserOverlapReport`, `evaluate_teaser_overlap`) + `src/hawedit/path_a.py` + `src/hawedit/topic_segmenter.py` + `tests/test_c10_multimodal_discovery.py` + `evidence/content-aware-10-of-10-2026-11-20.md`. D-356; awaiting full gate + CI. |
+| M9.45 | Clip-only Sorani display-caption polish, intra-shot active speaker, and broadcast scorecard (`hawedit.caption_polish`, `hawedit.reframe`, `hawedit.measure`) | WIP | `src/hawedit/caption_polish.py` (`deduplicate_micro_stutters`, `polish_clip_sentences`, `PolishResult`) + `src/hawedit/reframe.py` + `src/hawedit/render.py` (`resolve_encoder`) + `src/hawedit/measure.py` (`BroadcastScorecard`, `evaluate_broadcast_scorecard`) + `tests/test_c10_caption_polish_and_silence.py` + `tests/test_c10_reframe_anything.py` + `tests/test_c10_pipeline_integration.py` + `evidence/content-aware-10-of-10-2026-11-20.md`. D-357/D-358/D-359; awaiting full gate + CI. |
 
 
 
+# Owned Linux Snapshot Prerequisite, 2026-10-09
+
+Approved-parent phases1--2/native-worker-ownerT3, D-323, WIP. Independent owned
+regular copies replace unsafe mutable-backed readonly binds; finite exact
+hash/size/no-replace copies, readonly kernel readback, zero capability sets and
+namespace-reentry fence precede live original-description anchored use.
+Actual275affected tests pass/zero errors/skips, including36new real namespace
+controls; same-inode foreign-descriptor cleanup red preserved and corrected.
+Sourceb81ceb1a286aab2384774bd7b1f859d76c36e6991ec14b0d46ff7e8a5fec85ce;
+evidence/owned-linux-snapshot-20261009.md records commands/hashes/host/controller
+versions and failures. Exact clean committed full gate pending at this entry,
+required same-SHA CI absent/no push, no ledger DONE. This is not model/runtime/
+GPU/effect/producer admission or an improved ZAR reel. Full original seven-phase
+system and independent sustained acceptance remain open.
+
+# Original Joined-Worker Observation, 2026-10-13
+
+Approved launch-plan RT2A step6, D-329, WIP. Outside owner now independently
+checks the same held original worker after exact private view/root entry and
+complete capability drop. Default unjoined observation and Snapshot unchanged.
+Actual328-case caller cohort passes/0errors/skips,112.52s,18new native cases;
+baselinea530ab2, hardware/versions/red records/commands in
+evidence/original-joined-view-20261013.md. Exact committed gate and CI still
+required. No ledger completion, security-review renewal, copied-runtime/model
+admission, producer adoption, fresh ZAR reel, publication or10/10 verdict.
+
+# Phase A — Real Reels Runtime Unblocking (WIP, 2026-11-19)
+
+Branch `gemini/lane-1` (`HawEdit-lane-1` worktree), WIP (`D-336`, `D-337`, `D-338`, `D-339`; no
+DONE claim until integrated `scripts/verify.sh`, VEX re-pin, and clean-runner CI pass):
+
+- **A3 (`D-337`, `specs/a3-park-heavy-runtime-controls/`):** Parked WSL `.ready` receipt gate and
+  `CUDA_VISIBLE_DEVICES` restriction behind `--strict-runtime` / `HAWEDIT_STRICT_RUNTIME=1`, and
+  parked protected Studio 503 admission behind `--protected-studio` / `HAWEDIT_PROTECTED_STUDIO=1`;
+  `security/wsl-asr-vex.json` and `tests/test_vex.py` left untouched for lead merge-time re-pin.
+- **A5 (`D-339`, `specs/a5-judge-model-upgrade/`):** Upgraded Stage 4 incumbent judge to
+  `gemini-4-carbon` and shadow to `gemini-4-argon` with `thought: True` part filtering in
+  `gemini.py`; live smoke and Stage 4 verdict on `gemini-4-carbon` recorded in
+  `evidence/a5-live-judge-smoke-2026-11-19.md`. Addresses `BLOCKED.md` #3 routing transition.
+- **A2 (`D-336`, `specs/a2-one-command-reels/`):** Wired plain WSL Python resolution
+  (`/home/ai/.venv-wsl-whisper/bin/python`), validator-off `asr_worker`/`asr_resume` support,
+  fused v12 checkpoint auto-discovery (`kurdish_omniasr_7b_v12_c750.pt`, `BLOCKED.md` #21),
+  configurable Stage 0 `--ingest-threads`, `--reels` / `--output-dir` one-command desktop
+  defaults, and `stage_timings_s`. Derived 1440p 40-min AI episode copy in `excerpts/` on GPU 0
+  NVENC (`363.391 s`, SHA-256 `dff407fd...`, `evidence/a2-1440p-transcode-2026-11-19.md`); final
+  10-reel episode production deferred to Phase 3 after merge.
+- **A4 (`D-338`, `specs/a4-studio-pipeline-runner/`):** Connected `POST /api/repurpose`,
+  `GET /api/status`, and `GET /api/jobs/<id>/events` SSE in `web.py` + `studio_ui.py`
+  (`EventSource`, zero `setInterval`, `max_clips` up to `10`) to the A2 desktop pipeline runner.
+
+
+# V8 — Lean Multimodal Content-Aware Director (WIP, 2026-11-22)
+
+Branch `gemini/number-one` (`HawEdit-swarm` worktree, `specs/v8-lean-director/`, `D-382`–`D-386`;
+no DONE claim until integrated `scripts/verify.sh` and clean-runner CI pass):
+
+- **`v8/schema.py` & `v8/compiler.py` & `v8/__main__.py` (`D-382`, `D-386`):** Isolated lean V8
+  package enforcing the Hard Camera Restraint Law (`>= 75%` rock-steady `1.00x` tripod, `<= 25%`
+  moving-camera time, `0` sinusoidal sway, `<= 4` moves per 60 s clip), E3 zero-mid-word cuts,
+  and max-1-revision Watch-Before-Ship self-critique.
+- **`v8/tiktok_subs.py` (`D-383`):** Viral TikTok Sorani RTL subtitles (`1–2` words, max `3` only
+  if `<= 14` chars, never `4+`) with Skia (`skia-python==144.0.post2`, BSD-3-Clause) + HarfBuzz
+  (`uharfbuzz==0.56.0`, Apache-2.0) RGBA spring-bounce active-word rounded pill overlay
+  composited via opt-in `subtitle_overlay_path` in `render.py`, plus pure `libass` fallback.
+- **`v8/director.py` (`D-384`, `D-386`):** Unified `DirectorBrain` with explicit `gemini`
+  (native video+audio), `local-omni` (OpenAI-compatible multimodal), and `offline` backends plus
+  480p@2fps Watch-Before-Ship critic (zero silent fallback).
+- **`v8/asd.py` (`D-385`):** Dual-backend active speaker scorer (`light_asd_onnx` + default
+  `mouth_av_corr`) feeding rock-steady median `LockedShotCrop` windows with `>= 2,200 ms`
+  hysteresis.
+
+
+# V9 — Client-Ready Production Suite (WIP, 2026-11-22)
+
+Branch `gemini/number-one` (`HawEdit-swarm` worktree, `D-388`–`D-392`; no DONE claim until
+integrated `scripts/verify.sh` and clean-runner CI pass):
+
+- **`v8/styles.py` & `v8/tiktok_subs.py` (`D-388`):** 5 curated WCAG >= 7:1 client style presets
+  (`viral_gold`, `crimson_punch`, `executive_cyan`, `luxury_minimal`, `broadcast_news`), strict
+  `#RRGGBB` brand accent override, dark-glass RTL speaker lower-third bio badge (`2600..6200 ms`),
+  frosted outro CTA end card (final `2.0 s`), and compiler-enforced camera restraint (`100%` locked
+  `1.00x` on `broadcast_news`, `<= 1.08x` on `executive_cyan`/`luxury_minimal`).
+- **`v8/episode.py` & `v8/delivery_pack.py` (`D-389`, `D-390`):** One-command full-episode
+  multi-reel batch compiler (`python -m hawedit.v8 episode`), deterministic offline acoustic+Kurdish
+  arc discovery, complete verified `ClientDeliveryPack` (`MP4`, `SRT`, `EDL`, `OTIO`, `cover.png`,
+  `.director.json`, `.grill.json`), automatic `.v8.overlay.mov` cleanup after verified grill pass,
+  and self-contained zero-CDN RTL Kurdish `client-review.html` gallery.
+- **`v8/doctor.py` & `v8/director.py` (`D-391`):** 7-check team preflight diagnostic
+  (`python -m hawedit.v8 doctor`) and hardened `LocalOmniDirector` (`omni`/`vision`/`text` explicit
+  modality, `<think>` stripping, 240 s timeout, zero silent fallback).
+- **`web.py` & `studio_ui.py` (`D-392`):** `GET /api/v8/doctor`, `GET /api/v8/presets`, V8 engine
+  mode on `POST /api/repurpose`, safe artifact download routes, and upgraded Studio browser UI with
+  live preflight health strip, 5 preset swatch cards, brand kit controls, and grill badges.

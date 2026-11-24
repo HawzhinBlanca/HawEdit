@@ -1,0 +1,56 @@
+{
+  "source_url": "https://raw.githubusercontent.com/scikit-image/scikit-image/v0.25.2/skimage/data/astronaut.png",
+  "license_source": "https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.astronaut",
+  "credit": "NASA photograph of Eileen Collins, supplied by scikit-image; documented as public domain, no known copyright restrictions.",
+  "sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+  "bytes": 791555,
+  "retrieved": "2026-11-22",
+  "fixture_sha256": "9079aecd0390a9ef593fb94b5b97b1b0d7c533679894e69c1395d8a5266809a0",
+  "speech_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+  "transformation": {
+    "portrait_crop_xyxy": [
+      139,
+      28,
+      310,
+      199
+    ],
+    "tile_size": [
+      110,
+      110
+    ],
+    "canvas_size": [
+      640,
+      360
+    ],
+    "tile_y": 40,
+    "tile_centers_x": [
+      65,
+      150,
+      235,
+      320,
+      405,
+      490,
+      575
+    ],
+    "video_frames": 104,
+    "video_fps": 25,
+    "encoder": "libx264 preset=medium crf=18",
+    "audio": "original synthetic speech fixture, packet copied"
+  },
+  "purpose": "Real face presence for camera-contract tests; one portrait is repeated. It is not speaker identity, active-speaker accuracy, ASR or editorial acceptance evidence.",
+  "face_observation": {
+    "sample_interval_ms": 200,
+    "samples_count": 21,
+    "face_detected_frames_count": 21,
+    "face_detected_share": 1.0,
+    "median_face_height_share": 0.1778,
+    "median_y_center_share": 0.2639,
+    "first_frame_face_share": 0.1778,
+    "speaking_samples_count": 0,
+    "speaking_face_frames_count": 0,
+    "speaking_face_share": 1.0
+  },
+  "ffmpeg": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+  "built_on": "HawaPC01, Windows 11, CPython 3.12.10, OpenCV 4.12.0",
+  "base_revision": "55f4d5921beb012c2dd0eacd22fffa513dcadbec"
+}

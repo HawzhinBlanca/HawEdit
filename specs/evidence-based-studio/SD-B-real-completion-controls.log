@@ -1,0 +1,266 @@
+EE                                                                       [100%]
+=================================== ERRORS ====================================
+_________ ERROR at setup of test_the_full_run_reaches_a_rendered_clip _________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x00000215115F4320>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073'), _retention_count=3, _retention_policy='all')
+review_tools = Tools(key=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073/candidate-review-tools0/private...00\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE')
+
+    @pytest.fixture(scope="module")
+    def full_run(
+        tmp_path_factory: pytest.TempPathFactory, review_tools: candidate_review_fixtures.Tools
+    ) -> PipelineRun:
+        """Real private generation, then actual signed/freshly measured test publication."""
+        if find_ffmpeg() is None:
+            pytest.skip("no ffmpeg � set HAWEDIT_FFMPEG")
+        work = tmp_path_factory.mktemp("pipeline") / "private"
+        source = private_test_source(work, FIXTURE)
+        run = run_pipeline(
+            source,
+            work,
+            media_id="fixture",
+            transcript=a_transcript(),
+            select_sentences=(0, 1),
+            qc=_test_qc(True),
+            verdict=a_verdict(100, 4_100),
+        )
+>       return signed_test_delivery(run, review_tools)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_pipeline.py:310: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\signed_pipeline_test_review.py:101: in signed_test_delivery
+    paths = promote_candidate(
+src\hawedit\delivery.py:807: in promote_candidate
+    return publish_reviewed_candidate(
+src\hawedit\candidate_publication.py:287: in publish_reviewed_candidate
+    _reconcile_packet(staged, candidate_id, source, ffmpeg, context, qc_record)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+staged = <hawedit.studio_private.PrivateDirectory object at 0x000002154E04ED20>
+candidate_id = 'fixture-s0-1'
+source = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073/pipeline0/private/source.mp4')
+ffmpeg = WindowsPath('C:/Users/Wareen/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1.1-full_build/bin/ffmpeg.EXE')
+context = ApprovalContext(packet_dir=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073/pipeline0/priv..., 'silence_threshold_ms': 0, 'two_person_split': 'auto'}}, ssh_keygen='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE')
+qc_record = QcRecord(reviewer='editor-test', reviewed_at='2026-10-03T10:19:39Z', mp4_sha256='f4c4ba3c8bb540762eaa182cecb319e52267c...=4.162, verdict='approved', notes='Test cryptographic/measured-media mechanics only; not native editorial acceptance.')
+
+    def _reconcile_packet(
+        staged: PrivateDirectory,
+        candidate_id: str,
+        source: Path,
+        ffmpeg: Path,
+        context: ApprovalContext,
+        qc_record: QcRecord | None,
+    ) -> None:
+        clip_doc = _json(_read(staged, f"{candidate_id}.json", limit=4 * 1024 * 1024))
+        clip = Clip.from_dict(clip_doc)
+        clip.assert_renderable()
+        if clip.qc is None or clip.qc.flags:
+            raise DeliveryRefused("unresolved_qc_flags", "resolved QC flags", "unresolved")
+        manifest = _json(_read(staged, "review.json"))
+        if qc_record is not None and _canonical(qc_record.to_dict()) != _canonical(
+            manifest["reviewer_claims"]
+        ):
+            raise DeliveryRefused("qc_claims_mismatch", "exact signed reviewer claims", "changed")
+        plan_doc = _json(_read(staged, f"{candidate_id}.edit_plan.json", limit=4 * 1024 * 1024))
+        plan = VisualEditPlan.from_dict(plan_doc)
+        if _canonical(plan_doc) != _canonical(plan.to_dict()):
+            raise DeliveryRefused("edit_plan_schema", "exact typed current plan", "changed schema")
+        if (
+            plan.version != 1
+            or plan.clip_id != candidate_id
+            or plan.media_id != clip.media_id
+            or plan.media_sha256 != clip.media_sha256
+            or plan.time_mapping.clip_in_ms != clip.in_ms
+            or plan.time_mapping.clip_out_ms != clip.out_ms
+            or clip.output is None
+            or plan.config.caption_style.value != clip.output.caption_style
+            or context.effective_configuration.get("edit") != plan.config.to_dict()
+        ):
+            raise DeliveryRefused("edit_plan_binding", "signed source/configuration/clock", "changed")
+        plan.config.assert_valid()
+        policy = context.effective_configuration.get("delivery")
+        if (
+            not isinstance(policy, dict)
+            or set(policy) != {"fps", "captions_burned_in", "ffmpeg_sha256", "ffprobe_sha256"}
+            or type(policy["fps"]) not in (int, float)
+            or type(policy["captions_burned_in"]) is not bool
+        ):
+            raise DeliveryRefused(
+                "delivery_policy_required", "typed bound production policy", "missing"
+            )
+        if (
+            policy["fps"] != plan.config.fps
+            or policy["captions_burned_in"] is not True
+            or policy["ffmpeg_sha256"] != _tool_digest(ffmpeg)
+            or policy["ffprobe_sha256"] != _tool_digest(ffprobe_for(ffmpeg))
+        ):
+            raise DeliveryRefused(
+                "delivery_policy_binding", "recorded media toolchain and policy", "changed"
+            )
+        # Face presence/diarization labels are not evidence of a labelled speaker's identity.
+        if clip.output.crop_target == "speaker_face":
+            raise DeliveryRefused(
+                "labelled_speaker_evidence_required", "labelled speaker association", "unavailable"
+            )
+        video, _audio, _file = probe_container(source, ffprobe_for(ffmpeg))
+        if clip.out_ms > video.duration_ms or clip.in_ms < 0:
+>           raise DeliveryRefused("source_clock_out_of_bounds", video.duration_ms, clip.out_ms)
+E           hawedit.delivery.DeliveryRefused: source_clock_out_of_bounds: expected 4120, measured 4162
+
+src\hawedit\candidate_publication.py:190: DeliveryRefused
+----------------------------- Captured log setup ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+_ ERROR at setup of test_a_run_where_every_stage_produced_something_is_complete _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x00000215115F4320>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073'), _retention_count=3, _retention_policy='all')
+review_tools = Tools(key=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073/candidate-review-tools0/private...00\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE')
+
+    @pytest.fixture(scope="module")
+    def whole_run(
+        tmp_path_factory: pytest.TempPathFactory, review_tools: candidate_review_fixtures.Tools
+    ) -> PipelineRun:
+        """A run where **every** �3 stage produced something � the first in this suite.
+    
+        `complete` is what the CLI's exit code derives from (`return 0 if run.complete else 1`), and
+        three of its eleven conjuncts were revertible: `not self.skipped()`,
+        `bool(self.visual_windows)` and `bool(self.candidates)` could each become `True` with the
+        whole suite green. Measured, the reason is that **nothing ever reached the True branch** �
+        even `full_run` is incomplete, missing `candidates` and carrying `visual_index` and
+        `discovery` skips, so no test could tell a conjunct from a no-op.
+    
+        Built through the real `run_pipeline` rather than by fabricating dataclasses, so it cannot
+        drift from the product it describes.
+        """
+        if find_ffmpeg() is None:
+            pytest.skip("no ffmpeg � set HAWEDIT_FFMPEG")
+        from hawedit.clip import DiscoveryPath
+        from hawedit.discovery import Candidate
+        from hawedit.visual_pipeline import VisualDiscoveryResult
+    
+        class Composer:
+            def discover(
+                self,
+                source: Path,
+                windows: Sequence[Any],
+                query: str,
+                work_dir: Path,
+                *,
+                media_id: str,
+                ffmpeg: Path | None = None,
+            ) -> VisualDiscoveryResult:
+                return VisualDiscoveryResult(media_id, query, len(windows), len(windows), (), ())
+    
+        class Judge:
+            model_id = "gemini-2.5-pro"
+    
+            def judge(self, request: JudgeRequest) -> JudgeVerdict:
+                return replace(
+                    a_verdict(request.clip_in_ms, request.clip_out_ms),
+                    candidate_id=request.candidate_id,
+                )
+    
+        work = tmp_path_factory.mktemp("whole") / "private"
+        source = private_test_source(work, FIXTURE)
+        run = run_pipeline(
+            source,
+            work,
+            media_id="whole",
+            transcript=a_transcript("whole"),
+            diarizer=_MeasuredDiarizer(),
+            select_sentences=(0, 1),
+            qc=_test_qc(True),
+            discover=lambda _n: [Candidate("best", "whole", 100, 4_100, DiscoveryPath.VERBAL, 1, 0.9)],
+            visual_composer=Composer(),  # type: ignore[arg-type]
+            judge=Judge(),
+            visual_query="\u06af\u0631\u0646\u06af",
+        )
+>       return signed_test_delivery(run, review_tools)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_pipeline.py:2988: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\signed_pipeline_test_review.py:101: in signed_test_delivery
+    paths = promote_candidate(
+src\hawedit\delivery.py:807: in promote_candidate
+    return publish_reviewed_candidate(
+src\hawedit\candidate_publication.py:287: in publish_reviewed_candidate
+    _reconcile_packet(staged, candidate_id, source, ffmpeg, context, qc_record)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+staged = <hawedit.studio_private.PrivateDirectory object at 0x00000215500EE6F0>
+candidate_id = 'whole-s0-1'
+source = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073/whole0/private/source.mp4')
+ffmpeg = WindowsPath('C:/Users/Wareen/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1.1-full_build/bin/ffmpeg.EXE')
+context = ApprovalContext(packet_dir=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7073/whole0/private..., 'silence_threshold_ms': 0, 'two_person_split': 'auto'}}, ssh_keygen='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE')
+qc_record = QcRecord(reviewer='editor-test', reviewed_at='2026-10-03T10:19:47Z', mp4_sha256='f4c4ba3c8bb540762eaa182cecb319e52267c...=4.162, verdict='approved', notes='Test cryptographic/measured-media mechanics only; not native editorial acceptance.')
+
+    def _reconcile_packet(
+        staged: PrivateDirectory,
+        candidate_id: str,
+        source: Path,
+        ffmpeg: Path,
+        context: ApprovalContext,
+        qc_record: QcRecord | None,
+    ) -> None:
+        clip_doc = _json(_read(staged, f"{candidate_id}.json", limit=4 * 1024 * 1024))
+        clip = Clip.from_dict(clip_doc)
+        clip.assert_renderable()
+        if clip.qc is None or clip.qc.flags:
+            raise DeliveryRefused("unresolved_qc_flags", "resolved QC flags", "unresolved")
+        manifest = _json(_read(staged, "review.json"))
+        if qc_record is not None and _canonical(qc_record.to_dict()) != _canonical(
+            manifest["reviewer_claims"]
+        ):
+            raise DeliveryRefused("qc_claims_mismatch", "exact signed reviewer claims", "changed")
+        plan_doc = _json(_read(staged, f"{candidate_id}.edit_plan.json", limit=4 * 1024 * 1024))
+        plan = VisualEditPlan.from_dict(plan_doc)
+        if _canonical(plan_doc) != _canonical(plan.to_dict()):
+            raise DeliveryRefused("edit_plan_schema", "exact typed current plan", "changed schema")
+        if (
+            plan.version != 1
+            or plan.clip_id != candidate_id
+            or plan.media_id != clip.media_id
+            or plan.media_sha256 != clip.media_sha256
+            or plan.time_mapping.clip_in_ms != clip.in_ms
+            or plan.time_mapping.clip_out_ms != clip.out_ms
+            or clip.output is None
+            or plan.config.caption_style.value != clip.output.caption_style
+            or context.effective_configuration.get("edit") != plan.config.to_dict()
+        ):
+            raise DeliveryRefused("edit_plan_binding", "signed source/configuration/clock", "changed")
+        plan.config.assert_valid()
+        policy = context.effective_configuration.get("delivery")
+        if (
+            not isinstance(policy, dict)
+            or set(policy) != {"fps", "captions_burned_in", "ffmpeg_sha256", "ffprobe_sha256"}
+            or type(policy["fps"]) not in (int, float)
+            or type(policy["captions_burned_in"]) is not bool
+        ):
+            raise DeliveryRefused(
+                "delivery_policy_required", "typed bound production policy", "missing"
+            )
+        if (
+            policy["fps"] != plan.config.fps
+            or policy["captions_burned_in"] is not True
+            or policy["ffmpeg_sha256"] != _tool_digest(ffmpeg)
+            or policy["ffprobe_sha256"] != _tool_digest(ffprobe_for(ffmpeg))
+        ):
+            raise DeliveryRefused(
+                "delivery_policy_binding", "recorded media toolchain and policy", "changed"
+            )
+        # Face presence/diarization labels are not evidence of a labelled speaker's identity.
+        if clip.output.crop_target == "speaker_face":
+            raise DeliveryRefused(
+                "labelled_speaker_evidence_required", "labelled speaker association", "unavailable"
+            )
+        video, _audio, _file = probe_container(source, ffprobe_for(ffmpeg))
+        if clip.out_ms > video.duration_ms or clip.in_ms < 0:
+>           raise DeliveryRefused("source_clock_out_of_bounds", video.duration_ms, clip.out_ms)
+E           hawedit.delivery.DeliveryRefused: source_clock_out_of_bounds: expected 4120, measured 4162
+
+src\hawedit\candidate_publication.py:190: DeliveryRefused
+----------------------------- Captured log setup ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+=========================== short test summary info ===========================
+ERROR tests/test_pipeline.py::test_the_full_run_reaches_a_rendered_clip - haw...
+ERROR tests/test_pipeline.py::test_a_run_where_every_stage_produced_something_is_complete

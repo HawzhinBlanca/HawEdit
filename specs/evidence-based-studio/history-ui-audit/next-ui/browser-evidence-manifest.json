@@ -1,0 +1,234 @@
+{
+  "schema": 1,
+  "status": "unaccepted-bounded-native-browser-evidence",
+  "observed_at_utc": "2026-10-02T19:37:45.7282539Z",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "66a377dabc4c08b265994e85ab18d66d8a89f90553e7a90cdec0f19ff8ebbd39",
+  "browser": "Codex in-app browser",
+  "browser_id": 2,
+  "temporary_tab_ids": [
+    5,
+    6
+  ],
+  "engine_version": "Not exposed by documented inventory; not claimed",
+  "audit_server_logs": [
+    "../../T5-ui-server-final.log",
+    "../../T5-ui-upload-loss-server.log"
+  ],
+  "final_source_capture_prefixes": [
+    "05-",
+    "06-",
+    "07-",
+    "08-",
+    "09-",
+    "10-"
+  ],
+  "limitations": [
+    "Fixtures only, no producer or publication",
+    "Intermediate 01-04 captures are not final-source acceptance",
+    "No full AA/NVDA/zoom acceptance",
+    "Structural pytest cases do not execute JavaScript",
+    "Real bounded acknowledgement-loss check is not an automated CI reliability corpus",
+    "Audit server children stopped after exact identity verification, tabs closed, viewport reset"
+  ],
+  "files": [
+    {
+      "name": "01-before-desktop.jpg",
+      "bytes": 51558,
+      "written_at_utc": "2026-10-02T18:40:22.7860759Z",
+      "sha256": "179a8bb8278bd8996703f0d3a52a403b6d5f7d495fcf3f2247cca13f5b491dbc"
+    },
+    {
+      "name": "02-after-desktop.jpg",
+      "bytes": 49712,
+      "written_at_utc": "2026-10-02T18:51:02.8252447Z",
+      "sha256": "2566d3893c12ef63b224f464408869cd188e1749fee8f174c6c39463c1b837e5"
+    },
+    {
+      "name": "03-private-preview.jpg",
+      "bytes": 55231,
+      "written_at_utc": "2026-10-02T18:51:47.1723875Z",
+      "sha256": "3aa7d7b476754314ab2206792b7907da04ca7d1dead752341103918beac4a48e"
+    },
+    {
+      "name": "04-restart-recovery.jpg",
+      "bytes": 68188,
+      "written_at_utc": "2026-10-02T18:55:56.8686556Z",
+      "sha256": "eb853cd16f97b0df24b9740f549482ee24646c8dce1728644ec21186c3df704a"
+    },
+    {
+      "name": "05-layout-1280.jpg",
+      "bytes": 82858,
+      "written_at_utc": "2026-10-02T19:00:32.0517489Z",
+      "sha256": "08f371eaa56589db96dfba5a9d18e1765d02c6f9943bc0a10031c246aaadc322"
+    },
+    {
+      "name": "05-layout-1440.jpg",
+      "bytes": 82995,
+      "written_at_utc": "2026-10-02T19:00:32.1932017Z",
+      "sha256": "47f69d35581e1246463900e1e5b9b12705b528d099dd84682f7c0c4ee8fb5740"
+    },
+    {
+      "name": "05-layout-320.jpg",
+      "bytes": 38352,
+      "written_at_utc": "2026-10-02T19:00:31.6127197Z",
+      "sha256": "ebd1e0f8511e2856471c7aeb4fa04a4907110e8826cc75cd78569fddad95decd"
+    },
+    {
+      "name": "05-layout-390.jpg",
+      "bytes": 43436,
+      "written_at_utc": "2026-10-02T19:00:31.7666498Z",
+      "sha256": "035d464fd2a3a5402995bd1e83a89dcec25e353cc4efec9c9f8c70e3100fdbec"
+    },
+    {
+      "name": "05-layout-768.jpg",
+      "bytes": 58748,
+      "written_at_utc": "2026-10-02T19:00:31.9050857Z",
+      "sha256": "813f81a54efc40248dcb6137940578453bd7bf995086748aca09bc59fbe88a74"
+    },
+    {
+      "name": "06-mobile-settings.jpg",
+      "bytes": 31785,
+      "written_at_utc": "2026-10-02T19:01:38.0416315Z",
+      "sha256": "6cec10b8c969a4ec8a0081db4fefe0819a7f8e3ff58cb95c0e056eb957483efb"
+    },
+    {
+      "name": "07-damaged-preview-refused.jpg",
+      "bytes": 32908,
+      "written_at_utc": "2026-10-02T19:03:27.0084484Z",
+      "sha256": "34adfe5451e35b69d3294c30d4e48d3d7babb4778706684a6e67957637746e74"
+    },
+    {
+      "name": "08-invalid-source-refused.jpg",
+      "bytes": 30882,
+      "written_at_utc": "2026-10-02T19:04:19.3773856Z",
+      "sha256": "f444b750d60e9171f76402694ef67e7a2db96c4114e293abb60a941bacc32ac2"
+    },
+    {
+      "name": "09-upload-acknowledgement-lost.jpg",
+      "bytes": 67997,
+      "written_at_utc": "2026-10-02T19:20:14.2199334Z",
+      "sha256": "54884b2ace653cb22bcaddc8dce4938830ef68d113f1f9edab9b15ff6b583ada"
+    },
+    {
+      "name": "10-upload-recovered.jpg",
+      "bytes": 68053,
+      "written_at_utc": "2026-10-02T19:20:42.0639565Z",
+      "sha256": "527373306bd06564ce4d9bf064e674201973a4aa2bb627291b58d9c9f29e3769"
+    },
+    {
+      "name": "current-source-reload-recovery.json",
+      "bytes": 276,
+      "written_at_utc": "2026-10-02T19:10:19.2464853Z",
+      "sha256": "6bd51ea9cee12deadc8c9a1a9b5b7789fa811f45ac6bd5b0301c62aca159135c"
+    },
+    {
+      "name": "host-inventory.json",
+      "bytes": 1119,
+      "written_at_utc": "2026-10-02T19:29:18.2762718Z",
+      "sha256": "c8f0d3313b3be7b26b49a3e83f3697328a0696c9b291873ed86079b8b1f29405"
+    },
+    {
+      "name": "interrupted-job-observation.json",
+      "bytes": 331,
+      "written_at_utc": "2026-10-02T19:03:43.0317402Z",
+      "sha256": "8a7e58d8a7be59cf76091eadcdc39bde0fe6546cbb4c6b89fd11c50b7ac835c1"
+    },
+    {
+      "name": "invalid-upload-observation.json",
+      "bytes": 174,
+      "written_at_utc": "2026-10-02T19:04:19.3486593Z",
+      "sha256": "5478ce6571691dc04fd7f108bdb1da08b4e188e5ec269f871f52d91ae1f19e87"
+    },
+    {
+      "name": "keyboard-collapsed-sequence.json",
+      "bytes": 865,
+      "written_at_utc": "2026-10-02T19:10:03.9865270Z",
+      "sha256": "84935d9e78842022ec4f57016006068dde69d69d7fa32ac97d7498001f71ee6a"
+    },
+    {
+      "name": "keyboard-settings-observation.json",
+      "bytes": 225,
+      "written_at_utc": "2026-10-02T19:01:38.0170230Z",
+      "sha256": "5244cbf80744926ab87b54c0e23823d42d7684fc5ebdc106e7dcf924eb3a5ada"
+    },
+    {
+      "name": "layout-observations.json",
+      "bytes": 985,
+      "written_at_utc": "2026-10-02T19:00:32.1942152Z",
+      "sha256": "ff244f975fc30413811bb22947af2f9968decd90a759b871c97eae566c3f5087"
+    },
+    {
+      "name": "native-upload-evidence.json",
+      "bytes": 1258,
+      "written_at_utc": "2026-10-02T19:05:52.1939289Z",
+      "sha256": "785d8e97ebe7d15c94bbad10ce7ed99da5d7ebefba9ee2baaba63e5792d1a4fb"
+    },
+    {
+      "name": "native-upload-loss-evidence.json",
+      "bytes": 1203,
+      "written_at_utc": "2026-10-02T19:21:20.4280039Z",
+      "sha256": "db2b6cd8d765768f678f4358ba8ea6a18abdaf8739c0e24bca30accaa742dc53"
+    },
+    {
+      "name": "notes.md",
+      "bytes": 10223,
+      "written_at_utc": "2026-10-02T19:37:26.0571751Z",
+      "sha256": "f538b0b49071465860ca039f860f0d04477ff0fc9b87327a7e4a9d1fe434a3bf"
+    },
+    {
+      "name": "preview-recovery-observation.json",
+      "bytes": 143,
+      "written_at_utc": "2026-10-02T19:03:42.9405707Z",
+      "sha256": "ad63f8d137984261bf1fd6d91384a9539540faeb838883f5d03716212f97fe4d"
+    },
+    {
+      "name": "preview-refusal-observation.json",
+      "bytes": 221,
+      "written_at_utc": "2026-10-02T19:03:26.9681133Z",
+      "sha256": "ebd17dcfb1c9a0e45824801610cc8e5e83f308b16e92bed3e96f832b243e0e3f"
+    },
+    {
+      "name": "private-download-path.json",
+      "bytes": 57,
+      "written_at_utc": "2026-10-02T19:02:49.2294532Z",
+      "sha256": "0a00989ed854c301fc7ad5127f6c1647182224bc41759063036e4e10edc8b053"
+    },
+    {
+      "name": "second-upload-observation.json",
+      "bytes": 227,
+      "written_at_utc": "2026-10-02T19:05:36.3841847Z",
+      "sha256": "d271bc933a50aacae784f43b55a9daa7f66022cc8e33b5b48ed33e8ad881d468"
+    },
+    {
+      "name": "seek-observation.json",
+      "bytes": 190,
+      "written_at_utc": "2026-10-02T19:02:35.6180653Z",
+      "sha256": "568f5abf36b4cb9d52540ab1f11a03e9226e137d049061e529b459e463bcfcd5"
+    },
+    {
+      "name": "upload-ack-loss-observation.json",
+      "bytes": 340,
+      "written_at_utc": "2026-10-02T19:20:14.1239473Z",
+      "sha256": "69b38533f07378254c69db0f9736aa89713f81b41c5598886a37264826147052"
+    },
+    {
+      "name": "upload-ack-loss-recovered.json",
+      "bytes": 280,
+      "written_at_utc": "2026-10-02T19:20:36.0866250Z",
+      "sha256": "dcf5ec3212fbbd9d975544163c01a4ee073d7514b83356d20e378c7de5524897"
+    },
+    {
+      "name": "upload-ack-loss-reload.json",
+      "bytes": 134,
+      "written_at_utc": "2026-10-02T19:20:42.0150151Z",
+      "sha256": "16a49d6ae020a7936959cc0657ff4d056f0929436e4987fa0a03a15a2a51ee7f"
+    },
+    {
+      "name": "zoom-attempt.json",
+      "bytes": 233,
+      "written_at_utc": "2026-10-02T19:06:02.0882320Z",
+      "sha256": "4718c0a01596040d6bd8e9417744fd22bd9629c711435acc7536f933f7fc8c1b"
+    }
+  ]
+}

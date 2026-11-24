@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-02T21:21:10.5923558Z",
+  "scope": "Post-gate documentation and named claim checks, not a new full-gate or CI pass",
+  "source_package_sha256": "6bde42cba644a4510bbdb1bdd28596dba7cece5c328612c6dcbcb0e3d7f0b2cb",
+  "passed": 67,
+  "bad": 0,
+  "seconds": "10.754",
+  "file_sha256": {
+    "README.md": "938e4b64511b755e4c136f59da2088dc83388f1d41d051d9b1147507beef32e5",
+    "PROGRESS.md": "90d636593e3ed9b02c1e93e216c1e01d0e9a54b6cf02eaf941c121b00e2e95bb",
+    "DECISIONS.md": "34e5267e89fee537093f511c828788300a1bf9008bbee6c65ce0fb661f049715",
+    "specs/evidence-based-studio/readiness.md": "dd965266088cc22227c3536c2b80a7bd14b71e8c310dd3d60ce4a99fbb2a6779",
+    "specs/evidence-based-studio/security-review-packet.md": "3b5fa8431de841781d2f35b4ceaacaa6f732018dd7eb1f17a89bab0a1278c8b7",
+    "specs/evidence-based-studio/tasks.md": "46bf02d519bb24e618d65603cb44a71c88d4fd391e4d92982c45607ebf5b474a",
+    "specs/evidence-based-studio/spec.md": "3f3029f7061f45cd96cd09ed8f6dfdc5fd5678cdbca2715fc932df5b0b7b8fa1",
+    "specs/evidence-based-studio/plan.md": "8adfc7286a56e407019ee48401152e35c5bc59ea4b2cc04fedb63c1f184e9a20",
+    "specs/evidence-based-studio/impact-map.md": "c25661f74c69136b95f238d0669c55641bfc87e2f90a3437686429fb1ebc8c58",
+    "specs/evidence-based-studio/T3-storage-post-doc-junit.xml": "350ddde1a77438df2d8d8fd9f2a6b6b31738fbc524b7269c437fba9e16272e88",
+    "specs/evidence-based-studio/T3-storage-post-doc.log": "e15e1ea00cc99972a8dd72a70f32d5d0d5834ff793fa24b1c8ee31182eae87df"
+  }
+}

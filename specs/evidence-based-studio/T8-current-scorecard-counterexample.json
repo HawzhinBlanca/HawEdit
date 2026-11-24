@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "status": "synthetic-counterexample-not-evaluation",
+  "python": "3.12.10",
+  "source_package_sha256": "6bde42cba644a4510bbdb1bdd28596dba7cece5c328612c6dcbcb0e3d7f0b2cb",
+  "unsupported_claim_refused": false,
+  "refusal_reason": null,
+  "first_pass_rate": 0.8,
+  "first_pass_ci_lower": 0.7391448134346212,
+  "first_pass_ci_upper": 0.8495479907390189,
+  "accounting_property_reports_release_eligible": true,
+  "synthetic_visual_relevance": 0.2,
+  "total_episodes": 20,
+  "total_proposed": 200,
+  "malformed_provenance": true,
+  "signatures_or_human_review": false,
+  "provider_calls": 0,
+  "limitations": [
+    "diagnostic only",
+    "not a 10/10 verdict",
+    "no real holdout or CI acceptance"
+  ]
+}

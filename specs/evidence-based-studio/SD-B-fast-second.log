@@ -1,0 +1,8 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\artifact_bundle.py:99: error: Module has no attribute "geteuid"; maybe "getpid"?  [attr-defined]
+src\hawedit\artifact_bundle.py:103: error: Module has no attribute "fchmod"; maybe "chmod"?  [attr-defined]
+tests\test_delivery.py:1250: error: Name "publication_fixtures.review_fixtures.ReviewCase" is not defined  [name-defined]
+tests\test_delivery.py:1292: error: Name "publication_fixtures.review_fixtures.ReviewCase" is not defined  [name-defined]
+Found 4 errors in 2 files (checked 303 source files)

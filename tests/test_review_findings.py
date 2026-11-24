@@ -35,6 +35,7 @@ import pytest
 from hawedit.boundary import Boundary, BoundaryInvariantViolated, assert_boundary_invariant
 from hawedit.credentials import GEMINI_API_KEY, CredentialError, write_credential
 from hawedit.gate import NoTestEvidence, check_test_evidence, write_floor
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from test_credentials import assert_owner_only
 
 # --- BLOCKER: invariant #2's universal gate used plain truthiness -------------------------
@@ -600,7 +601,7 @@ def test_a_persisted_verdict_cannot_smuggle_a_string_boolean() -> None:
         "title_ckb": "ڕۆژنامەوانی کوردی",
         "description_ckb": "بابەتێکی گرنگ",
         "hashtags_ckb": ["#کوردی"],
-        "judge": "gemini-2.5-pro",
+        "judge": KURDISH_EDITORIAL_JUDGE,
         "clip_in_ms": 0,
         "clip_out_ms": 1_000,
         "sv6d": None,
@@ -668,7 +669,7 @@ def test_narrative_role_is_one_of_the_four_the_prompt_asks_for() -> None:
             title_ckb="ڕۆژنامەوانی کوردی",
             description_ckb="بابەتێکی گرنگ",
             hashtags_ckb=("#کوردی",),
-            judge="gemini-2.5-pro",
+            judge=KURDISH_EDITORIAL_JUDGE,
             clip_in_ms=0,
             clip_out_ms=1_000,
         )

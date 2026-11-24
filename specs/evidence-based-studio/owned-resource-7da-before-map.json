@@ -1,0 +1,26 @@
+[
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "OwnedStudioRuntime/__init__",
+    "definition": "[{\"name_path\": \"OwnedStudioRuntime/__init__\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 327, \"end_line\": 352}}]",
+    "references": "[]"
+  },
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "OwnedStudioRuntime/_verify_owner",
+    "definition": "[{\"name_path\": \"OwnedStudioRuntime/_verify_owner\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 408, \"end_line\": 500}}]",
+    "references": "[{\"name_path\": \"OwnedStudioRuntime/launch\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 502, \"end_line\": 563}, \"content_around_reference\": \"... 517:                self._lease,\\n  > 518:                owner_check=self._verify_owner,\\n... 519:            )\"}, {\"name_path\": \"OwnedStudioRuntime/launch\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 502, \"end_line\": 563}, \"content_around_reference\": \"... 554:            DBOS.listen_queues([STUDIO_QUEUE_NAME])\\n  > 555:            self._verify_owner()\\n... 556:            DBOS.launch()\"}, {\"name_path\": \"OwnedStudioRuntime/launch\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 502, \"end_line\": 563}, \"content_around_reference\": \"... 556:            DBOS.launch()\\n  > 557:            self._verify_owner()\\n... 558:            self._owned_engine.verify()\"}, {\"name_path\": \"OwnedStudioRuntime/verify\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 565, \"end_line\": 569}, \"content_around_reference\": \"... 567:            raise StudioStorageError(\\\"Owned studio runtime is not accepting work\\\")\\n  > 568:        self._verify_owner()\\n... 569:        self._owned_engine.verify()\"}, {\"name_path\": \"OwnedStudioRuntime/close\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 571, \"end_line\": 636}, \"content_around_reference\": \"... 615:        if instance is not None:\\n  > 616:            self._verify_owner()\\n... 617:            DBOS.destroy()\"}]"
+  },
+  {
+    "path": "src/hawedit/studio_runtime.py",
+    "symbol": "OwnedStudioRuntime/close",
+    "definition": "[{\"name_path\": \"OwnedStudioRuntime/close\", \"kind\": \"Method\", \"relative_path\": \"src/hawedit/studio_runtime.py\", \"body_location\": {\"start_line\": 571, \"end_line\": 636}}]",
+    "references": "[{\"name_path\": \"OwnedStudioRuntime/launch\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\studio_runtime.py\", \"body_location\": {\"start_line\": 502, \"end_line\": 563}, \"content_around_reference\": \"... 560:        except BaseException:\\n  > 561:            self.close(timeout_seconds=5.0)\\n... 562:            self._state = \\\"refused\\\"\"}]"
+  },
+  {
+    "path": "tests/test_studio_runtime.py",
+    "symbol": "_RUNTIME",
+    "definition": "[{\"name_path\": \"_RUNTIME\", \"kind\": \"Constant\", \"relative_path\": \"tests/test_studio_runtime.py\", \"body_location\": {\"start_line\": 95, \"end_line\": 95}}]",
+    "references": "[{\"name_path\": \"_run\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_runtime.py\", \"body_location\": {\"start_line\": 314, \"end_line\": 324}, \"content_around_reference\": \"... 315:    process = subprocess.run(\\n  > 316:        [sys.executable, \\\"-c\\\", _RUNTIME, str(root), mode, job_id, *extra],\\n... 317:        capture_output=True,\"}, {\"name_path\": \"test_owned_runtime_recovers_actual_pending_job_after_process_exit\", \"kind\": \"Function\", \"relative_path\": \"tests\\\\test_studio_runtime.py\", \"body_location\": {\"start_line\": 571, \"end_line\": 590}, \"content_around_reference\": \"... 575:    crashed = subprocess.run(\\n  > 576:        [sys.executable, \\\"-c\\\", _RUNTIME, str(storage.root), \\\"crash\\\", job_id],\\n... 577:        capture_output=True,\"}]"
+  }
+]

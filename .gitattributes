@@ -24,3 +24,10 @@ scripts/test-count.floor text eol=lf
 *.ttf binary
 *.wav binary
 *.mp4 binary
+
+# Native diagnostic hashes bind raw tool output, including failure whitespace/newlines.
+# Keep text diffs visible but never normalize these recorded evidence bytes.
+specs/evidence-based-studio/execution-authority-*.log -text
+specs/evidence-based-studio/execution-authority-*.xml -text
+specs/evidence-based-studio/execution-authority-before-map.json -text
+specs/evidence-based-studio/execution-authority-native-mechanics.json -text

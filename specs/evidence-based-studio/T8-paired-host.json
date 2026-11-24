@@ -1,0 +1,54 @@
+{
+  "observed_at_utc": "2026-10-02T21:41:18.9462467Z",
+  "runtime": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "C:\\Users\\Wareen\\Desktop\\HawEdit\\.venv\\Scripts\\python.exe",
+    "sqlite": "3.49.1",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "packages": {
+      "dbos": "2.29.0",
+      "pytest": "9.1.1",
+      "ruff": "0.9.6",
+      "mypy": "1.15.0"
+    },
+    "ffmpeg": "C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffmpeg.EXE",
+    "ffprobe": "C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffprobe.EXE"
+  },
+  "media_executables": {
+    "ffmpeg": {
+      "version": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+      "sha256": "09948d4cdd0650da6ff5a87577469f2a218dc2615ae379f8f734d24c49de0f73",
+      "path": "C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffmpeg.EXE"
+    },
+    "ffprobe": {
+      "version": "ffprobe version 8.1.1-full_build-www.gyan.dev Copyright (c) 2007-2026 the FFmpeg developers",
+      "sha256": "a6618e99bb58869ded3c6f37b53aa1a8d701c3591dbb7b5b317d47369c112be2",
+      "path": "C:\\Users\\Wareen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-full_build\\bin\\ffprobe.EXE"
+    }
+  },
+  "cpu": [
+    {
+      "Name": "AMD Ryzen Threadripper 3990X 64-Core Processor ",
+      "NumberOfCores": 64,
+      "NumberOfLogicalProcessors": 128
+    }
+  ],
+  "gpu": [
+    {
+      "Name": "NVIDIA GeForce RTX 3090 Ti",
+      "DriverVersion": "32.0.16.1088"
+    },
+    {
+      "Name": "NVIDIA GeForce RTX 3090 Ti",
+      "DriverVersion": "32.0.16.1088"
+    }
+  ],
+  "host": {
+    "Name": "HAWAPC01",
+    "TotalPhysicalMemory": 274741166080
+  },
+  "operating_system": {
+    "Caption": "Microsoft Windows 11 Pro",
+    "Version": "10.0.26200"
+  }
+}

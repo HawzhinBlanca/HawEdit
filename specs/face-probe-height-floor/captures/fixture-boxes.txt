@@ -1,0 +1,35 @@
+speaker-ambiguous-s0-0.mp4
+  t=0.0s 1080x1920: none
+  t=0.2s 1080x1920: none
+  t=0.4s 1080x1920: frontal h=58px h_share=0.0302 y_centre=0.7833 x_centre=0.3648
+  t=0.6s 1080x1920: frontal h=58px h_share=0.0302 y_centre=0.7833 x_centre=0.3648
+  t=0.8s 1080x1920: frontal h=58px h_share=0.0302 y_centre=0.7833 x_centre=0.3648
+  t=1.0s 1080x1920: frontal h=58px h_share=0.0302 y_centre=0.7833 x_centre=0.3648
+  t=1.2s 1080x1920: frontal h=58px h_share=0.0302 y_centre=0.7833 x_centre=0.3648
+  t=1.4s 1080x1920: none
+  t=1.6s 1080x1920: none
+  t=1.8s 1080x1920: none
+  samples=10 with_box=5
+  box height share: min=0.0302 max=0.0302 n=5
+speaker-ambiguous-s0-0.mp4
+  t=0.0s 1080x1920: none
+  t=0.2s 1080x1920: frontal h=53px h_share=0.0276 y_centre=0.7836 x_centre=0.5245
+  t=0.4s 1080x1920: none
+  t=0.6s 1080x1920: none
+  t=0.8s 1080x1920: none
+  t=1.0s 1080x1920: none
+  t=1.2s 1080x1920: none
+  t=1.4s 1080x1920: none
+  t=1.6s 1080x1920: none
+  t=1.8s 1080x1920: none
+  samples=10 with_box=1
+  box height share: min=0.0276 max=0.0276 n=1
+kurdish-caption-fixture.png
+  frame 1080x1920: frontal h=53px h_share=0.0276 y_centre=0.7836 x_centre=0.6273
+  box height share: min=0.0276 max=0.0276 n=1
+kurdish-caption.png
+  frame 1080x1920: none
+kurdish-hook-card.png
+  frame 1080x1920: none
+kurdish-viral-karaoke.png
+  frame 1080x1920: none

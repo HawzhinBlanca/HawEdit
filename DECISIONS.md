@@ -14028,3 +14028,3449 @@ Furthermore, AC-19 establishes two core editorial and operational requirements:
      `.measured.json`, and `.cover.png`.
    - `reconcile_episode_manifest` validates bundle integrity, measured duration, and zero temporal
      collisions across delivered clips, succeeding cleanly on valid no-clip manifests.
+
+---
+
+## D-275 · Pluggable Two-Tier Candidate Screening Funnel with Fast System One Models
+
+**Date:** 2026-09-18 · **Blueprint ref:** §3 Stage 3/4 · **Type:** architectural optimization
+
+**Context.**
+In full episodes with dozens of candidate spans, judging more than 3 candidates with Gemini 2.5 Pro
+costs significant latency (30-60s) and billed tokens per run. `specs/judge-top-n/plan.md` noted:
+`Stage 3 ranks candidates by discovery score; Stage 4 judges rank #1 and the run lives or dies on
+that single sample ... N is a spend multiplier`.
+
+**Decision.**
+1. Implement `CandidateScreener` protocol in `src/hawedit/screener.py` defining fast, sub-second
+   pre-screening across all eligible candidate spans before Stage 4.
+2. Provide two screener backends:
+   - `GeminiFlashScreener` (default): Uses `gemini-2.5-flash-lite` with structured JSON schema
+     (`SCREENER_SCHEMA`) to score hook potential, payoff strength, self-containment, and misleading
+     risk across candidates in a single parallel call. Zero new external accounts or keys required.
+   - `JevScreener`: Optional accelerator using TypeSafe AI's System One decision model (`Choice`,
+     `Score`, `Noul` primitives) via `TYPESAFE_API_KEY`.
+3. In `src/hawedit/pipeline.py`, `--screener [none|gemini-flash|jev]` enables the funnel: eligible
+   candidates are evaluated and sorted by composite score before the top $N$ survivors are passed
+   to Stage 4 Gemini 2.5 Pro for rich Sorani Kurdish editorial copywriting.
+4. Fail-stop: If `JevScreener` is requested without `TYPESAFE_API_KEY`, raise `CredentialError`
+   immediately rather than silently degrading.
+
+## D-276 - Evidence-based local studio trust boundaries
+
+**Date:** 2026-10-02. **Blueprint:** §§2-5, §§8.1-8.3. **Approval:** Wareen's explicit
+implementation request for `specs/evidence-based-studio/plan.md`. Extends D-263/D-274;
+no change to canonical ASR, transcript/timing invariants or frozen benchmark policy.
+
+**Decision.** Keep Python/vanilla frontend, loopback and existing pinned DBOS 2.29.0/SQLite.
+Implement two-phase real-byte uploads with opaque generated storage names, 32 GiB default
+ceiling (local `HAWEDIT_UPLOAD_MAX_BYTES` override), disk reservations, exact lengths,
+bounded file-only supported-container probing/first-frame decoding, atomic finalization
+and digest-bound resolution. Original filenames are display metadata, not executable paths.
+Interrupted sources never become runnable. No new runtime dependency is introduced.
+
+Upload response-loss recovery uses guarded `GET /api/uploads/{id}`. A ready response verifies
+the committed source manifest against the original reservation and hashes the actual media.
+An interrupted final ticket write may be repaired only after those checks and successful
+atomic persistence. Old receiving tickets without committed media remain non-runnable.
+Active transfers are tracked within the single-server process, not as a cross-process lease.
+
+The studio generation request is schema 1 with source_id, client_token and a bounded options
+object. Raw server paths and unscoped media/model/QC references are refused by the web API;
+CLI path input is unchanged. Shared-parser argv preparation and report/event projections are
+separate from queue ownership and producer/spending authorization. An interim validated web
+request reports the unavailable durable runner without starting legacy daemon work. No report
+flag or measured private preview authenticates publication. Full queued execution and current
+runtime/model/governance bindings remain required before this intermediate unit is accepted.
+
+The studio request ledger is a versioned SQLite outbox, distinct from DBOS's system database.
+Commit token/content identity before enqueue and reconcile the same workflow ID after uncertain
+acknowledgement; these two databases are not claimed to share a transaction. Identity binds
+source/configuration, normalized immutable argv, registered worker and execution-binding digest.
+The protected worker must verify that binding; a stored digest alone is not readiness or owner
+authority. Keep dispatch acknowledgement separate from generation and authenticated publication.
+The pinned queue persists global/worker concurrency one and refuses conflicting existing policy,
+instead of silently overwriting it. Mechanism probes do not authorize or certify paid production.
+
+The approved remaining units use the shared parser/producer builder, content-bound durable
+queue identity and explicit private review states; render existence does not authorize a
+completed deliverable. Web approval must authenticate detached OpenSSH evidence bound to
+the exact media, sidecars, plan, source and effective configuration before invoking existing
+promotion/reconciliation. Parsed QcRecord fields alone are not authentication. Burned-in
+edits require new measured revisions, not metadata mutation. These remaining units are a
+contract, not a claim they are already implemented or accepted.
+
+**Evidence / limits.** Current source/caller research and task ledger are in
+`specs/evidence-based-studio/`. Old completion claims retain their original SHA. No current
+human study, CI acceptance, quality superiority or 10/10 claim follows from this ADR.
+Spending, licence acceptance, trusted reviewer configuration and release remain separately
+owner-gated; blockers #1/#3/#4/#21/#24/#25 are not waived.
+
+**Guarded producer transport extension (2026-10-02).** Add optional keyword-only
+judge_transport to the shared builder, forwarded to existing Developer API/Vertex clients.
+Private SQLite billed-call evidence binds each job, policy, bounded effective request and
+per-content occurrence. Reserve conservative input/output/thinking allocation atomically
+before generation; return a response only after immutable persistence. Retain uncertainty
+without automatic refunds/retries and keep K discovery passes distinct. Integer micro-USD
+reservations are policy-based upper allocations, not measured invoices or an account-wide
+provider guarantee. No frozen cost-table edit or new dependency. Trusted authorization,
+live route/cap semantics and runtime preflight remain separate before enabling the worker.
+
+**Private journal adoption (2026-10-02).** Make billed-call storage privacy mandatory,
+not a constructor label. Bind real root/database identity, refuse alias components and
+multiply linked/nonregular files, create only a missing leaf privately, and check actual
+WAL/SHM/rollback sidecars. Reuse protected native Windows ACL creation/checks; POSIX requires
+current owner and private modes. Refuse existing unsafe permissions/bytes without repairing
+or deleting them. Fence every SQLite opening/commit and all upstream requests/results,
+including direct token counting. Legitimate vanished sidecars do not justify recreating
+a lost main file; revalidate the bound root/main after inspection. Preserve committed
+uncertainty, original arithmetic and actual crash-recovery evidence. No new dependency,
+HTTP authentication, signed authorization, provider invoice, certified mount or enabled
+producer follows from these checks. Current-owner/SYSTEM/Administrators remain privileged;
+observed path substitution is detected, not all privileged races eliminated. Full protected
+studio storage and persisted supervisor authority/recovery remain required before adoption.
+
+**Private upload/outbox adoption (2026-10-02).** Reuse the same leaf storage module for
+mandatory private upload directories/files and submission SQLite checks. Move the shared
+StudioStorageError definition there and explicitly re-export the old import; retain actual
+old pickle/catcher compatibility, with no circular import or added dependency. Private
+atomic metadata uses exclusive mode-0600 temporary files, fsync and stable destination
+identity before replace. Generic atomic_fs callers are unchanged. Track only transfer-owned
+file identities; changed/moved staging refuses cleanup instead of unlinking unrelated data.
+The submission outbox fences opening/commit/close and refuses lost main state without
+empty recreation. Its existing token/content/DBOS reconciliation semantics remain intact.
+
+Initialize uploads explicitly at server startup, never by public checkout import. Default
+Windows root is LocalAppData/HawEditStudio; POSIX is home/.hawedit-studio; local
+HAWEDIT_STUDIO_STORAGE_ROOT may select another genuinely private root. Preserve old jobs,
+media and uploads unchanged; no silent chmod, move or legacy adoption. Bare unconfigured
+handlers and observed storage loss produce contextual refusal. Actual supported-container
+validation narrows both FFprobe and frame-decoder demuxers by declared suffix and checks
+measured format aliases; real positive media cases guard against blanket rejection.
+Native HTTP/ACL/mode/SQLite evidence is bounded and version/source-bound. These checks do
+not establish complete privileged-race prevention, a media sandbox, certified filesystem,
+authenticated sessions, persisted supervisor authority, private DBOS/checkpoints or an
+enabled production worker. Those approved obligations remain required before paid adoption.
+
+**Read-boundary extension (2026-10-02).** Replace directory-serving inheritance with explicit
+local GET/HEAD routes; no workspace fallback or recursive filename-only media lookup. Serve
+private MP4 previews only through a job/clip report manifest and measured digest/size/duration.
+Copy/hash a bounded snapshot before headers so later source edits cannot change returned bytes.
+Serialize snapshot preparation/serving with bounded waits and transport timeouts; reserve enough
+temporary storage, close copies after use, and make no performance or OS-ACL acceptance claim.
+Support single byte ranges and strong digest validators; unsupported/malformed/multiple ranges
+receive full current representation, valid unsatisfiable ranges 416, HEAD no content. Ship the
+existing OFL-1.1 Vazirmatn locally, bound to its unchanged provenance digest. Missing protected
+worker status is unavailable, not ready; legacy completion flags do not identify a verified reel.
+Preserve original records/media, refusing their old unscoped URLs rather than authorizing them
+from filenames. Authenticated export, migration/history and frontend adoption remain open.
+
+Offline packaging includes the unchanged Vazirmatn binary, provenance and its own copyright
+notice alongside the full OFL-1.1 text; the source's embedded metadata and pinned upstream
+notice agree. No NonCommercial asset or new runtime dependency. Add a distinct font package
+and containment relation to the release SBOM. Installed font resolution uses the existing
+RECORD-authenticating data resolver, with a second bounded/stable digest check before serving.
+An absent or altered checkout asset must refuse rather than borrow an installed copy.
+
+**Historical read extension (2026-10-02).** Historical HTTP projections are read-only and
+bound to stable bounded original-record digests. Preserve job/media files rather than
+rewriting legacy completion into current truth. Old completed/review flags are explicitly
+unverified-historical; queued/running records are interrupted pending recovery reconciliation,
+never auto-enqueued. Retain reported failure/cancellation but do not expose raw errors,
+server paths, tokens/options, fabricated measurements or elapsed-work percentages. Private
+candidate IDs must be report-manifest listed; preview reads separately validate media bytes.
+Fresh disk changes and refused entries are visible through versioned history diagnostics.
+Entry/time/byte limits produce partial-scan diagnostics, not an empty complete history.
+Until an immutable measured revision path exists, edit_caption refuses without modifying
+metadata, media or canonical ASR. This does not authorize work, authenticate publication,
+replace the protected worker lifecycle, or certify OS-private storage or browser acceptance.
+
+**Studio adoption extension (2026-10-02).** Extract the vanilla dashboard into studio_ui.py
+while retaining web.py's public DASHBOARD_HTML import. Visible native file input sends File
+bytes through the two-phase upload contract; only a validated source ID enables preparation.
+Persist upload identity and exact schema-1 submission intent before network egress. Response
+loss keeps the same token/content and locks competing submissions until reconciliation; no
+invented source, new token or successful empty-storage fallback. Corrupt browser storage is
+visible and blocks new work. Browser persistence is not a durable worker or OS-private store.
+
+Explicit historical selection adopts bounded server projections. Render text with textContent,
+clear stale media/measurements when selection changes, and cancel superseded preview checks.
+Preview requires successful measured private HEAD validation before playback; seek/download
+remain private, not authenticated export. Missing quality is unknown, observed stage progress
+is not work percentage, and missing producer readiness cannot appear ready. Disabled rendered
+revision, approval and verified export controls expose unmet prerequisites. No metadata-only
+edit, forged QC, paid route or publication is enabled by this unit.
+
+Retain dark Sorani/RTL/local-font identity with semantic controls, collapsible settings,
+visible focus/live errors, shrinkable layouts and 44px primary targets. Structural/declared
+color tests and native fixture screenshots at five widths establish bounded implementation
+evidence only. Complete AA, NVDA, zoom, real producer and independent creator/editor studies
+remain required. The uncommitted source and red gate are not release or 10/10 acceptance.
+
+**Paired comparison extension (2026-10-03).** Keep version-1 overall review records
+readable without inferring unrecoverable A/B differences or misleading attribution.
+Version 2 records each option's bounded integer scores, explicit flags and optional
+self-reported watched/correction seconds; absence stays unknown. Reject coercion,
+duplicate reviewer/pair observations, malformed schema/time and nonbijective/incomplete
+unblinding maps. Reviewer labels are not authenticated identity or independence.
+Descriptive differences use actual option mapping, never cumulative wins. Report pooled
+independent Wilson bounds as reference only; ci_lower/ci_upper remain unknown and H7
+superiority unapproved pending verified preregistered episode/reviewer inference. Correct
+requested confidence with stdlib NormalDist, no new runtime dependency or statistical
+method choice. Refuse preference-to-QcRecord export rather than invent watched seconds,
+fidelity verdict or signatures. Preserve historical defect evidence and existing vote/
+valid-95% assertions; replace false-authority expectations with stronger refusal contracts.
+Deterministic unsealed staging and scorecard authorization remain separate mandatory
+repairs; this is not signed independent evaluation, completed T8 or release acceptance.
+
+**Acceptance authority guard (2026-10-03).** Public scoped/sustained compatibility helpers
+receive aggregate counts, Boolean claims and a claimed day count, not re-verifiable release
+evidence. Preserve descriptive accounting, explicit refusal reasons and reported checks;
+verified fields stay false. Those helpers and direct report assertions cannot authorize
+acceptance, sustained use or a rating. Preserve requested ratings separately as unverified
+input. Enforce the frozen minimum 200 proposals and 30 days without treating count
+sufficiency as independent-episode or elapsed-use verification. Direct aggregate constructors
+validate accounting, finite rates and episode consistency; existing Wald uncertainty is
+explicitly unclustered reference only, never release inference. The visual scorecard likewise
+cannot authorize release or leadership from supplied confidence bounds or names; its current
+inference is labelled diagnostic/not-preregistered. Keep existing useful refusal/leakage/count
+assertions and strengthen the false-acceptance tests. No new dependency or statistical method.
+
+This removes a reproduced false admission, not the need for a real positive admission path.
+Actual exact-SHA canonical/hosted evidence, trusted signed independent raw observations,
+sealed disjoint real-media studies, preregistered episode/reviewer inference, frozen quality
+thresholds and an authenticated representative-use journal remain mandatory. Existing signed
+judge-label study/release approval verifiers retain their limited contracts; neither is
+promoted into full acceptance by this guard. No human study, publication, accepted task,
+spending, trust configuration or 10/10 follows from Boolean claims or this implementation.
+
+**Signed execution authority prerequisite (2026-10-03).** Before protected worker adoption,
+separate owner execution authority from reviewer/release namespaces. Configured host-private
+owner policy and allowed signers verify canonical detached proof in the dedicated
+hawedit-studio-execution-v1 purpose. Bind current producer package, supervisor-computed
+execution context, explicit count/generate actions, issue/expiry, attributed governance
+references and exact route/caps/price/reservation pool. The raw document digest identifies
+the journal authorization pool and must also bind the immutable submission context.
+
+Compose the existing private billed transport; reopen raw authority before construction,
+before cached replay, before/after every upstream operation and before returning. Changed
+or revoked documents/signatures/trust refuse instead of adopting a new policy into an old
+job. Generation uncertainty retains its existing reservation; restoration of authority does
+not make uncertain intent safe to replay. Use actual private snapshots, bounded OpenSSH
+subprocesses and existing strict JSON/storage behavior, without new dependencies or changes
+to candidate/Vertex approval semantics.
+
+Signed governance references are authenticated owner assertions, not live retention/model/
+licence/price verification or measured invoices. A caller-supplied execution binding is not
+runtime readiness; the future ID-only worker must derive it from current bound observations.
+No keys are enrolled or paid HTTP execution enabled by this prerequisite. Owner-bound local
+HTTP identity, complete runtime/governance/screener adoption, job recovery and SD-C review/
+immutable revision/export remain mandatory. Local ephemeral signing/SQLite probes are
+mechanics only; current VEX, exact gate/CI and independent/sustained acceptance remain open.
+
+**ASR identity prerequisite (2026-10-03).** Bind the actual champion config, safetensors and
+unique bundle tokenizer with a schema-2 role/name/size/hash manifest and full SHA256. This
+repairs omitted tokenizer bytes and ambiguous concatenated inputs without changing the
+canonical model, vocabulary recipe, timing or licence policy (D-181/D-260; sections 2/3/7).
+Stream bounded inputs, retain all descriptors through whole-set checks, refuse linked,
+nonregular, missing, ambiguous or observed changing files. These are identity observations,
+not an atomic loader snapshot, licence authentication or closure of the adapted held-load
+gap (#24). The deadline is checked between reads, not an uninterruptible I/O guarantee.
+
+Native and WSL producers capture identity before inference and verify it afterward. The
+worker requires the host's full adapted identity before inference; host checks returned
+provenance too. Cached backends bind their constructed pipeline identity and refuse changed
+or removed adapter selection. Stock identity/request fields remain unchanged. Old sixteen-
+digit keys are invalidated, never rewritten or silently adopted. Conflicting old requests
+preserve prior request/output bytes and recommend a fresh work directory after reconciliation.
+No model inference, throughput, paid worker enablement, new dependency or release acceptance
+follows from filesystem/protocol regressions. Research and actual Serena caller maps are in
+specs/evidence-based-studio/adapter-identity-*. Protected worker and full acceptance remain.
+
+**Screener integrity prerequisite (2026-10-03).** Extend the shared builder/factory with
+optional screener_transport. Guarded judging with selected screening refuses before input/
+model/credential work unless that independent route has an explicit transport; a callback
+is not owner authorization. Existing canonical Pro authority does not authorize Flash or
+TypeSafe, and authenticated per-route policy/shared allocation remains required before the
+protected worker can adopt them. Ordinary CLI/no-screener/durable signatures remain compatible.
+
+Constructor fallback is by None identity, never transport truthiness. A read-only probe at
+879b02f45e12fc8d3f1513fc8ecb7067f2c6c3df found both constructors discarded false-valued
+explicit callables; two test-first actual-factory regressions now preserve identity and
+dispatch through them without remote egress. Four supplemental actual Serena queries cover
+both constructors and their dynamic class callers. No route authority follows from this fix.
+
+**Bound ingest reuse (2026-10-03).** The actual silent-but-valid WAV counterexample proves
+source hash and decodability cannot authenticate cached derived bytes or old VAD measurements.
+Stage0 now requires versioned metadata/audio/proxy hashes plus current source/media, producer,
+installed VAD model, library and FFmpeg/ffprobe identity. This is observed internal identity,
+not qualified review, loader/exec binding, independent quality or a power-loss guarantee.
+Stage0 completion events follow persistence, not merely a successful media subprocess.
+
+Unverified legacy or altered caches are copied into a new no-replace recovery bundle before
+normal regeneration. Copy only known cache files, never move an original directory that may
+contain unrelated owner media. Preserve partial recovery attempts, canonical ASR and review
+artifacts. Storage/link/observed drift failures refuse before ASR; no silent destruction or
+stale reuse. Existing valid reuse and malformed-metadata fresh-ingest contracts stay intact.
+Other checkpoints and pipeline signatures remain unchanged. No new dependency/model choice.
+Recovery includes both extraction provenance sidecars. After retaining original bytes,
+invalidate those sidecars so the nested extractor cannot reuse output from a changed tool
+or producer context. Extraction schema2 binds actual output SHA-256, not just byte count;
+size-only legacy records regenerate. Existing format/truncation/interrupted-publication
+assertions remain. Separate full held/path stat baselines retain Windows ctime/mode drift
+checks without incorrectly comparing CRT semantics with path semantics.
+
+Base ingest remains diarization=None: the current Diarizer protocol has no held weight
+identity for turn reuse. Run the selected producer and retain its validated turns in the
+existing run report without changing bound base JSON. No fake weight identity or discarded
+configured diarization; authenticated turn checkpoints remain required for protected work.
+Research, actual eleven-query Serena maps, EARS IC1-IC11 and caller scope are recorded in
+specs/evidence-based-studio/ingest-cache-*. Protected worker/runtime/attempt/billing/session
+and signed revision/review/export plus current VEX/CI and full acceptance still remain.
+
+Refuse missing/coerced/nonfinite/out-of-range measurements, invalid input IDs/top_k,
+duplicate JSON fields and oversized bodies. Validate the whole requested Gemini batch,
+including rows below top_k, before ranking. Preserve real zeros/false decisions, composite
+weights and valid diagnostic controls. Bound both default HTTP response reads; this is not
+an absolute wall-clock deadline, calibration or sub-second guarantee.
+
+> [!WARNING] Contradiction
+> D-275's legacy TypeSafe request/test shape does not establish current API compatibility.
+> Official current model/criteria/typed answers differ from the existing codec. This unit
+> removes fabricated legacy values and refuses unsupported typed replies; it does not
+> silently select a new model/rubric/threshold or certify live Jev support. Current-wire
+> repair requires separate model-policy/development evidence and governance before adoption.
+
+Actual research, seventeen pre-edit Serena queries, caller impact, EARS SG1-SG8 and diagnostic
+limits are in specs/evidence-based-studio/screener-adoption-*. Exhaustive CLI refusal checks
+also include separately executed Python-transport cases without dropping their bidirectional
+assertions. No new dependency, paid/model run, authenticated worker/publication or acceptance.
+
+### Pinned exclusive-diarization output repair
+
+2026-10-03, approved parent T3 producer-parity scope; BLUEPRINT section3 Stage0/section7,
+D-252 library pin and D-243 exclusivity remain unchanged. Exact pyannote.audio4.0.7
+publisher source returns a wrapper with distinct ordinary and exclusive annotations. The
+production adapter must select explicit exclusive_speaker_diarization and refuse absent,
+legacy or noncallable annotation shapes. No ordinary-output/model/version fallback.
+Keep the public direct Annotation converter, rounding and attachment overlap/media-clock
+refusals, selected path/device/revision and canonical ASR unchanged. No new dependency.
+
+Five fresh actual Serena queries and EARS DW1-DW8 precede the source edit. Test-first wire
+controls fail11/11 against the old selector; the actual adapter/factory/attachment run
+against labelled dependency doubles, not a mocked adapter or real gated model. Positive
+attachment preserves immutable base ingest. Full caller modules and exact clean gate/CI
+are required; tests do not prove model weights/loading/rights, GPU readiness, speech/speaker
+accuracy or authenticated delivery. BLOCKED#1/#3/#4/#21/#24/#25 and the full worker/runtime/
+billing/session/revision/export and independent/sustained program remain unfulfilled.
+Research/maps/spec/plan:specs/evidence-based-studio/diarizer-wire-*. Parent scope is not
+redefined around this producer prerequisite. No licence/trust/spending/publishing approval.
+
+### Bounded immutable submission intake
+
+2026-10-03, parent-approved T3 private supervisor/recovery prerequisite, BLUEPRINT sections2-5.
+Keep existing no-argument pending list behavior within budget, but refuse rather than
+silently truncate overflow. Add exact-ID recovery snapshots including confirmed dispatch;
+duplicate, missing and malformed IDs refuse. Defaults:1000 jobs,16 MiB persisted encoded
+record text,5-second SQLite VM progress deadline; reviewed local maxima:10000 jobs,256 MiB,
+10 seconds. These are operational read bounds, not runtime/model/billing authority.
+
+Collect one projected row at a time; check count/encoded text before accumulation and defer
+JSON decoding until the accepted batch is complete. Preserve invalid identifiers/states/
+timestamps as refusals, never repair through truncation/coercion. A null TEXT primary key
+remains malformed original evidence. Use the actual monotonic high-resolution performance
+counter:Windows CPython3.12.10 GetTickCount64 resolution0.015625s missed the short deadline,
+while QueryPerformanceCounter resolution1e-7s supports the native interrupt counterexample.
+Always restore the native SQLite progress handler. No schema rewrite or new dependency.
+
+Seven actual Serena queries, BI1-BI10 and native private SQLite/isolated child tests precede
+corrections. Preserve the original failures, including bulk-prefetch Python heap4,859,458
+bytes on HAWAPC01/Windowsbuild26200/CPython3.12.10/SQLite3.49.1. This is not SQLite native
+memory/RSS or an absolute blocked-I/O deadline. Bounds do not admit DBOS serialization,
+authenticate configuration/runtime or authorize replay/worker/model/provider/publication.
+Actual raw all-surface admission/engine/lease/bootstrap/worker/attempt/runtime/billing/session/
+revision/export and independent/sustained acceptance remain mandatory. BLOCKED1/3/4/21/24/25
+remain; no VEX hash/date rebind, ledger promotion, push or resource/trust/licence acceptance.
+Research, actual maps, EARS, approved plan and diagnostics:bounded-intake-* in the parent spec.
+
+### Raw Prelaunch Journal Inspection - 2026-10-03
+
+Approved parent T3 continues with a raw read-only SQLite inspector, before any DBOS/ORM
+getter, deserializer or launch. No new dependency. Exact full publisher DBOS2.29.0 schema
+fingerprints include indexes, legacy request and migration bookkeeping; both published
+timestamp branches are reviewed, not semantically normalized. Migration row must be40.
+Unknown schema/encoding, unsafe types/tags, foreign jobs/queues, unsupported persisted
+surfaces and malformed or inconsistent state/results refuse without repair or truncation.
+Every workflow, including terminal records, must match the exact immutable outbox and host
+identity policy. Genuine canonical DBOS UUID4 execution ownership is data, not permission;
+the local empty application ID is matched explicitly. Cancelled/recovery-exhausted records
+may have the null queue DBOS actually writes. Internal queue records cannot carry work.
+Roles/attributes stay empty until separately authenticated adoption. The actual pinned ORM
+writes JSON null for absent attributes; this exact absence is accepted, not a supplied grant.
+Host-listed portable
+step output is shape-safe data only, never authenticated replay or semantic truth.
+
+Use the passed private path binding, readonly URI, query_only/trusted_schema OFF and one
+read transaction. Global DBOS record/schema byte limits and record count precede JSON;
+the outbox has its own same-ceiling bounded reader. Native VM/elapsed budget is not an
+absolute blocked-I/O deadline. No absolute RSS, cross-database atomic snapshot, atomic
+descriptor binding or hostile-same-owner protection is claimed. Inspector is descriptive,
+not an authority token or a startup substitute. Mandatory next adoption owns the private
+engine/lifetime lease/bootstrap, then guards actual ID-only worker/attempt/runtime/source/
+configuration/billing/replay/session. HTTP remains studio_runner_unavailable. References:
+raw-admission-* specs, BLUEPRINT sections2-5, BLOCKED1/3/4/21/24/25. No gate/CI promotion,
+security-policy rebinding, trust/spending/licence acceptance or10/10 verdict.
+
+### Exact Encoded Projection Correction - 2026-10-03
+
+Native SQLite3.49.1 counterexamples on copied private journals show substr stops at NUL:
+an unknown tag was admitted as portable_json; outbox snapshot1549 stored bytes became1541
+projected bytes. Originals and interrupted3d9 gate are preserved; no deserialization occurred.
+Compare original UTF8 encoded lengths with bounded projected text before interpretation,
+including outbox ID/snapshot/state/diagnostic and all raw journal fields. Refuse mismatch,
+never normalize or repair. Add state length metadata without altering database schema or
+the existing outbox byte-budget fields. Pending selection includes malformed/null states
+for refusal; healthy confirmed records remain excluded. Reject newly supplied NUL diagnostics
+before writing. Other physical encodings are not implicitly adopted. Existing Unicode,
+count/byte/query budgets and caller signatures stay intact. No authority or broader memory/
+atomicity guarantee is inferred. See nul-projection-* research/spec/maps/plan; parent T3
+approval, BLUEPRINT sections2-5, D-276. Current gate/CI and every broader obligation remain.
+
+### Owned Runtime Startup And Lifetime - 2026-10-03
+
+Adopt the raw inspector in the actual DBOS2.29.0 startup path, not a separate snapshot
+treated as launch permission. Own one private native cross-process lease, actual custom
+SQLite engine and its lifecycle; explicit BEGIN IMMEDIATE makes bootstrap DDL and runtime
+reads transactional. Bootstrap only verified empty journals with the actual pinned publisher;
+existing nonempty journals are admitted before migrations/recovery/getters. Keep generic CLI
+configure_dbos unchanged. Use rw URI, private/descriptor binding, NullPool, foreign keys,
+trusted_schema OFF and full durability; the custom engine cannot rely on DBOS's skipped
+default engine listeners. Inspect same-connection raw data before DBOS statements/commit;
+standalone inspector remains read-only and its existing budgets/contract are preserved.
+
+Refuse foreign singleton/registry/config/cloud/pollers without destroying or overwriting them.
+Serial studio1/1, source-bound application version, explicit portable serializer and disabled
+admin/OTLP precede launch. Only exact captured workflow/step functions and known DBOS internal
+additions may inhabit the owned registry; raw internal/temporary jobs remain refused.
+DBOS destroy uses executor wait=False, so shutdown must separately stop scheduling and prove
+actual executor/event-loop/background/connection quiescence. Retain lease/engine under bounded
+draining refusal; never claim closed while work remains. Permanent empty lock is not deleted.
+This is cooperative native exclusion and pathname/descriptor checks, not hostile-same-owner
+isolation or absolute I/O/RSS deadlines. Actual protected ID-only producer/readiness/billing/
+signed authority/replay/session and review/revision/export adoption remain mandatory. See
+owned-startup-* research/maps/spec/plan, approved parent T3, BLUEPRINT sections2-5 and
+BLOCKED1/3/4/21/24/25. No spending/licence/trust-root approval or quality/10claim.
+
+Native decoder identity is proved before any same-connection query. Constructor-time
+foreign singleton races are refused before recording ownership, listening or cleanup.
+The pinned internal queue deliberately replaces its object; only its exact idle policy is
+accepted while the studio queue remains identity-bound. Owned busy timeout is5000ms,
+not the generic factory's30000ms; native operational failures are surfaced without DBOS's
+unbounded lock-phrase retry. Draining dispatch retains identity and an independently stored
+diagnostic; diagnostic storage failure is also visible. This does not grant exactly-once
+coarse-step effects or change the generic CLI. See preserved real counterexamples and
+owned-startup-verification.md; POSIX locking is not claimed tested on Windows.
+
+Owned resource correction2026-10-04: actual same-pool foreign engine bypassed the owned
+statement fences, so pool identity alone is insufficient. Pinned SQLAlchemy2.0.52
+OptionEngine must directly proxy the supplied owned engine; capture exact SystemDatabase
+and OptionEngine identities once, refuse replacement/loss before shutdown flags are touched,
+retain the lease and preserve foreign state. Existing dependency, no new architecture.
+Actual native four-case regression and original red evidence: owned-resource-plan.md and
+owned-resource-verification.md. This corrects WIP ownership, not a passed release claim.
+
+### Whole-Journal Billing Admission - 2026-10-04
+
+Approved parent T3 repair, no new dependency or trust authority. Before adopting, filtering,
+replaying, counting, generating or confirming, inspect a consistent native SQLite snapshot:
+exact original version-one schema, complete bounded UTF-8 bytes/native types, all policy/call
+rows and responses under their owning policy. Refuse foreign schema, hidden suffixes, broken
+identity/arithmetic, invalid evidence and exhaustion; do not rewrite or delete damaged history.
+Retain uncertain intents, exact occurrence replay and transactional shared-pool reservation.
+Recheck immediately before/after HTTP and within confirmation; no SQLite lock spans HTTP.
+Admission ceilings are 10,000 aggregate policy/call rows, 256 MiB aggregate field bytes and
+ten seconds checked with the host's high-resolution monotonic counter/SQLite progress handler.
+These are cooperative inspection bounds, not absolute OS I/O/RSS deadlines or benchmarks.
+See billing-admission research/EARS/plan/maps. Local protocol tests do not prove paid invoices,
+source-bound worker/session authority, native editorial quality, current VEX or publication.
+
+## D-277 - Authenticated candidate review and exact proof-bearing delivery
+
+**Approved design: 2026-10-03, owner explicitly approved the signed-delivery plan in Codex.**
+Extends BLUEPRINT sections 2-5 and D-263/D-274/D-276. No new runtime dependency.
+The seven-phase product objective, production reconciliation and independent acceptance
+obligations remain unchanged. This approval does not configure trusted reviewers or permit
+spending, licences, VEX signing, release, publication or a 10/10 verdict.
+
+Freeze proposed final editing JSON, including QC metadata, before a human signs it. Bind
+the original editing JSON too. Review packets bind candidate/revision, source bytes,
+authoritative effective configuration, producer package, all six D-263 files and edit plan
+with SHA256 and size. Verify detached OpenSSH signatures in the dedicated
+`hawedit-candidate-review` namespace against a host-configured owner-private policy and
+allowed-signers file. Do not reuse release/editorial signature namespaces or accept client
+trust files. A descriptive verification receipt, QcRecord, name or Boolean cannot grant
+publication authority. Reopen raw proof, trust and current bindings at consumption.
+
+Version 1 authority policy names trusted principals, namespace, allowed-signers digest and
+maximum review age (1 second to 30 days). UTC review time must be real, not future and
+within this policy when consumed. Review assertions are authenticated claims, not measured
+watching, reviewer independence/expertise, speaker association or semantic fidelity.
+Canonical envelopes refuse duplicate/unknown keys, coercion, nonfinite numbers and
+unbounded documents. Credentials are not part of the resolved configuration evidence.
+Detached armor accepts consistent LF or consistent CRLF as emitted by native OpenSSH;
+mixed line endings refuse. Never normalize or rewrite the signed envelope or frozen proof.
+
+Use owner-private, identity-bound storage, bounded streaming for media and exact membership.
+Incomplete packets remain private and refuse consumption; originals are never rewritten,
+unsafe existing storage is not repaired and prior packets are not overwritten. Record tool
+versions and actual commands in evidence, not invented fields. OS file-descriptor and path
+timestamps are compared within their own views when the platform exposes different ctime
+semantics; cross-view identity/size/mtime/link checks remain required.
+
+Implementation is sequential: SD-A provides preparation/authentication mechanics only;
+SD-B must independently inspect/decode/measure and reconcile the same bytes and wire every
+promotion/direct single-clip/episode publication route. SD-C must bind job/revision/export
+and reopen proof later. Preserve legacy seven-file packaging as private/diagnostic, not
+authenticated public delivery. The proof-bearing public variant must have a fixed versioned
+file set and copy every reviewed byte unchanged, including final editing JSON and proof.
+Burned-in revisions remain a separate mandatory immutable render/review unit; canonical ASR
+is not edited. No SD-A test authorizes existing unsigned publication routes.
+
+Research: specs/evidence-based-studio/signed-delivery-{research,impact-map,spec,plan}.md.
+Actual 22-record Serena map and unmocked 30-byte unsigned-promotion counterexample are
+preserved with hashes in the research. All ledger rows remain WIP pending canonical gate
+and applicable same-SHA CI. BLOCKED #1/#3/#4/#21/#24/#25 and complete acceptance remain.
+
+## D-278 - Diagnostic ASR failure accounting is not production admission
+
+**Status:** Owner-approved policy resolution, 2026-10-04; implementation/gate/CI acceptance
+are separate. Wareen explicitly approved the scoped first-failure proposal with
+"approved, go bck work". No new dependency, model/decoder change, spending or publication.
+
+The owner's FINAL Champion Supremacy canon dated 2026-08-11 requires an immediate halt
+on the first drafting, refinement, alignment or decode failure. D-135's collection of
+failed regions and D-223's retention of a canonical alignment after a rejected correction
+remain valid diagnostic evidence; their earlier production continuation is superseded.
+Historical source/raw and ADR records are not rewritten. A rejected correction is still
+not missing speech: aligned canonical words survive as diagnostic input, not permission
+to publish or finish remaining production work.
+
+Native production and the WSL worker explicitly enable first-failure behavior in the
+shared regional/validation helpers. Failures carry bounded stage/region/cause plus the
+original diagnostic input and separate failure collections; no later region/correction
+or successful worker output follows. Diagnostic helpers retain their original accounting
+mode for measurements. An exception's in-memory prefix is not a durable cross-process
+ASR checkpoint; this decision makes no partial-recovery guarantee.
+
+Supplied, returned or reused raw with unresolved regional/correction failures must be
+refused before normalization, Stage 1 completion checkpoint and downstream work. Preserve
+raw byte identity, original failure collections and visible reason; emit a refused/skipped
+transcription event rather than completion. Existing raw schema, source/producer/adapter
+binding and native/WSL request contracts stay unchanged. Do not silently erase failures,
+infer intended words, trim repeated digits, guess clocks or substitute another decoder.
+
+Grounding: BLUEPRINT sections 3, 4.2, 5, 8.1; D-135/D-223; Canon/Champion Supremacy.md;
+specs/evidence-based-studio/asr-stop-{research,impact-map,spec,plan}.md. This safety repair
+does not repair ZAR38's model output or establish speech accuracy, native review, performance,
+qualified current-source VEX, same-SHA CI or 10/10. BLOCKED #24/#25 remain explicit.
+
+## D-279 - Execute the same camera policy for single and episode candidates
+
+**Status:** Owner-approved scoped repair, 2026-10-04, "fix all and do rel test again".
+Verification and CI acceptance are separate. No dependency, model, licence, cloud
+spending, trusted reviewer identity or publication authority is added.
+
+Fresh decoded-fixture probes at 7fa7d3a established that episode rendering accepted
+a speaker tracker without invoking it and wrote split mode auto despite an explicit
+always request. Both default and production profiles reproduced the bypass. Synthetic
+transcript/discovery/judge inputs establish admission behavior, not editorial quality.
+
+One shared camera-resolution path now governs both render routes. Requested association
+requires validated overlapping diarization; invalid or failed association is refused.
+An empty association refuses production/deliverable rendering rather than becoming a
+face or centre crop. Legacy diagnostic profiles may retain their explicitly unlabelled
+face-only ambiguity behavior; this is not a production speaker-accuracy claim. This
+qualifies the earlier single-path empty-result allowance rather than erasing its history.
+
+Resolve optional shot-cut support before invoking a tracker: an internal TypeError
+is a failure, not permission to invoke it twice. Check source identity before and after
+requested tracking, including failed calls. Once a split is chosen it cannot be overwritten
+because its continuous focus-point list is empty. Split mode always needs exactly two
+tracked subjects; automatic mode must not silently crop away a third tracked speaker.
+Save the executed policy and measured overlapping turns in each private edit plan and
+reconciliation input. Preserve canonical text, immutable source, timing and review binding.
+
+Grounding: BLUEPRINT sections 2-5; D-263/D-274/D-276/D-277;
+specs/candidate-framing-parity/{research,impact-map,spec,plan}.md. This repairs camera
+admission and route parity, not labelled speaker accuracy, native speech/meaning,
+semantic editing, the unresolved ZAR38 ASR failures, VEX review, CI or sustained acceptance.
+BLOCKED #1/#4/#21/#24/#25 remain visible. No 10/10 or completed ledger follows from this ADR.
+
+## D-280 - Preserve worker failure causes without prescribing unrelated setup
+
+**Status:** Scoped refinement of the owner-approved T2 actionable-refusal obligation.
+The actual ZAR38 production-ASR retry at 3ac3738 refused alignment after supported
+runtime setup had succeeded. Its worker error nevertheless prescribed setup, and
+the producer's 1,200-character stderr tail plus prefix exceeded the shared report's
+1,024-character detail limit, hiding the end of the concrete cause.
+
+Keep the shared sanitizer and cap unchanged. Bound this producer's diagnostic tail
+to 900 characters, include the observed exit code, and remove unconditional setup
+advice only from unsuccessful-worker results. Missing-receipt errors retain their
+actual setup prerequisite. Preserve refusal, source/model identity, checkpoint lease,
+worker arguments, timeout, schema, decoder and canonical raw behavior unchanged.
+No new dependency, model, licence, cloud spending, reviewer or publication authority.
+
+Grounding: BLUEPRINT section 3 Stage 1 and section 8.1; D-278;
+specs/evidence-based-studio/asr-diagnostics-{research,impact-map,spec,plan}.md.
+Diagnostic clarity is not correction of speech, qualified VEX review, same-SHA CI,
+editorial acceptance or 10/10. BLOCKED #24 and native-reference prerequisites remain.
+
+## D-281 - Admit canonical decoder completion before alignment and cache reuse
+
+**Status:** Owner-approved ordinary safety repair, 2026-10-05, "approve all and fix them".
+BLUEPRINT sections 3, 4.1, 4.2 and 8.1; D-278, Model Lock and Champion Supremacy.
+Actual frozen 6df0998 trials show compression-stopped text can still align. Alignment
+is therefore insufficient admission evidence. Four actual-model prototype trials
+refused both incomplete risk inputs before alignment while preserving exact text and
+alignment for both natural controls. Details/hashes/limitations are in
+specs/decoder-completion/research.md and its immutable external evidence.
+
+Keep the actual installed decoder algorithm, champion, tokenizer, default one beam,
+source segmentation and CTC unchanged. Validate upstream package/classes/source
+bytes, serialize observation, delegate model embedding unchanged, and require a
+sampled natural EOS in every segment generation. Refuse unsupported or changed
+contracts and restore temporary model/method bindings on all paths. No global
+tracing hook, duplicated decoder, repeated-token trimming, guessed words/times,
+fallback or continuing failed production batches. Retain parallel CTC forward.
+
+Bind automatic cache reuse separately to the completion admission policy, not to
+an invented weight identity or accuracy claim. Old/malformed/mismatched immutable
+raw records and orphan publication evidence refuse before expensive inference;
+preserve their bytes and explain the fresh-work-directory/media-ID remedy. New
+policy records require audio and producer provenance. Optional keyword parameters
+preserve unrelated callers. Injected native fake backends do not claim this policy.
+Explicit supplied transcripts remain a separate trust route, not newly verified ASR.
+
+Natural EOS is necessary completion evidence, not native fidelity, security approval,
+speaker accuracy, meaning, publication or 10/10. A policy label binds cache reuse;
+it is not authenticated reviewer evidence. No new dependency, licence acceptance,
+model/default change, spending, trust enrollment or release authorization. Required
+gate, current-source real retest, same-SHA CI and independent acceptance remain open.
+
+## D-282 - Distinguish unavailable ASR diagnostics from recorded zero
+
+**Status:** Owner-approved ordinary reporting repair, 2026-10-05,
+"approve all and fix them". BLUEPRINT sections 3, 5 and 8.1; D-145 and D-281.
+
+The actual full-source ZAR38 run at fd1468a halted before returning a raw
+transcript, but its JSON presented empty/zero coverage, corrections and routing.
+Unknown evidence must not look like measured absence of defects.
+
+Retain the existing integrity-checked raw transcript on PipelineRun and derive
+recorded diagnostics from it. Preserve failure records even when production
+refuses that transcript. Without raw evidence, preserve any partial records but
+leave complete missing-speech duration unknown. Empty collections alone cannot
+prove that diagnostic collection ran.
+
+JSON adds asr_diagnostics_status: recorded, partial or unavailable. Diagnostic
+fields use null when unavailable; consumers must not coerce null to zero. Known
+raw diagnostics retain their previous values, including genuine zeros. Partial
+routing counts describe only recorded decisions, not all source segments. The
+durable result remains JSON-safe and uses its existing persistence path.
+
+Recorded means diagnostic availability, not verified native fidelity, complete
+speech coverage, security clearance or approval. Supplied transcripts remain a
+separate trust route. No canonical ASR/model/default/schema, billing, dependency,
+signature or publication policy change. No claimed remedy for the actual ZAR38
+decode failure. See specs/asr-diagnostic-availability/.
+
+## D-283 - Preserve nearby whole speech as canonical ASR input context
+
+**Status:** Owner-approved development candidate, 2026-10-06. Implementation
+authorization: "approve all and fix them" and "ok just fix it". Activation remains
+conditional on the fixed development comparison and a fresh producer retest.
+BLUEPRINT section 3 Stage 1 and sections 4.2, 5 and 8.1; D-181 and D-281 remain binding.
+
+On frozen ZAR38 input, 905634..917022 ms repeats numbers without natural EOS.
+The deployed champion's 560 adapter tensors match after actual dtype conversion;
+all 280 adapter layers are active and the model is in evaluation mode. Changing
+beams alone and adding only previous speech do not repair the observed failure.
+Four tested windows retaining the complete next speech region complete naturally
+with the unchanged greedy decoder. This is local boundary evidence, not native
+fidelity, corpus reliability or a new model-quality result.
+
+Group complete ordered Stage 0 speech intervals when the gap is at most 1000 ms
+and the union is at most 38000 ms. Preserve each original interval exactly once;
+never split, trim, duplicate or reorder one. Keep supported individual intervals
+up to the existing 40000-ms ceiling intact. Reject malformed, overlapping or
+unordered input. Stage 0 evidence stays unchanged. Timing comes from actual cut
+PCM and unchanged CTC/Viterbi, not guessed boundaries.
+
+Select the same input policy through the shared native/WSL canonical factory.
+Direct constructors retain the existing default for compatibility. Bind
+`vad-context-v1-gap1000-span38000` to transcript reuse in addition to unchanged
+completion admission. Refuse input-policy drift during inference. Old raw
+transcripts remain write-once and cannot become evidence of grouped inference.
+Studio workflow/journal/approval identities already bind package source bytes;
+do not add a competing identity mechanism.
+
+No dependency, model, adapter, tokenizer, beam/default stopping configuration,
+validator policy, source schema, paid route or signature policy change. Continue
+to halt production on its first failure. The fixed 25-row original/grouped
+development comparison retains every result and failure; repeated windows from
+one episode are not independent jobs. Native fidelity, full delivery, current
+qualified VEX review, gate/CI and sustained acceptance remain separate obligations.
+See specs/asr-context-grouping/ and the private evidence referenced there.
+
+**Development amendment:** the active comparison's dev-15 grouped arm regresses
+natural completion on a 34524-ms union. Do not activate the 38000-ms prototype.
+Predeclare and measure the narrower 18000-ms budget against all 25 fixed samples,
+retaining the original baseline and every failure. This revises development input,
+not acceptance thresholds, model policy or production first-failure stopping.
+
+**Closed development comparison:** the 38000-ms prototype is rejected and retained
+at local a94a075. The predeclared narrower study completes all 25 samples (24
+unique selected windows, one episode) with actual natural EOS and CTC alignment,
+including risk-01/02/03 and both wider-policy control regressions. Source and
+inputs remain unchanged, all prescribed rows are retained, and owned processes
+are closed. Select the 18000-ms union / 1000-ms gap policy for a fresh source-bound
+producer diagnostic, with effective reuse identity
+`vad-context-v1-gap1000-span18000`. The earlier 38000-ms paragraphs document the
+rejected prototype, not the effective candidate. Native speech/number fidelity,
+full validator/producer completion, delivery, gate/CI and acceptance remain
+unproved; this selection permits no publication or completed ledger row.
+
+## D-284 - Persist admitted ASR operations before whole-pass completion
+
+2026-10-06; approved evidence-based-studio Phase 2 recovery scope. BLUEPRINT
+sections 2/3/4.2/8.1; D-278, D-281 and D-283 remain unchanged.
+
+The fresh source-bound ZAR38 run at 422a3be reaches independent validation, then
+the bridge's existing 19020-second timeout. Controller 19201.437921 seconds;
+no output/raw transcript/video. Its worker only writes after both complete passes,
+so an interruption discards hours of successful draft/alignment and validation.
+This is a reliability/performance failure, not a reason to extend the timeout.
+
+Use owner-private native Linux operation checkpoints and a nonblocking writer
+lease. DrvFS presents mode 777: never bypass private-storage checks. Reuse the
+existing fsynced private writer. Bind the exact request/work identity, source
+package, all cut PCM and clocks, current verified canonical assets/champion,
+validator pinned revision, runtime versions/decoder source bytes and effective
+devices. Bind each operation separately to its PCM and correction text; validate
+stored result fields/hashes. Refuse changed bindings, damaged/linked storage,
+concurrent writers and any persistence or inference failure. Preserve records.
+
+Draft, validator hypothesis and correction alignment remain separate. The same
+global confidence/disagreement router is recomputed from all original drafts;
+only identical completed operations are reused. No confidence, model, decoder,
+stopping, timeout, transcript schema, dependency, spending or publication change.
+Checkpoints are NOT authenticated publication evidence or stage completion.
+Current qualified VEX review, adapted-loader held-descriptor gap (#24), native
+fidelity, isolated performance, full delivery and release acceptance remain open.
+
+See specs/asr-segment-checkpoints; tests use real decoded PCM/storage with
+controlled model responses and cannot support a model-quality claim.
+
+## D-285 - Bind default champion construction to held verified inputs
+
+2026-10-07; approved evidence-based-studio execution repair. BLUEPRINT sections
+3/7; D-181 trainer architecture, D-260 champion selection, D-281 completion and
+D-284 recovery binding remain unchanged. BLOCKED #24 distinguishes this code
+repair from qualified current security review.
+
+The default champion loader reopened the original PEFT/tokenizer paths and the
+base/CTC URL caches after identity checks. Reuse the stock canonical held-asset
+boundary for both routes. Extract the existing schema-2 adapter fingerprint into
+a held three-file context; expose only config, safetensors and the unique trained
+tokenizer through a private Linux descriptor-alias directory. Never resolve those
+aliases back to original input paths. Check original descriptor/path/directory
+identity before and after consumption. Publish the backend cache only after all
+guards exit successfully. Unsupported runtimes refuse and name WSL; no fallback.
+
+Keep PEFT registration, trainer 7b configuration, tokenizer-derived vocabulary,
+canonical 3b_v2 timing/tokenizer, dtype/devices, decoding and first-failure halt.
+No dependencies or protected model files change. Descriptor binding is not trust
+authorization, licence approval or a defense against privileged/same-UID in-place
+mutation. Qualified VEX assessment and current-source evidence remain required;
+old source-bound runtime/journal receipts are not silently made compatible.
+
+Use direct AssetCard objects for the adapted checkpoint and tokenizer too, not
+derived name lookup or mutation of the global provider list. An already-loaded
+provider could otherwise override the held URI even after directories are frozen.
+Pinned fairseq2 0.6 accepts these direct cards; vocabulary, 7b configuration and
+PEFT inputs remain the same. Do not hand the model card to the tokenizer resolver.
+
+See specs/champion-held-assets. Synthetic API composition tests are not inference
+quality evidence; real WSL consumers and decoded development audio are required.
+
+## D-286 - Retain CTC independently after completed canonical drafts
+
+2026-10-07; approved execution-repair scope. BLUEPRINT sections 3 Stage 1, 4.2,
+6, 7, 8.1; D-181/D-260 champion, D-278 halt, D-281 completion and D-284 journal
+binding remain unchanged. No model, decoder, threshold, timeout or dependency change.
+
+Correction alignment used the dual-model loader despite using only CTC. Separate
+its held-verified CTC cache from the draft pipeline and guard adapter identity for
+either cache. Share only CTC assembly. Cache admission still follows successful
+guard exit. Once every draft succeeds, native and worker exact-backend paths drop
+owned draft references, collect unreachable objects and release unused torch
+allocator memory before validation. Retain CTC tensors/tokenizer; do not offload,
+quantize, change timings, or invoke a different decoder. Custom backends remain
+untouched. Draft failures cannot reach this handoff or validation. Cleanup errors
+halt publication, and re-requested drafts reconstruct the same decoder with CTC reuse.
+
+This is a resource repair, not a speed, accuracy or complete-episode acceptance
+claim. Process-local allocated/reserved bytes and real decoded development audio
+must accompany measurements; owner training is not stopped for isolation. See
+specs/asr-model-lifecycle. Qualified VEX (#24), same-SHA CI and native editorial
+acceptance remain separate; no completed ledger or 10/10 verdict follows.
+
+## D-287 - Scope Fairseq2 PEFT registration to the adapter configuration
+
+2026-10-07; approved execution-repair scope. BLUEPRINT sections 4.1 and 7;
+D-181 trainer recipe, D-285 held inputs and D-286 resource lifecycle remain.
+The champion assembler replaced LoraConfig.__post_init__ permanently. An actual
+consumer-composition counterexample shows later unrelated config construction
+inherits the wrapper. Repeated wrapper growth is a static risk, not a measured race.
+
+Load the same JSON through LoraConfig.from_pretrained from the held alias bundle,
+register the same Fairseq2 Linear / LoRA Linear mapping on that instance, and
+pass it explicitly to PeftModel.from_pretrained. Pinned PEFT 0.19.1 supports this
+documented recipe (https://huggingface.co/docs/peft/developer_guides/custom_models).
+Keep the separate Linear feature compatibility properties and all canonical
+model/vocabulary/dtype/device/decoder behavior. No dependency or model change.
+
+Tests exercise actual private assembly through external API consumers, including
+success, config failure, PEFT failure and pipeline failure. Those tests are not
+real weight or accuracy evidence; require source-current saved-tensor and decoded
+development-audio checks, exact full gate, qualified VEX and same-SHA CI. See
+specs/peft-config-isolation. No ledger promotion or publication authorization.
+
+## D-288 - Reconstruct ID-only studio inputs before producer adoption
+
+2026-10-07; parent-approved protected-worker scope and renewed continue request.
+BLUEPRINT sections 3, 5, 6, 8; D-276/D-277. No new dependency or schema change.
+The outbox is intentionally a descriptive hash-bound snapshot, not semantic
+execution authority. Never execute its argv verbatim. Reopen actual private
+outbox/upload state, decode only studio option values with the shared parser,
+rebuild through GenerationRequest/prepare_generation and the host producer
+selection, and require exact immutable arguments, source/request digests and
+canonical current configuration. Extra CLI capabilities, duplicate switches,
+malformed option groups, stale configuration and wrong host binding are refused
+before creating a job work directory. Literal option values remain literal.
+
+Return a separate immutable execution-input record with no client token or
+approval claim. A temporary validation token is never persisted/returned and
+does not participate in content identity. Work creation uses SubmissionStore's
+existing owner-private job boundary only after semantic checks.
+
+This is not complete worker/HTTP adoption. A worker still requires current actual
+runtime/model preflight, raw signed execution authority, guarded billing/replay,
+attempt/checkpoint supervision and owner-bound sessions. Publication still needs
+authenticated review and reconciliation. Tests use real decoded fixture uploads,
+native private storage and actual parser/builder/outbox, not inference or paid
+providers. Qualified VEX (#24), exact full gate and same-SHA CI remain required.
+
+## D-289 - Independently inspect retained private review media
+
+2026-10-07; owner-approved repair plan and renewed continue-hard request.
+BLUEPRINT §§2, 3 Stage 6, 4.3, 5 and 8.3; D-263/D-277. No new dependency or
+packet/signature/checkpoint schema. The native single-clip recovery shortcut
+accepted replaced MP4 bytes and invented dimensions/duration when measured.json
+was absent. Raw decoded-fixture counterexample and test-first failures are retained
+in specs/review-cache-integrity and external immutable evidence.
+
+Reopen all seven required private packet members through existing bounded native
+storage snapshots. Require exact typed JSON, clip/plan candidate/source/clock
+binding and measured MP4 hash/size. Reuse existing bounded full audio/video decode,
+independent child measurement and physical-claim comparison, ignoring only path
+and observation time. Require unchanged member snapshots through inspection.
+Return current physical observations, never fallback dimensions/duration. Missing,
+malformed, stale, nonprivate or linked evidence visibly refuses recovery without
+overwriting prior artifacts. Valid unchanged candidates remain byte-identical and
+await human review; they are not completed or approved deliverables.
+
+This integrity unit does not establish full render-input equivalence or authenticate
+sidecars/reviewers. Request-inferred encoder/reframe/brand metadata and effective
+hook/music/B-roll/tracking equivalence remain explicit subsequent work. Publication
+still consumes raw configured detached signatures and fresh reconciliation at its
+separate serving boundary. Full gate, qualified current VEX (#24), same-SHA CI,
+protected worker/revision/export and independent/sustained acceptance remain required.
+
+## D-290 - Optional VMAF observes native complete compatible frames
+
+2026-10-07; approved parent repair plan and renewed continue-hard request.
+BLUEPRINT §§2,3 Stage6,4.3,5,8.3; D-263. No new dependency, model policy,
+measurement schema, renderer or publication threshold. Both the current native
+Windows build and exact project-pinned Linux archive reject libvmaf psnr=1;
+independent native JSON gives real observations on103 decoded fixture frames.
+The existing static95 parser fallback is removed, not treated as measured quality.
+
+Read bounded native JSON instead of guessing from stderr. Before comparison,
+require complete compatible decoded per-frame relative clocks/durations/geometry/
+pixel formats, not guessed FPS/frame counts. Normalize both start PTS, disable
+repeat-last/EOF-repeat, use every frame, fail on native decode errors and require
+complete indexed finite0..100 observations with consistent mean/min/max. Bound
+input reads/native children/JSON and recheck all input/tool byte bindings. Reuse
+existing private new-directory/file primitives for scratch reports; never repair
+prior owner permissions or artifacts. Missing/failed/invalid evidence is unknown.
+
+Keep legacy psnr_db unknown: channel/luma PSNR is not the intended global average.
+Proper global PSNR/reference provenance is separate work, not a relabelled metric.
+VMAF is optional only with an explicit mezzanine; normal generation omits one.
+Pixels do not prove Sorani speech accuracy, meaning, readable captions, speaker
+identity, faithful editing or authenticated review. The real test fixture's identical
+pixels yield97.428299 under the recorded providers, not an assumed100.
+
+specs/vmaf-observation records actual Serena callers, test-first native and malformed
+evidence, conservative scope and provenance. First50 tests pass; two later malformed
+cases fail before guards; final53 native/parser tests pass without skips or mocks of
+the code under test. Exact full gate/current qualified VEX (#24)/same-SHA CI remain
+required. No authority, paid call, release or10/10 acceptance follows.
+
+## D-291 - Bind retained previews to their render request
+
+2026-10-07; approved evidence-based-studio repair and renewed full-fix instruction.
+BLUEPRINT sections 2-5 and 7.6; D-263/D-277/D-289. No dependency or model change.
+Source/candidate/clock equality plus real remeasurement does not establish that a
+retained MP4 implements the requested headline, captions, camera, pacing or assets.
+
+An optional strict `render_request_sha256` in the existing editing JSON Provenance
+binds structured effective inputs, current package/model metadata and actual font,
+tool and external asset bytes. Existing signed review already binds this JSON;
+the seven packet members and signature namespace do not change. Legacy records
+remain readable, but missing/mismatched request bindings refuse automatic reuse.
+Recheck inputs after native rendering/reinspection and before private freeze.
+Never overwrite/re-sign old media to repair a mismatch: use an immutable revision.
+
+This digest is nonauthorizing provenance, not a human review, quality score,
+complete runtime/dependency attestation, or production-worker readiness. Private
+candidates remain awaiting review. Full gate, current qualified VEX, same-SHA CI,
+protected worker and independent/sustained acceptance remain required.
+
+T2 reporting clarification: post-render unsigned QC metadata is excluded from
+pixel request identity, while renderability and authenticated-publication checks
+remain separate. Retained-media inspection returns the original typed Clip and
+visual edit plan alongside freshly decoded measurements. Replay reports exact
+stored editing metadata and precise plan output duration, never a reconstructed
+pre-trim record or today's substituted render provenance. No sidecars, canonical
+ASR, signature namespace or prior bytes are rewritten; no approval is inferred.
+
+## D-292 - Resource preflight owns only its exclusive temporary probe
+
+2026-10-07; approved recovery repair. BLUEPRINT sections2,7.5,8.3; VE-14.
+Actual fixed-name write/unlink destroys pre-existing regular/hardlinked evidence,
+and cleanup at an existing directory masks the primary write failure. A generic
+resource check is not permission to overwrite an arbitrary work-directory member.
+
+Use standard-library TemporaryFile with exclusive allocation and handle cleanup,
+unbuffered actual byte write/read plus fsync. Validate non-negative integer
+budgets before touching storage; wrap genuine OSError with its original cause.
+Existing evidence is never deleted by name. No dependency, signed authority,
+protected-path policy, model or pipeline/worker adoption change. This repair
+does not certify the legacy general cleanup/publication helpers or end-to-end
+durable recovery. Those and current qualified VEX, exact gate and CI remain required.
+
+## D-293 - Isolate verified HTTP utility security patches from model migration
+
+2026-10-07; owner "do all" approves the proposed isolated runtime migration.
+BLUEPRINT sections2,3,6,7,8.1; blocker#24 remains open. The current locked live
+scan reported seven findings, expired review and source drift. Successful runtime
+provisioning is not a qualified risk disposition or permission to publish.
+
+Patch the WSL urllib3 pin to2.8.0 (MIT) and Werkzeug to3.1.9 (BSD-3-Clause),
+using independently downloaded upstream wheels whose actual SHA-256 matches
+PyPI release metadata. Retain every other requirement byte. Their maintainer
+advisories identify these patched releases; no new license family or model
+policy is selected. Existing environment identity generates a distinct candidate;
+official provisioning uses an explicit isolated root and preserves the old one.
+
+The Qwen validator's exact Transformers/Accelerate constraints make that upgrade
+a separate measured compatibility decision, not an automatic version jump or
+quiet validator removal. Host utility locks also require truthful targeted
+regeneration. Keep all these gaps visible; do not rebind the old VEX source,
+lock hashes, expiry or reviewer decisions. Exact gate, actual neural comparisons,
+qualified review, rollback and same-SHA CI remain required before admission.
+
+## D-294 - Contain shard indexes before owned model loading
+
+2026-10-07; approved isolated repair sequence, BLUEPRINT sections2,3,7,8.1;
+blocker#24 remains open. Actual Accelerate1.12.0 loaded owned temporary payloads
+outside a checkpoint through relative/absolute shard index values. The existing
+configuration guard accepted those paths. This does not claim the complete
+pinned integrity boundary admitted an untrusted or altered checkpoint.
+
+Accelerate1.15.0 retains the unchecked join; the complete path/nonregular fix
+proposal was closed without merging. Qwen-ASR0.0.6 still exact-pins the older
+model dependencies. Extend the already-owned pre-load config guard rather than
+claim an unverified wheel upgrade, remove the validator or substitute ASR.
+Bound index reads to1MiB, reject duplicate/nonfinite/malformed JSON and bad maps,
+refuse escaping/Windows-special names, links, hardlinks, missing and nonregular
+members. Validate each unique shard once. Preserve regular sibling/nested shards
+and unsharded checkpoints. The existing verified checkpoint read lock surrounds
+all metadata validation and subsequent loader calls; no signature or trust API
+change, new dependency, model asset/pin change or canonical text correction.
+
+This mitigates HawEdit-owned loading paths, not every invocation of Accelerate
+or arbitrary filesystem mutation by an administrator. No agent VEX disposition
+or expiry/source rebind follows from it. All15 deduplicated live findings need
+current qualified review. Test-first negatives/real filesystem controls, complete
+caller modules, actual hostile loader checks, current snapshot compatibility,
+exact gate and same-SHA CI remain required. Evidence and WIP stay distinct from
+release/security/editorial acceptance.
+
+## D-295 - Preserve initial studio attempts in a distinct private journal
+
+2026-10-07. Approved parent studio phase2/T3, BLUEPRINT sections2-5,
+D-274/D-276/D-288. The immutable submission outbox and pinned DBOS journal
+cannot alone distinguish producer invocations or reconcile their external effects.
+Add a distinct colocated private SQLite attempt journal using existing private
+storage controls. Bind initial attempt1 to the current actual submission's source,
+request/configuration and execution binding; persist contiguous run-scoped events
+and their cursor in one synchronous-FULL transaction. Bound record, stream,
+database/sidecar, schema and inspection budgets; refuse damaged evidence visibly.
+
+Retained attempts block automatic relaunch. A running record after process exit
+is uncertain, not proof that a WSL child stopped or a billed request never happened.
+No automatic retry/cleanup/reconciliation is introduced. Terminal outcomes are
+private observations, never completed publication. Authenticated review and exact
+reconciliation remain separate. The protected worker must adopt this journal with
+genuine host/runtime/model/owner/billing/process controls before web enablement.
+No new runtime dependency or change to existing journal schemas, canonical ASR,
+CLI or source rights. See specs/studio-attempt-journal; local/CI gates remain required.
+
+## D-296 - Hold Community-1 checkpoint identity throughout consumption
+
+2026-10-07. Approved studio phase1 and diarization adapter repair; BLUEPRINT
+sections3 Stage0,7,8.1; D-252/D-276/D-294. An explicit model_dir must not bypass
+snapshot verification, and a prior availability check is not a held consumer
+boundary. Bind PyannoteDiarizer to the canonical Community-1 model identity and
+use existing verified_checkpoint_access for explicit and default paths before
+dependency import through load, placement, inference and exclusive conversion.
+Keep named integrity/availability and output refusals, revision, rounding and
+attachment rules. No new dependency or protected checkpoint metadata change.
+
+Actual temporary files and hashes plus independent process OS-lock probes test
+this boundary; inference dependency doubles are not neural, SDK-runtime/egress,
+DER or editorial evidence. The shared lock coordinates HawEdit's publisher, not
+arbitrary administrator mutation. Community-1 provisioning still requires the
+tracked manifest correction under an explicit protected-file exception, real
+download verification and runtime tests. Current VEX/CI and full protected worker
+adoption remain prerequisites, not facts inferred from unit tests. See
+specs/diarizer-checkpoint-consumer. No task is promoted by this ADR.
+
+2026-10-08 same-unit integration repair: the full f083a896 gate exposed stale
+imported exception identities after legitimate hawedit.models reloads. Bind the
+existing access context and its exception classes through the live models module,
+not copied class objects. Preserve exact byte/lock/output/refusal policy and all
+existing reload tests. The new independent subprocess regression failed before
+production repair; all139 whole model/adapter cases then pass on the recorded
+native host. Whole gate/current CI remain required. This restores the existing
+consumer contract; it adds no dependency, model permission or security disposition.
+
+## D-297 - Lock the existing native producers as one studio profile
+
+2026-10-08. Approved evidence-based studio phase1; BLUEPRINT sections3,6,7,8.1;
+D-252/D-276/D-296. The separately installed gate/GPU/model-fetch graphs do not
+provide the existing six production extras together. Actual pinned uv0.11.26
+resolution exposed NumPy2.2.1 versus pyannote-metrics'2.2.2 minimum. Change only
+native media NumPy to2.2.2, preserving canonical WSL ASR/model pins and the existing
+resolver cutoff. Existing five affected target graphs change only NumPy's exact
+version; base/model-fetch graphs remain byte-identical.
+
+Add the Windows x86-64/CPython3.11/cu130 studio profile for media,gpu,models,
+diarization,agentic,cloud. Regenerate and package its actual133-wheel lock through
+the existing maintainer, bind its bytes to the trusted hash table and validate all
+four CUDA wheel identities. Unmeasured studio host targets refuse. Add the exact
+official download.pytorch.org origin required by TorchCodec; require HTTPS, an
+allowed origin, no URL credentials and standard TLS port before the first request
+and every redirect. Require lowercase hexadecimal SHA-256, not merely64 characters.
+Existing bounded actual-byte hashing remains mandatory when upstream omits a hash.
+
+Actual133 publisher metadata records and10 selected/hash-verified wheel licence
+files were inspected. Pyannoteai SDK0.4's selected wheel contains MIT terms; D-252's
+accepted inert inclusion still does not permit importing or calling the SDK.
+Bundled NumPy/SciPy notices are preserved, not silently classified by keyword.
+This is provenance research, not qualified legal/security approval.
+
+The whole new regression module failed22/24 before production edits and passes24
+afterward. These are contract/refusal tests, not installed GPU, neural, decoder,
+telemetry-egress or diarization-quality proof. Supported isolated installation,
+actual runtime observations, protected model metadata permission, current VEX/CI
+and worker adoption remain required. No spending, signature, publication or
+acceptance authority follows from this ADR. See specs/studio-host-profile.
+
+## D-298 - Consume canonical PCM with held local diarizer import controls
+
+2026-10-08. Approved phase1 runtime repair; BLUEPRINT sections3 Stage0,6,7,8.1;
+D-252/D-296/D-297. Stage0 already supplies mono16kHz16-bit PCM WAV. Validate its
+actual frames with the standard WAV parser before model loading and pass exact
+float32 normalized samples to the pinned Pyannote in-memory API. No alternate
+decoder/model/dependency or canonical transcript/timing change. Refuse malformed,
+empty, truncated, partial-frame or incompatible PCM without repairing it.
+
+Disable process metrics before vendor import/load. A scoped standard import finder
+refuses SDK module execution during load/device/inference/exclusive conversion;
+preloaded SDKs refuse, and caught import failures remain refusals. Preserve unrelated
+finders and modules; remove only the owned guard even on errors. Serialize this
+process-wide policy across local consumers. This cannot undo prior egress and is
+not complete native network isolation. Hold the existing verified checkpoint access
+across every consumer stage and retain the live-model exception/reload contract.
+
+Real canonical WAV/checkpoint bytes, OS reader locks and Python SDK-shaped fixture
+execution controls are tested, with model inference explicitly doubled. Whole608
+callers pass before the additional partial-frame correction; final161 model/adapter
+cases pass afterward. Actual supported-runtime decoded8-second ZAR roundtrip passes
+through production input/import helpers and pinned upstream Audio, not pretrained
+inference, DER/editorial quality, full-source throughput or complete no-egress proof.
+The original research probe's whole-import-list equality refused a legitimate vendor
+finder addition; preserve that failure and inspect owned-guard removal plus original
+finder retention instead. No caller integrity/output/locking assertions weakened.
+
+Exact full gate and same-SHA required CI remain mandatory. Current qualified VEX,
+protected model metadata permission, bounded cloud authority, actual protected
+worker/review/revisions/export and independent/sustained acceptance are separate.
+See specs/diarizer-runtime. No task is promoted by this ADR.
+
+## D-299 - Preserve trusted producer governance through studio reconstruction
+
+2026-10-08; approved phase1/2 repairs, BLUEPRINT sections2-5; D-276/D-288.
+The existing shared parser supports Vertex location and confidentiality/ZDR/
+confirmation attribution, but the studio host selection omitted them. Append
+these host fields without changing the original positional fields or default
+argv. Validate actual booleans and bounded text, refuse an ignored Vertex-only
+location on Developer API, and reuse Governance's existing route checks.
+No new runtime dependency, browser option, authority schema or policy fallback.
+
+Pass exact nondefault values literally through argv. Existing asdict configuration
+and source/content identity bind all fields; existing execution reconstruction
+must match exact immutable arguments/configuration before creating work. Changed
+or old job configuration is not silently rewritten or granted new authority.
+Host confirmation values are necessary configuration, not signed owner proof or
+verification of provider retention, rights or spending. Those controls remain
+independent prerequisites for the protected worker and actual upstream calls.
+
+Actual42-case test-first source run has33 failures before repair; final473 affected
+cases pass, no errors/skips, including real private uploads/outbox reopening and
+each independent host-policy drift. Strict types/lint/format pass345 files.
+See specs/trusted-producer-parity for actual Serena maps and raw evidence.
+Exact frozen local-commit gate/current CI and qualified VEX are still required.
+No worker/HTTP activation, model-policy/ASR change, signature, ledger promotion,
+publication, full ZAR result or independent/sustained acceptance follows.
+
+## D-300 - Fence recovered studio callbacks until verified activation
+
+2026-10-08; approved phase2 continuation, BLUEPRINT sections3/6;
+D-276/D-288/D-295/D-297. Actual pinned DBOS2.29.0 recovery can enter while the
+owned main thread is still starting. Preserve verify's active-only refusal.
+Add one standard threading.Event plus await_activation with validated finite
+positive timeout at most10s (default5s). Only starting callbacks wait; the
+launching thread refuses instead of blocking itself. Unlaunched/closed/draining
+objects refuse immediately through existing actual verification.
+
+Publish the signal after existing registry/engine verification and active state;
+signal again when drain begins, before worker joins, so failed startup can wake
+and refuse. A signal never grants authority: every successful helper return
+requires unchanged verify, actual engine/storage/registry/PID/lease checks.
+No new dependency, model/spending/reviewer authority, registry relaxation, retry,
+automatic resource release, forced cancellation or generic producer rewrite.
+
+Actual6 pre-edit lifecycle Serena pairs and controlled real pending recovery
+observation;23 named test-first failures, final23 regressions and496 whole caller
+cases pass with no errors/skips. Initial two new setup failures are retained and
+corrected against actual SDK fields/observational timing, not hidden. Evidence
+and exact maps in specs/studio-activation-fence. Required exact committed gate,
+current qualified VEX and same-SHA CI remain; no ledger promotion or release.
+This does not connect the protected producer/HTTP or prove native GPU preemption,
+WSL child death, actual whole-source editorial quality or sustained acceptance.
+
+## D-301 - Preserve truthful pre-count refusals and the established error contract
+
+2026-10-08; approved phase2 continuation, BLUEPRINT sections3/6;
+D-276/D-277. The internal count exception boundary must not label its own
+expired-policy refusal as an unavailable provider. Re-raise the existing
+ExternalReconciliationError unchanged. Native StudioStorageError remains bound
+as the cause of an ExternalReconciliationError with a journal-specific diagnosis,
+preserving the established count-stage caller contract. Actual provider failures
+retain the existing provider diagnostic. No route, reservation, replay, pricing,
+schema, signature, generation-uncertainty or dependency changes.
+
+Actual Serena mapping and controlled pre-count expiry precede source edits;
+three named test-first regressions use genuine private journals and a real HTTP
+disconnect. Two failures in the first whole caller run exposed the storage error
+compatibility mistake; corrected without editing existing assertions. Final242
+whole cases pass with no errors/skips; lint/types/format pass347 files. Exact
+hashes, intermediate failures and host versions are in
+specs/count-refusal-diagnostics/verification.md. Required exact committed gate,
+qualified current VEX and same-SHA CI remain. No ledger promotion, host authority,
+HTTP activation, paid call, complete ZAR result or acceptance verdict follows.
+
+## D-302 - Review-ready projection uses the preview's stable file bindings
+
+2026-10-08; approved studio phases1-3, BLUEPRINT sections2-5;
+D-263/D-274/D-277. Generation projection must not resolve away links or accept
+malformed measurement records that preview serving refuses. Share bounded
+measurement validation and reuse studio_artifacts' existing no-follow native
+file/ancestor checks. Require exact review/clip-ID/clip-ID.mp4 scope, hash/size
+binding and unchanged raw measurement bytes after media hashing. File metadata
+alone does not detect a same-sized record edit with restored mtime on this host.
+Projection does not copy the MP4 or grant fresh decoding, quality or publication.
+
+Actual six-pair Serena map preceded edits. Native hardlinks and decoded fixture
+media reproduce eight test-first false-ready results; a real record mutation
+with restored size/mtime reproduces another. The observation delegates real hash
+operations unchanged. Initial race-test setup assumed LF byte size on Windows;
+that failed setup and its failed whole caller run are retained, not counted as
+the race reproduction. Corrected native newline accounting exposes the genuine
+failure before tightening. No existing assertion, fixture, golden, dependency,
+model policy, qualified VEX or enforcement surface changed.
+
+Evidence and limits: specs/review-projection-binding. Protected worker adoption,
+authenticated studio review/revision/export, exact committed gate/current CI and
+independent/sustained acceptance remain required. No ledger promotion or10/10.
+
+## D-303 - Bound validator PCM decoding and refuse permanent setup-lock errors
+
+2026-10-08; approved BLUEPRINT section3 Stage1 / section8.1 startup repair.
+Qwen-ASR already accepts predecoded NumPy waveform/rate tuples. Adapt complete,
+bounded canonical mono 16 kHz PCM16 WAV with existing wave/NumPy, retaining path
+decoding for every other input. Avoid adding native soundfile, absent from the
+gate profile, or importing librosa's lazy optional modules for canonical PCM.
+Model verification/order, generation settings, validator selection, text,
+alignment and operation checkpoint bindings remain unchanged.
+
+Windows setup retries EACCES and historical EDEADLK contention only, keeping its
+existing deadline and ownership checks. Other errno values become actionable
+immediate refusals. A fresh UNC native probe returned EINVAL; do not turn this
+unsupported filesystem into an unlocked or falsely provisioned runtime.
+
+Actual seven-pair Serena map precedes edits; research, EARS, caller coverage and
+approved plan are in specs/validator-startup. No speed, fidelity, current VEX,
+CI, native-Linux runtime support, publication or 10/10 claim follows this ADR.
+
+## D-304 - Bind ephemeral scanner cleanup to the created directory identity
+
+2026-10-08; approved studio execution/security-admission prerequisite. Replace
+recursive shell deletion in the supported WSL VEX launcher with isolated stdlib
+operations through its pinned interpreter. Capture device/inode/UID in a strict
+creation receipt, require the exact generated /tmp name and private owned root,
+and hold no-follow directory descriptors through cleanup. Refuse foreign devices,
+owners, changed directories, excessive recursion/work and unsafe root paths.
+Symlinks are unlinked, never traversed. No new runtime dependency or scanner lock
+change; existing strict OSV options and VEX evaluator remain unchanged.
+
+Requirements materialization now shares the cleanup lifetime. Cleanup failure
+refuses otherwise successful work; when another failure is already active, retain
+it and attach the cleanup diagnostic rather than masking it. Interrupted creation
+without a valid receipt is not permission to delete an unverified path.
+
+This is temporary-storage hygiene, not a sandbox against a privileged adversary
+or a lifetime fence for all scanner descendants. Current qualified VEX (#24),
+complete protected worker integration, exact gate and same-SHA CI remain required.
+Research, actual five-pair Serena map, EARS and approved plan: specs/scanner-cleanup.
+
+## D-305 - Separate stable studio deployment identity from raw owner proof
+
+2026-10-08. Approved scope: original phases 1-2 and renewed owner "continue finish
+the job"; local implementation only. BLUEPRINT sections 2-5, 6-7, 8.1-8.3;
+D-263/D-274/D-276; BLOCKED #1/#3/#4/#24/#25 remain independent, #21 stays closed.
+
+Compose installed studio-profile validation, six actual selected checkpoint
+verifications, current champion identity, explicit named WSL receipt/assets,
+shared device defaults and the fresh live security gate. Recheck selected model,
+champion, profile, source and VEX inputs after the security observation. Preserve
+refused evidence; never substitute a descriptive receipt or supplied ready flag.
+Existing loader-held descriptor fences remain mandatory at actual consumption.
+
+Signed owner authorization targets the deterministic deployment description.
+That description binds the current producer/package, selected runtime/model
+identities, VEX bytes and pinned audit contract, but excludes its own signature
+and the fresh audit timestamp/report digest. Retain the fresh raw audit observation
+separately. Job execution binding includes the owner document, detached signature,
+configured trust policy and allowed-signers hashes. This avoids a signature cycle
+and unstable duplicate-submission identity while still reopening actual authority.
+
+Require the signed canonical model URL and confidentiality to match the selected
+provider/project/location/governance. Use the existing Vertex constructor/route
+without credential acquisition. Construct the existing signed shared-global-pool
+billing transport only after actual admission and owner/job binding checks; proof
+and VEX drift around verification must refuse before any provider call.
+
+No new dependency, model fallback, integrity metadata exception, licence/spending
+grant, VEX disposition, media certification, DBOS launch, HTTP enabling or
+publication. This unit is not a complete runtime supervisor. Media tools/fonts,
+ID-only owned worker, uncertain-effects/lifetime reconciliation, authenticated
+review/revision/export, independent evaluation and sustained acceptance remain.
+Research, actual Serena maps, EARS and inherited approval: specs/studio-host-admission.
+
+## D-306 - Descriptive billed effects are not reconciliation authority
+
+2026-10-08, approved evidence-based phases1-2/T3; bounded prerequisite for the
+owned worker. Extend D-276's existing whole-journal validator, not its schema,
+provider route, reservations, response replay or trust model. BLUEPRINT2-5 and
+8.1-8.3; D-263/D-274/D-305 apply. No new runtime dependency or licence acceptance.
+
+Expose a fresh immutable selected-pool view of validated call identity, job,
+state and upper reservation across ALL jobs. Validate foreign pools/rows before
+filtering; omit request/response text and credentials. Use actual consistent
+SQLite reads and existing private main/root/sidecar fences, with unchanged read
+ceilings and strict numeric time limits. No logical journal mutation or egress.
+Operational SQLite sidecars may change; do not claim raw byte stasis.
+
+Signed consumption reopens actual raw OpenSSH authority both before and after
+the read. Expired/revoked/changed authority refuses. Observations are point-in-time
+descriptions, not authenticated provider invoices, process quiescence, publication,
+refund/retry grants or permission to finish an uncertain attempt. Supplied objects
+or absence of intent cannot replace fresh journal and lifetime controls.
+
+Research/EARS/actual caller maps/approved plan: specs/studio-billing-effects.
+Required local gate and current CI remain unproved; worker/lifetime and HTTP/
+review/revision/export adoption and independent sustained acceptance remain.
+
+2026-10-14 existing T3/private-storage follow-up: canonical7f2f5ad gate exposed
+an actual concurrent billing refusal from a disappearing -shm sidecar, alongside
+the preserved VEX failure. The existing disappearance recheck omitted the
+library's own storage-validation exception. Apply the same actual-absence recheck
+to that exception, not a generic acceptance or provider retry: present unsafe
+or replaced paths still refuse; original root/main identities remain checked.
+Deterministic observers schedule real filesystem changes at actual exceptions,
+without replacing stat/function/kernel results. Preserve native concurrency,
+crash recovery and all stable unsafe-path controls. No schema, cap, authority,
+dependency, installation, model release or security disposition changes.
+
+## D-307 - Caption ink widths must be decoded, not estimated
+
+2026-10-08, approved evidence-based-studio phases3/5; BLUEPRINT4.3/8.3.
+No new runtime dependency, model/ASR recipe, golden or licence change.
+Actual first ZAR word measured94px but missing-renderer fallback returned/cached
+108px; genuine source/renderer/fonts unchanged. Preserve that negative evidence.
+
+Failed or absent rendering and invalid decoded extent refuse with a caption
+measurement error. Empty text legitimately has zero ink. Limit canvas/parameters,
+font inventory and process-local cache; bind each entry to renderer, font/canvas
+context and observed resolved resource stat identity. Check resources before
+cache lookup and after decoding; protect cache bookkeeping from concurrent calls.
+Bind the actual requested ASS family to existing local Kurdish-covering fonts.
+
+Stat observations are not immutable asset leases and cannot defeat an equally
+privileged owner/process altering resources. Existing actual render provenance,
+decoded-media reconciliation and authenticated approval remain separate; no
+cached width is publication or acceptance authority. Do not hash100MB binaries
+per word, invent pixel success or quietly use another font/renderer on failure.
+
+T1 repairs genuine measurement/cache refusal first. T2 separately forwards the
+selected actual font/canvas through pixel-limited line/popup/RTL consumers,
+preserving direct caller defaults and char-only/SRT/canonical behavior.
+Exact gate after each unit; same-SHA required CI before ledger promotion.
+Research/Serena/EARS/parent-scope approval: specs/caption-measurement.
+
+## D-308 - Retain native creation and observation handles before worker adoption
+
+2026-10-08, approved evidence-based-studio phases1-2; BLUEPRINT2-5/8.3,
+D-274/D-305/D-306. No new runtime dependency or model/licence/security grant.
+NativeJob is a narrow Windows64 lifetime component, not a general producer,
+hostile-code sandbox or terminal/publication authority. It requires explicit
+bounded arguments/environment, admitted local executable SHA, a held read lease,
+suspended creation and private non-inherited kill-on-close job assignment before
+one resume. Inherit only explicit nonconsole STD duplicates, never the job.
+
+Control only the original owned job/root creation handles. Native member PIDs
+are live diagnostics, not persisted authority. Open observation-only original
+handles only after current job membership/identity verification, retain them
+through shutdown, and refuse uncertain observation rather than report success.
+An actual regression observed zero members/accounting before a descendant's
+original handle became signaled. Root plus observed-member signaling and empty
+job observation are required; empty job accounting alone is insufficient.
+
+Every producer resource still needs the protected admission handshake: ephemeral
+unobserved native children, Linux/GPU scopes, bounded IO, model/source/loader
+admission, event failure and billed-effect reconciliation are NOT certified by
+this helper. No AttemptStore.finish, DBOS queue adoption or HTTP enablement in T1.
+Best-effort abandoned-scope finalization is not durable completion evidence.
+WSL/service/WMI-created processes are not universally contained by Windows Jobs.
+T2 must bound IO without blocking synchronous pipe peeks in threaded DBOS; T3
+must retain native/Linux capabilities and integrate the fixed ID-only producer.
+
+Research/EARS/actual caller maps/parent-scope approval: specs/native-worker-owner.
+39 real native tests and strict local checks pass; whole exact committed gate
+and same-SHA required CI remain required. Qualified VEX #24 remains independent;
+never rebind/redate old security evidence to accept a source change.
+
+## D-309 - Bound Native IO Without Releasing Pending Memory On Faith
+
+2026-10-08, approved evidence-based-studio phases1-2, native-worker-owner T2;
+BLUEPRINT sections2-5/8.3 and D-308. No new runtime dependency or admission grant.
+Use first-instance, remote-rejecting, generated named pipes with explicit
+owner/System protected ACLs, independently read back from held server/client
+handles. Validate own client process; only NativeJob's explicit STD duplicates
+reach suspended assigned children, with host client copies closed before resume.
+
+Fair overlapped input/stdout/stderr service uses retained4096-byte buffers,
+OVERLAPPED/events/handles. Immutable input and retained combined output each
+have16MiB ceilings; deadline is finite and at most12hours. Output capture can
+briefly hold an additional chunk and result-byte copies within fixed bounds.
+EOF never replaces original native wait. Cancellation requests are not completion:
+retain until actual GetOverlappedResult completion, including ERROR_OPERATION_ABORTED.
+Unknown completion/cleanup retains strong resources and refuses future launches
+in that process. One active executor bounds the production quarantine to at most
+three channels and one native job; no automatic guessed quarantine release.
+Cleanup adds bounded native stop/IO drain windows, not an exact wall-clock SLA.
+
+Lifetime correction2026-10-08: buffer and aligned OVERLAPPED occupy one8192-byte
+VirtualAlloc read/write arena per pipe, with non-owning ctypes from_address
+views. Python/module collection cannot release this native arena. Checked
+VirtualFree(original base,0,MEM_RELEASE) occurs only after observed pending IO
+completion and owned handle cleanup; uncertain cleanup retains it until actual
+reconciliation or OS process teardown. No atexit free or executable pages.
+Three channels request24576 committed bytes total, distinct from allocation-
+granularity reservation or whole-process/GPU/Linux resource consumption.
+Actual VirtualQuery regressions check committed/private/read-write pages, real
+cancellation, view collection and release; review finding is not a crash claim.
+
+Raw exit code/bytes are not pipeline completion, source/model/runtime/qualified
+VEX admission, native/Linux producer-resource drain, billing reconciliation,
+editorial approval or publication. No HTTP/DBOS producer caller adopted in T2;
+T3 must supply complete resource/admission/effects contracts. WSL/service-created
+processes and hostile equal-user code are not made safe by Windows Jobs/pipes.
+Research/EARS/actual caller maps and test-first failures: specs/native-worker-io.
+
+## D-310 - Event Write Failure Fences The Same Attempt Log
+
+2026-10-08, approved parent evidence-based-studio execution/recovery scope.
+BLUEPRINT sections 2-5 and 7.6; D-274/D-305/D-306. No runtime dependency,
+licence, model, cloud, qualified VEX, publication or release grant.
+
+Actual decoded-media fault demonstrated that an ingest-completed journal write
+raising OSError was returned as a media-ingest failure report. This was not a
+completed publication or an additional paid call. RunEventLog now distinguishes
+EventPersistenceError, retains the original cause, and permanently fences the
+same log after sink uncertainty. Physical file/database recovery cannot resolve
+whether a failed write committed; there is no automatic retry/reset/release.
+Invalid event validation occurs before consuming sequence or marking persistence
+uncertain. Fatal control exceptions preserve their original semantics while
+retaining the fence for any subsequent cleanup/result admission.
+
+require_persistence is a read-only failure admission check, NOT verification
+that a sink is durable, a provider is unbilled, or resources have drained. The
+protected producer must still adopt it before effects and result acceptance,
+with actual private attempt/billing persistence and authenticated reconciliation.
+Legacy JSONL still flushes without fsync; successful list/discard sinks remain
+observer conveniences, never protected-worker evidence. No HTTP adoption here.
+
+Research, current actual Serena caller maps, real file/SQLite/decoded-ingest
+test-first failures: specs/event-persistence-fence. Full gate/CI required;
+qualified source-bound VEX approval remains external BLOCKED #24.
+
+Caller correction: the existing seven-stage checkpoint simulation now requires
+EventPersistenceError AND the exact original SimulatedKillError/stage cause.
+All original stage/resume/MP4 hash assertions remain unchanged. This is callback
+fault/recovery coverage, not an actual OS-kill or neural/editorial-quality claim.
+An unrelated observed Windows refusal to replace a private test executable is
+preserved; unchanged whole ingest-cache replay passed16cases, cause unresolved.
+No security-policy edit, assertion weakening, exclusion or promotion follows.
+
+## D-311 - Retain Original Native Capabilities After Cleanup Refusal
+
+2026-10-08. BLUEPRINT sections 2-5/8.3; corrective unit under D-308/D-309,
+approved native-worker-owner and evidence-based-studio phases 1-2. No dependency.
+
+Actual Windows close-protection faults showed that close refused release but
+discarded still-open original handles and marked closed. Retaining that empty
+Python object in native IO cannot retain the discarded native capability. This
+was measured after native child quiescence, not a live Linux/GPU/billing leak.
+Member observation release failures additionally left snapshot finalization active.
+
+Keep each original handle until its own CloseHandle succeeds; retain remaining
+image access until complete native release. Do not clear all fields in finally.
+Strongly retain cleanup/stop uncertainty, detach snapshot finalization and refuse
+automatic retries or new create calls from that process. No public reset.
+When close observation fails, request termination through the original job before
+preserving uncertainty. Healthy exact-scope observation/cleanup remains unchanged.
+
+This latch is not independent Linux/GPU/provider drain or billing reconciliation.
+It does not revoke or stop every already admitted unrelated scope, certify native
+ephemeral members, authorize model/cloud execution, release a durable attempt or
+connect the protected HTTP producer. Those boundaries remain T3 and #24 remains
+qualified current security review. Research/caller maps and actual isolated
+fault tests: specs/native-capability-retention. Full gate and same-SHA CI required.
+
+## D-312 - Fixed Bounded Control Frames Do Not Certify Worker Completion
+
+2026-10-09 local date. Approved native-worker-owner T3, BLUEPRINT sections2/3/5;
+D-308 through D-311. No new dependency or model/HTTP/provider permission.
+
+The native executor's default request EOF cannot distinguish normal payload end
+from later Windows-owner death. Add an explicit exact-bool control_channel mode,
+not a new subprocess path, arbitrary callback or background heartbeat writer.
+Default absent/false preserves immutable binary transfer and EOF semantics.
+
+HEI1 plus network-order uint32 length frames the immutable payload; keep original
+stdin open. HEC1 plus16 nonce bytes receives an exact HER1 response. HED1 is
+terminal only after an original native response transfer completes. Reject
+malformed/truncated/unsolicited/replayed/premature/trailing frames, EOF without
+terminal, deadline and shared stdout/stderr overflow. Parser buffer20 bytes,
+distinct nonce ceiling65536, payload16MiB plus explicit8-byte header overhead.
+Overall native deadline and finite exchange bound both apply. No retry/reset.
+
+Observe the original pending write before classifying subsequent output. Neither
+stdout nor pipe EOF proves write completion, independent scope drain or billing.
+Terminal still requires original native job quiescence through the existing wait;
+all refusal cleanup uses original job/overlapped/arena uncertainty retention.
+
+Unpredictability and reply-consumption ordering belong to a separately byte-admitted
+supervisor. Parser checks are not a hostile-child sandbox. A supervised worker must
+not inherit control descriptors; Linux original namespace/pidfd/user/utility/model/
+GPU/resource/Windows-owner-death and effect reconciliation still need actual
+admission and evidence before protected producer or HTTP integration. A terminal
+frame is not durable attempt release, model security, reviewer approval or a reel.
+
+Research/EARS/current actual caller maps and real-child tests:
+specs/native-control-channel. Synthetic65536-nonce parser test is not native/Linux
+execution evidence. Full gate/same-SHA CI required; qualified current VEX#24
+remains external and may not be rebound by the implementing agent.
+
+## D-313 - Bounded Linux Owner Endpoint Is Not Worker Admission
+
+2026-10-09 local date. Approved native-worker-owner T3 / studio phases1-2;
+BLUEPRINT sections2/3/5 and D-312. No new dependency, model, provider or HTTP grant.
+
+Add the dedicated Linux supervisor counterpart, LinuxOwnerChannel. Original
+anonymous STD pipes only; one creator/request/process lifetime. Private
+non-inherited duplicates, finite exchange and overall deadlines, nonblocking
+select/read/write, exact HEI1 request, fresh HEC1 nonce and exact HER1 reply.
+HED1 requires a completed exchange and subsequent original owner EOF. Closing
+never emits terminal. Malformed/replayed/unsolicited/trailing/early-EOF/stalled
+IO refuses, with no retry/reset/background writer or ready/completed flags.
+
+Inode/proc-link equality is not open-file-description identity. Require actual
+Linux F_DUPFD_QUERY self/distinct calibration before adoption; use Linux UAPI
+1027 for supported Python3.11/3.12, which lack the named constant. Refuse an
+unavailable operation without inode-only fallback. Compare original STD and
+private duplicates before IO/cleanup. Actual same-inode reopen fault must not
+close its foreign replacement. Retain the creator Thread object as well as
+PID/identifier: an observed recycled numeric thread ID is not the creator.
+
+Restore shared original blocking modes only during verified cleanup. Preserve
+uncertain originals, strongly retain the lifetime and refuse automatic cleanup
+retry/new admission. This is trusted dedicated supervisor code, not protection
+against arbitrary same-process heap mutation. Fork copies close-on-exec FDs;
+the eventual admitted worker must have separate STD and controls closed before
+release. Kernel comparison/control framing alone does not prove original Linux
+namespace/member lifetime, GPU/service/provider drain, billing reconciliation,
+model/source/runtime byte admission, DBOS producer registration or publication.
+
+Actual Serena maps, EARS and real Linux/Windows-WSL regressions:
+specs/linux-owner-control. System Python3.14 CPU test compilation is a diagnostic,
+not an admitted HawEdit model runtime; required supported-runtime CI remains.
+The ZAR timing warning and qualified current VEX#24 are not repaired by this unit.
+Full exact gate and same-SHA CI still govern task acceptance.
+
+## D-314 - Re-observe Short Native Lists Without Accepting Partial Evidence
+
+2026-10-09, approved parent evidence-based studio Phase2 corrective unit.
+BLUEPRINT sections3/5/8.3; existing D-308/D-311, no dependency or trust grant.
+
+Actual b290ae8 full suite refused native launcher-exit waiting with incomplete
+enumeration instead of reaching owned deadline cleanup. Kernel count values
+were not captured; exit-transition causation is inferred, not measured. Whole
+isolated native module passed. Preserve both results; no flaky-test suppression.
+
+On an actual successful query whose assigned count exceeds returned count,
+re-observe the same held job at most eight times, scheduling1ms between attempts.
+Each query gets a fresh bounded buffer. Never return the partial list. Accept
+only equal counts within the existing64-member ceiling. API failure, reversed
+or over-capacity counts, owner presence and exhausted short-list observations
+still refuse; final refusal records the actual counts. No job/root/observed
+handle acquisition, control, lifetime reset or quiescence predicate changed.
+
+Real16-cycle launcher/descendant transitions and actual wrong-type kernel-handle
+API errors are regressions, not a deterministic reproduction of every short-list
+OS timing. Sustained concurrency and supported-runner evidence still required.
+This policy does not certify Linux/GPU/provider/billing drainage or admit HTTP
+generation. Qualified VEX#24 stays separate; do not self-rebind its source.
+Research/EARS/callers/ledger: specs/native-members-transition; full gate/CI pending.
+
+## D-315 - Preserve Actual Segment Routing And Selection Without Rewriting ASR
+
+2026-10-09, approved evidence-based-studio Phase5. BLUEPRINT sections3 Stage1,
+4.1/4.2/5/8.1; D-144/D-181. No dependency, model, licence, spending or review grant.
+
+The router evaluates original draft LLM/CTC/confidence but replaces accepted
+aligned segments. Selected confidence and global validated_by cannot identify
+which segment was corrected or reproduce the original policy decisions.
+Retain separate frozen SegmentOrigin records with original/selected confidence,
+actual routing reason/outcome, registered validator/returned text, refusals and
+absolute selected Word tuples. Both real native and WSL call sites forward the
+explicit router return. This deliberate Word duplication permits exact binding
+to canonical words without guessing segment membership from caption timing.
+
+RawTranscript checks complete chronological traces, exact selected text/words/
+confidence/aggregate validator/refusals and original full-batch policy replay.
+Reporting uses recorded original inputs, not post-correction confidence. Preserve
+the bottom-quartile/material-CER policy and existing100ms alignment allowance.
+Strict production stops still retain original diagnostic results without a
+completed trace. Invalid/empty responses cannot appear as accepted corrections.
+
+The optional key is omitted when absent, preserving existing serialization and
+digest. Present empty/malformed/inconsistent records refuse rather than downgrade
+to unknown. Do not infer legacy origins from validated_by. SegmentTranscript and
+its exact four-field resume records are unchanged; canonical artifacts remain
+write-once. Existing retained ZAR bytes/hash were actually checked unchanged.
+
+This is self-consistency provenance, not authenticated model execution, acoustic
+accuracy, a model-revision observation, human editorial review or publication
+authority. A trace does not repair the retained20.8s ZAR word span or admit a
+worker. Current VEX#24, protected execution/HTTP/review/revision/export and
+independent corpus/creator/editor/performance/sustained acceptance remain.
+Specs/callers/named tests: specs/asr-segment-origin; evidence/asr-segment-origin-20261009.md.
+Full exact gate and applicable same-SHA CI still govern acceptance.
+
+## D-316 - Original Routing Is Not Selected-Output Replay Or Human Validation
+
+2026-10-09, approved evidence-based-studio Phase5; BLUEPRINT sections3/4.1/5,
+D-110/D-135/D-315. No dependency, model, selection, licence or authority change.
+
+Legacy RawTranscript has selected confidence/text but no original trace. Current
+report replays those selected scores and labels the result original escalation.
+Actual retained ZAR report72 differs from bound original checkpoint replay76;
+synthetic corrected3-draft batch reports0 after removing only its trace.
+These are distinct policy inputs, not proof routing was skipped or observed zero.
+
+Keep outer asr_diagnostics_status as availability. Add asr_routing_status:
+recorded-original, legacy-selected-replay, partial-unbound, unavailable.
+Only complete D-315 original traces populate escalation. Legacy/supplied unbound
+cases expose null original escalation and separately labelled
+escalation_diagnostics with input_evidence and summary. Preserve useful count,
+trigger and reason computations there; unbound records do not bind a policy
+threshold or trigger categories. Legacy words without segment scores provide no
+replay, so absence is unavailable or supplied unbound diagnostics, not zero.
+Missing originals are unknown, not inferred from global validated_by.
+No historical transcript, hash or checkpoint payload is rewritten.
+
+The console consumes the same JSON representation, including recorded zero,
+legacy/unbound replay and unavailable routing. Preserve pairing with the first
+flagged reason; Stage1 routes the ASR validator, not an authenticated human.
+This deliberately corrects the JSON report contract instead of retaining a
+misleading observed count for compatibility. Actual direct/durable/CLI callers
+and existing mathematical assertions are mapped/preserved/strengthened.
+
+Recorded means trace self-consistency, not authenticated model execution,
+accurate speech or human review. This reporting repair does not fix the real
+region137 contraction, admit protected HTTP/GPU/provider execution, refresh
+VEX#24 or complete review/revision/export/independent acceptance.
+Specs/named tests/callers: specs/asr-routing-report;
+evidence/asr-routing-report-20261009.md. WIP until exact gate/current CI evidence.
+
+## D-317 - Publish Complete Worker Transfer Bytes Without Replacing Evidence
+
+2026-10-09, approved evidence-based-studio phases1-2; BLUEPRINT sections3/4.1/7,
+D-136/D-315/D-316. No dependency, model, routing or publication-authority change.
+
+The worker's exclusive final-file open prevented replacement but exposed the
+name before serialization/write completed. Actual encoding refusal and original
+child termination left empty final bytes. Occupied names refused after inference.
+Transfer artifacts are not canonical reuse or review/publication authority.
+
+Refuse occupied names with lstat before model construction, including dangling
+links. Serialize and UTF8 encode complete JSON plus its existing LF before opening
+an exclusive unique sibling stage; flush/fsync, close and atomically os.link to
+the final path without replacement. Preserve the existing transcript-store pattern.
+Concurrent writers still require the final no-replace operation; early checks
+alone cannot authorize publication. Never use overwrite helpers or rename fallback.
+Cleanup removes only the owned stage, not old unknown evidence. An original
+process killed before cleanup may leave a stage requiring explicit reconciliation.
+Unsupported link/filesystem/storage operations refuse, not downgrade guarantees.
+
+Eight named real-file regressions cover encoding, retained files/directories,
+original child death, unchanged JSON/LF/Sorani bytes, simultaneous writers and
+unrelated stage retention. Explicit model doubles are not neural inference.
+Native WSL/tmp and DrvFS link calibration is separate OS evidence, not power-loss
+or directory-fsync durability, hostile-owner isolation, GPU/effect completion,
+accurate speech, authenticated review or completed media publication.
+Specs/callers: specs/worker-result-publication;
+evidence/worker-result-publication-20261009.md. WIP until exact gate/current CI.
+
+## D-318 - Bound Audit EOF And Root Wait Without Reducing Stream Budgets
+
+2026-10-09, approved evidence-based-studio phases1-2/full-fix continuation;
+BLUEPRINT sections3/4.1/7; D-308/309/311/313. No new runtime dependency.
+
+Blocking audit reader threads joined indefinitely when a descendant kept an
+inherited pipe open after root exit or timeout. Actual generated pipe faults
+exceeded a one-second budget by waiting for the descendant's own exit. Replace
+daemon readers with owned bounded platform capture; caller ProcessOutput and
+scanner options/locks/receipt/VEX/asset acceptance remain unchanged.
+
+Windows reuses original NativeJob, private overlapped pipes, cancellation,
+image lease and uncertainty quarantine. Existing integer combined output
+budget behavior remains intact. Explicit independent mode requires combined
+None plus both exact positive stream caps, each at most16MiB; incomplete/mixed
+budgets refuse before launch. Scanner keeps16MiB stdout plus64KiB stderr, not
+a reduced combined cap. Full independent healthy bytes/limits are tested.
+
+Selected executable bytes are observed for an original image lease, not trusted
+runtime admission. The linked default System32 WSL stub refuses with an explicit
+configuration message; do not weaken the single-link image guard, copy a binary
+or silently substitute a launcher. Actual configured Program Files/WSL route
+requires fresh live retesting. Studio protected-launcher admission is separate.
+
+POSIX uses original Popen-owned nonblocking descriptors and a selector, with an
+absolute output/root deadline and five-second original-root cleanup. No reader
+threads, unbounded join/wait/communicate, guessed PID/group kill or resource
+substitution. Retain execution uncertainty after POSIX refusal and prohibit
+further audit launches in that owner; retain after WSL native failure because
+Windows Job shutdown does not certify original Linux/effect completion. Cleanup
+tries every owned stream and the original root even if a close fails. This is
+owner-process refusal, not persisted protected-worker admission/reconciliation.
+
+No Linux descendant/GPU/provider/billing quiescence, qualified VEX disposition,
+new speech quality, accepted publication, release or10/10 inferred from bytes.
+Original Linux controller, resource/effect handshake and independent review
+remain required. Named regressions/callers: specs/audit-output-deadline;
+evidence/audit-output-deadline-20261009.md. WIP until exact gate/current CI.
+
+## D-319 - Held Original Linux Namespace Scope (2026-10-09)
+
+Approved-parent evidence-based-studio phases1-2/native-worker-owner T3 requires
+original Linux ownership before protected producer/HTTP adoption. LinuxScope
+receives a bounded kernel SCM_RIGHTS/SCM_CREDENTIALS handoff on a dedicated
+unnamed creator socketpair, binds an unpredictable challenge to the original
+namespace-init pidfd, and verifies direct child PID/user namespace relationships,
+owner UID and every original member through kernel pidfd namespace queries.
+Retain non-inherited rights and separate file-description anchors. Never signal
+host init, a numeric PID, substituted descriptor or unadmitted handoff.
+
+Descriptor transfer must end with actual peer write-shutdown/EOF. Empty packets
+do not establish that condition; checked Linux UAPI POLLRDHUP disambiguates it.
+Duplicates/truncation/trailing rights refuse and every received unadmitted right
+is cleaned while owner uncertainty remains retained. Reentry checks retained
+ownership before socket name validation: SO_PASSCRED/send may autobind a socket.
+Worker release/confirmation uses a separate direction/channel, not a reusable
+descriptor-transfer stream. No IO deadline reset or automatic uncertain retry.
+
+Checked local typed libc pidfd_send_signal supports the retained Python3.12 host
+without globally patching os/signal, changing models or guessing syscall numbers.
+Kernel ioctl/UAPI constants are corroborated by installed headers and actual
+retained-runtime CPU observations. Unsupported hosts/capabilities refuse. No
+new runtime dependency or third-party example code is bundled. System unshare
+is used only by current CPU tests; production utility/runtime byte admission
+and any actual bootstrap adoption require their separate integration evidence.
+
+Stop signals only the fully admitted original init anchor and waits for original
+admitted members under a finite deadline. Failed observation/descriptor cleanup
+retains uncertainty/capabilities and refuses new admission. Clean descriptor
+release is not durable attempt release, GPU driver drain, provider/billing
+settlement or publication. A later dedicated owner-death bootstrap and fixed-ID
+DBOS producer must adopt byte/source/model/security/raw-authority admission,
+sticky event/effect fences and resource reconciliation before HTTP generation.
+
+BLUEPRINT2-5/8.1-8.3 and D-263/D-274 remain the complete goal. Named regressions,
+current Serena maps, EARS/approved-parent plan: specs/linux-original-scope;
+evidence/linux-original-scope-20261009.md. Local-only/WIP, not DONE/10/10.
+
+## D-320 - Sealed Original Owner Namespace Bootstrap (2026-10-09)
+
+Approved-parent evidence-based-studio phases1-2/native-worker-owner T3 requires
+an actual owner-death launch boundary, not only a namespace handoff helper.
+LinuxNamespaceBootstrap prepares a bounded caller-selected utility ELF in a
+dedicated single-thread controller. Hash the actual bytes, copy to executable
+memfd, apply checked kernel seals including EXEC/SEAL, and retain independent
+description anchors plus the creator's original self-pidfd before any fork.
+No new dependency, global runtime patch, guessed syscall or model-policy change.
+
+Only that creator's direct fork child may execute fixed user/PID/mount namespace
+flags using the original sealed descriptor. Checked typed local libc installs
+SIGKILL parent-death, reads it back, checks the same original owner after
+installation and before FD exec, and verifies no-new-privileges. The original
+owner capability, not numeric PID reopening or terminal True fields, is the
+liveness authority. Parent PID comparison checks direct relationship only;
+no numeric PID is signaled or used to reacquire a lost capability.
+
+The child removes inherited host descriptors except explicit bounded socket/pipe
+controls and its own CLOEXEC capabilities. STD0/1/2 use real inheritable null
+streams, never host control pipes; promote the temporary null FD above STD slots
+so closing it cannot destroy a synthesized standard stream. Parent descriptors
+are unchanged. A creator with a closed STD refuses before owned allocation,
+preventing original utility/owner capabilities from occupying STD slots.
+Substituted descriptors refuse without closing foreign objects;
+cleanup uncertainty retains owned references, not successful attempt release.
+
+Actual tests connect this bootstrap to unchanged LinuxScope and retain original
+controller/bootstrap/init/setsid-member pidfds before normal/forced owner death.
+The pre-handler race refuses before exec. This is not yet a complete production
+Windows-owner EOF supervisor, calibrated all-descendant/GPU/service/provider/
+billing drainage, durable attempt completion or protected DBOS producer.
+Sealing one utility does not admit the dynamic loader/interpreter/libraries,
+HawEdit source, model/adapter/input bytes or trusted security/owner authority.
+Those remain mandatory before model release and HTTP generation. Not a hostile
+same-user sandbox. BLUEPRINT2-5/8.1-8.3/D-263/D-274 and full original acceptance
+remain intact. Specs/linux-owner-bootstrap and its evidence, WIP until gate/CI.
+
+## D-321: Immutable Private Revision Publication
+
+The approved studio plan requires new immutable revisions, not reusable IDs
+that overwrite reviewed content. Supersede proposals.py's historical documented
+duplicate-ID overwrite behavior: both caption and boundary commits refuse an
+existing revision pathname. Retain the named regression, strengthening it to
+refusal/preservation instead of deleting coverage or accepting overwrite.
+
+Use exclusive unique same-directory staging and native hard-link no-replace
+publication for revision JSON/ASS/SRT/EDL, matching render.py's existing MP4
+publisher. Generic atomic metadata writers and public function signatures stay
+unchanged. Lifecycle status updates are distinct from immutable revision content.
+An approved decision delta is a recorded editing decision, not proof its record
+or media was published; publication/storage refusal remains an explicit error.
+
+Before staging, atomically publish a persistent per-revision render claim bound
+to the original record digest. Only its winning caller may update lifecycle
+state. Retain claims on success, failure or uncertain interruption; existing
+claims refuse replay and require explicit reconciliation/new identity. Do not
+guess owner PIDs, expire claims by age, or treat this as completed DBOS recovery.
+
+Burn the owned staged ASS, never a competing final sidecar. Refuse occupied
+artifact paths before any encode/write. On a losing MP4/sidecar publication race,
+clean only owned staging and retain existing final artifacts. Do not undo the
+renderer's no-replace protection by unconditionally unlinking final MP4.
+Partial private outputs retain explicit failed/missing-sidecar status and require
+reconciliation or a new identity; they are not completed/published deliverables.
+Preserve canonical sentences, boundary/caption invariants, real measurements,
+fresh-review requirement and authenticated candidate publication policy.
+
+No new dependency, model/cloud call, trust root, HTTP editing or publication
+authority. BLUEPRINT4.3.6/8.3/D-263/D-277 and original independent acceptance
+still apply. specs/immutable-revision-artifacts is WIP until exact gate/current CI.
+
+## D-322: Private Revision Readiness And Review Provenance
+
+Approved parent evidence-based-studio step6; no new dependency/model/trust or
+publication authority. Actual977425f Serena maps and test-first evidence in
+specs/revision-review-truth. D-321 refuses occupied artifacts and retained claims
+at execution, so the read-only render proposal must expose the same refusal.
+Reuse artifact refusal for ASS/MP4/SRT/EDL and persistent claim paths, without
+mutating them. This is point-in-time readiness, not a reservation or permission
+to bypass the actual atomic render claim after a race.
+
+Correct the earlier proposal-approval-as-QC interpretation: approving an editing
+decision is not authenticated review of its final changed bytes. Build private
+caption/boundary revision clips with explicit unreviewed/non-auto-pass QC from
+the start; do not manufacture reviewer/timestamp/zero-hash review fields even
+temporarily. for_review=True retains existing real editorial, boundary, caption
+and rendering gates while leaving publication review outstanding. Compute prior
+QC invalidation from original clip's review marker, which is not itself evidence
+that a detached signature was verified. Always require fresh final-byte review.
+
+Real-render regressions cover both revision kinds, all occupied sidecars/MP4/
+claims, absent/unreviewed/reviewed original QC and original report preservation.
+Read-only Python profiling observes actual render arguments without replacing
+the renderer; full real FFmpeg render and sidecar assertions remain. No mock
+encoder, skipped case, changed golden/fixture, signature self-approval or relaxed
+gate. Canonical text/anchors/clocks, centre-crop limitation and real owner claim
+remain unchanged. BLUEPRINT2/4.3.6/8.3 and D-263/D-277 remain obligations.
+Unit WIP until exact committed gate plus required same-SHA CI, not full studio
+integration, model-byte admission, improved ZAR result or10/10 acceptance.
+
+## D-323: Owned Immutable Linux Consumed-Byte Preparation
+
+2026-10-09, approved-parent evidence-based-studio phases1--2/native-worker-owner
+T3 preparation. Actual readonly descriptor-backed bind consumes changed bytes
+after original Windows backing custody is deliberately released. It cannot be
+treated as immutable storage. Anonymous sealed memfd accepts seals but its
+pathname bind refuses EINVAL22 on the actual kernel. Preserve both results.
+
+Use independently owned regular-file copies in a private readonly tmpfs tree
+for this prerequisite, with exact declared content/size, finite copied-byte/
+file-count/deadline, closed write descriptions, kernel readonly/capability
+readback and architecture-checked namespace-reentry fence. Same original owner/
+namespace/root descriptor is required for live use. Failures after irreversible
+namespace transition require owned process exit/reconciliation, not retry.
+No generic callbacks, JSON/receipt authority or transferred capabilities.
+
+No new runtime dependency or change to existing native image/utility bounds,
+canonical models, billing/owner/review/security policy. This component is not
+a complete loader tree, model/runtime/GPU/effect admission, malicious same-
+privilege sandbox, totalRSS/cgroup ceiling or registered producer. Initial
+trusted controller, complete consumed-byte closure, capacity and original
+native/Linux quiescence still must be proved before DBOS/HTTP release. No
+agent-owned policy source/reviewer/date rebinding. Whole system/acceptance open.
+
+Research/specs/impact/approved plan/ledger: specs/owned-linux-snapshot. Actual
+raw kernel/copy/loss evidence and versions:
+C:/Users/Wareen/HawEdit-producer-adoption-research-aeca0ae-20261009.md.
+
+## D-324: Validator Natural-Completion Admission And Cache Invalidation
+
+2026-10-09, approved-parent evidence-based-studio phases1--2. Nonempty Qwen SDK
+text is not generation termination evidence because decoding strips special
+tokens. Observe original unchanged generate/result.sequences under serialized
+temporary binding; pin actual qwen-asr0.0.6/Transformers4.57.6 implementation,
+require greedy single generation, unchanged configuration and original prefix,
+natural EOS before the unchanged512-token cap. Refuse ambiguity, forced/custom
+stops and unsupported/mutated implementations; restore on success or failure.
+
+Bind canonical native/WSL transcript admission and genuine worker journals to
+the validator guard; preserve and refuse old text-only caches, never rebind or
+overwrite canonical originals. No decoder/model/token-cap/runtime dependency
+change, fake completion authority or guess/clamp of speech/timing. Natural EOS
+does not prove acoustic/semantic completeness or trustworthy CTC alignment.
+Genuine admitted consumer, bad-region native-editor evidence, current qualified
+security review, protected producer adoption and all seven phases/AC1--AC12
+remain open. Unit WIP absent exact green committed gate and same-SHA CI.
+Research/spec/impact/approved plan/ledger: specs/qwen-completion.
+
+Same-unit correction: actual pinned GenerationConfig may select assisted or
+DoLa generation through prompt_lookup_num_tokens/assistant_early_exit/dola_layers
+with one beam and sampling off. Real retained configuration/controlled CPU
+tokens reproduced three unexpected observer admissions. Explicitly refuse all
+three fields and bump cache policy v2; no decoder/weight/cap change. Preserve
+original red and superseded exact6c3b5d6 gate interruption, then require new
+whole exact corrected-commit verification. No v1 history rebind or false pass.
+
+## D-325: Explicit Rooted Copied Consumer Image
+
+2026-10-10. Wareen explicitly approved the rooted-linux-image plan. Extends
+D-323 after the genuine installed Transformers configuration consumer escaped
+the descriptor pathname through normalization and consumed replaced parent
+bytes. This approval authorizes private copied runtime/model inputs, not new
+installations, provider spending, licence acceptance, publication or security
+self-approval. BLUEPRINT sections2--5/8.1--8.3 and model canon remain unchanged.
+
+Retain data-only defaults. Explicit typed rooted mode permits individually
+declared executable permissions and a bounded128GiB aggregate image ceiling;
+default1GiB, per-file32GiB, default4096-file and100000-file hard ceiling remain.
+Copy and hash actual regular single-link bytes into independent owned storage,
+bind readonly proc in the private mount namespace, remount readonly, enter the
+original-description-bound process root/cwd and drop capabilities before the
+existing architecture-checked namespace-reentry fence. No mutable host bind
+allowlist, Path.resolve override or metadata-ready flag substitutes for custody.
+
+Actual CPython3.14.4 import opens a retained libffi executable description.
+Upstream libffi tramp.c documents retaining its binary FD for new executable
+callback-table mappings. Blind closure breaks runtime ownership; allowing that
+host-backed descriptor leaves a consumed-byte escape. Require a read-only,
+noninheritable exact executable declaration, hash original bytes, capture its
+original open-description anchor, and rebind that same numeric handle to the
+verified private copy while preserving position. Subsequent inspection requires
+the private original description, not inode equality alone. Close only snapshot
+anchors; leave library-owned private handles until actual process scope drain.
+Outside directories and unknown/writable/inheritable/changed handles refuse.
+Freeze the original FD inventory before acquisition: an iterator's closed FD
+number can otherwise be reused by a new anchor and incorrectly admitted twice.
+
+This is not model/runtime closure, controlled resource reservation, original
+controller/member lifetime, malicious same-privilege/kernel isolation, DBOS/HTTP
+producer registration or video quality acceptance. T2/T3 and the original seven
+phases/AC1--AC12 remain open. No DONE until exact green gate plus same-SHA CI.
+Research/spec/impact/approved plan/WIP ledger: specs/rooted-linux-image.
+Primary libffi explanation: https://github.com/libffi/libffi/blob/master/src/tramp.c
+
+## D-326: Explicit Read-Only Private Kernel Entropy
+
+2026-10-10. Wareen explicitly approved specs/rooted-kernel-entropy/plan.md.
+D-325's actual copied retained Python3.12.0 cannot initialize hash entropy:
+its compiled kernel-entropy APIs are absent although fenced libc.getrandom
+works. Keep the pinned interpreter and model policy; do not install/rebuild,
+fix the hash seed, fabricate random regular bytes or weaken the namespace fence.
+
+Only an exact boolean rooted-image opt-in may expose genuine kernel character
+major1/minor9 at private /dev/urandom. Capture no-follow readonly noninheritable
+original descriptor/anchor custody, bind only that device in the private mount
+namespace, reserve the endpoint against declarations, remount readonly/nosuid/
+noexec, retain nodev/read-only elsewhere and verify actual path/mount/description
+identity on use. Entropy is mutable kernel state, not hash-bound copied media.
+No arbitrary host/device allowlist or host-directory access. Cleanup refuses
+to close substituted foreign descriptions, including same-inode reopenings.
+
+Readonly mount metadata alone does not prohibit character-device write opens:
+actual WSL6.18.40.1 negative calibration demonstrates this without writing any
+bytes. The opted-in readonly image therefore also refuses writable/creating/
+truncating open/openat, creat, and pointer-flag openat2 via the existing x86_64
+seccomp fence. Readonly opens and all default non-opt-in behavior stay intact.
+Existing writable entropy handles refuse; no host-device chmod is allowed.
+Future SDK scratch/device requirements must be explicit and cannot silently
+relax these controls. Primary semantics: Linux6.18 fs/namei.c sb_permission/
+may_open, https://github.com/torvalds/linux/blob/v6.18/fs/namei.c.
+
+Opt-in also refuses io_uring setup/enter/register and preexisting ring handles:
+async internal opens bypass ordinary syscall-entry flag inspection. Actual
+kernel controls first reproduced both missing refusals; no ring submissions or
+device writes were made. Mount cloning precedes original endpoint acquisition
+so its descriptor belongs to the private namespace. Genuine read-only device
+identity uses the existing fail-stop platform-capability helper on Windows.
+Primary async path: https://github.com/torvalds/linux/blob/v6.18/io_uring/openclose.c.
+
+This owner architecture approval is not independent security review (#24),
+full SDK/model/input closure, resource/controller/member admission, GPU/device
+permission, billable provider readiness, authenticated reel publication or a
+10/10 verdict. Exact full gate and same-SHA CI obligations remain; task rows WIP.
+
+## D-327: Fixed Private WSL GPU And Mandatory Leaf Policy
+
+2026-10-11. Wareen explicitly approved specs/rooted-wsl-gpu/plan.md. Extends
+D-325/D-326 without a new runtime dependency, model, installation, host directory,
+cloud scope/spending increase or publication. Implements BLUEPRINT §§3,5,7;
+§§8.1-8.3 evidence obligations and BLOCKED #24/#25 remain independent.
+
+Default-off exact boolean wsl_gpu requires rooted image and genuine readonly
+entropy. Admit only no-follow /dev/dxg character10:258, single-link original
+noninheritable O_PATH descriptor/anchor. Acquire after private mount cloning;
+bind only that endpoint, readonly/nosuid/noexec without nodev on the leaf,
+retain readonly/nodev private root and all original-description checks. Device
+bytes are kernel state, never represented as hash-bound copied files. Host UID0
+maps to overflowuid in Bootstrap's existing user namespace; worker UID is not
+host ownership proof. No caller path/device allowlist or source-backed runtime.
+
+Before SDK imports or device I/O, require actual unprivileged Landlock ABI>=6
+and successful ruleset/add-rule/restrict-self calls while single-threaded with
+NoNewPrivs1/zero capabilities. Handle filesystem rights0-15 (including creation,
+write/truncate/remove/refer/device ioctl), TCP bind/connect and abstract-UNIX/
+signal scopes. Grant image read/execute and fixed GPU leaf read/write/device
+ioctl only, never writable entropy or scratch. Policy inheritance is tested
+through real fork, threads and freshly executed copied Python. No permissive
+compatibility fallback. Kernel entropy-write/reopen denial is inspected on use,
+not inferred from stored affirmative policy flags. Landlock may still permit
+common safe ioctls; do not claim that every ioctl is blocked.
+
+Pre-policy descriptions are exempt from Landlock. Refuse foreign devices,
+pipes/anonymous I/O, asynchronous rings and undeclared sockets; only Bootstrap's
+fixed null stdio, declared readonly executable descriptions and explicitly
+declared borrowed unnamed AF_UNIX/SOCK_SEQPACKET control channels remain.
+Controls require original FD-anchor custody, noninheritability and actual
+kernel blocking flags, not Python wrapper getblocking alone. Original controller
+authentication/member lifetime/resource admission are NOT established by this
+component's socket declaration. Never close a substituted borrowed description.
+
+GPU mode alone may replace the global access-mode open denial after actual leaf
+enforcement; retain create/truncate/append, creat/openat2/io_uring, namespace
+entry/clone restrictions. Deny new non-AF_UNIX socket/socketpair domains,
+recvmsg/recvmmsg handle transfer and pidfd_getfd. Original control recv/send and
+in-domain socketpairs remain usable; real external abstract connections refuse.
+GPU driver calls reach Windows and add attack surface; this is not zero-risk
+or a qualified VEX review. Primary policy semantics:
+https://docs.kernel.org/userspace-api/landlock.html.
+
+Native endpoint/control passes do not establish CUDA tensors, canonical model/
+input closure, trusted validator bytes, reserved RAM/VRAM, production owner
+lifetime or protected DBOS/HTTP adoption. Full exact gate, same-SHA CI, current
+independent driver/runtime review, real ZAR and native editorial/reliability/
+accessibility/performance/30-day acceptance remain. All task rows WIP.
+
+## D-328: Original Kernel Thread Registry Before Driver Release
+
+2026-10-13. Wareen explicitly approved specs/rooted-thread-name/registry-plan.md.
+Extends D-325--D-327 without new dependencies, installation, host directories,
+spending, licence acceptance, push or publication. BLUEPRINT sections 2,3,5,7
+and 8.1--8.3; BLOCKED #24/#25 and current independent VEX remain separate.
+
+Opt-in Linux x86_64 private PID1 controller, NNP/kernel fence/zero capabilities,
+readonly root/proc and only original PID2 child. Borrow original pidfd/task root;
+kernel TRACEME/startup/clone/exec stops establish membership before resumption.
+No caller registration or late task enumeration. Independent descriptor anchors
+and F_DUPFD_QUERY reject substitutions and even same-inode reopening. Original
+task status must establish Pid/Tgid/TracerPid. Reap all kernel-born members,
+including a refused budget-exceeding birth, before releasing custody. Preserve
+foreign substituted primary slots; retain uncertainty when anchors differ.
+
+Controller ptrace filter permits only signal-free CONT, exact TRACECLONE/
+TRACEEXEC/EXITKILL SETOPTIONS and GETEVENTMSG on non-controller targets; kernel
+tracer relationship further limits authority. No attach, syscall tracing,
+memory/register writes or altered syscall results. Bootstrap-only worker TRACEME
+is followed by irreversible ptrace/process-creation refusals. Thread clone flags
+are explicitly whitelisted; UNTRACED/PTRACE/parent/namespace escape flags refuse.
+clone3 returns genuine seccomp ENOSYS, matching the existing snapshot policy and
+allowing glibc to use the strictly checked clone call, not unrestricted creation.
+
+At most64 lifetime births,256 wait events and30s including cancellation/reaping.
+Lower admission budgets withhold rejected births and retain kernel relationship
+solely for drain. This feasibility lifetime does not authorize a full ASR job.
+Genuine comm leaf descriptions must reach the original group through atomic
+ADDFD_SEND; a controller-side write itself is refused EINVAL by the kernel.
+The component does not replace Snapshot or grant model/effect admission. Typed
+stopped-worker/broker integration, copied runtime/Torch, original external owner,
+resource admission, full gate/CI and independent security/quality remain pending.
+
+### D-328 Implementation: Bounded Source Comm Broker
+
+2026-10-13. The approved original-registry/broker boundary now has a production
+notification component, still default-off and not a general file service. Actual
+kernel ABI sizes and genuine borrowed listener descriptions are checked before
+use. Copy at most128ASCII pathname bytes, validate registered original caller/
+target and exact open/openat path/dirfd/flags/mode, then atomic ADDFD_SEND from
+the genuine original task comm leaf. Unknown shapes get actual EPERM; kernel
+stale IDs retain ENOENT.32requests/30s/one controller, no CONTINUE or fake FD.
+
+Private PID1 ignores default signal actions, and O_NONBLOCK does not bound
+NOTIF_RECV. A fixed controller-only SIGALRM handler plus a genuine absolute
+CLOCK_MONOTONIC POSIX timer bounds receive/copy/response. Never reset/restore
+ITIMER_REAL: an existing original one-shot remains physically unchanged and
+can interrupt earlier. Custom handlers and periodic timers refuse. Delete only
+the broker's original timer; retain uncertainty on handler/timer cleanup failure.
+No arbitrary callback, worker signal via ptrace, installation or new dependency.
+Qualified VEX review, typed stopped-worker lifecycle, complete copied SDK/model/
+input/resource/external owner and production effects remain separate obligations.
+
+## D-329: Original Stopped-Worker Preparation Boundary
+
+2026-10-13. Wareen explicitly approved the typed private-view handoff in
+specs/rooted-thread-name/launch-plan.md. Extends D-319/D-325/D-328, no new
+dependency, installation, spending, publication or model-policy change.
+BLUEPRINT sections 2,3,5,7 and 8.1--8.3; BLOCKED #24 stays unresolved.
+
+The first additive source unit checks the original Scope before image copying.
+Exactly original PID1 and stopped PID2, direct kernel PIDFD_GET_INFO lineage
+and credentials, original PID/user namespaces, matching original mount view
+and owning user namespace, single-thread creator/members, NNP and zero
+effective/permitted/inheritable/ambient capabilities are required. Preserve
+the early CapBnd boundary; dropping it here would alter Snapshot preparation.
+Proc observations use only numeric identities derived from live original
+pidfds, bounded original task-directory reads and before/after custody/liveness
+checks; no process discovery, caller boolean or late worker adoption.
+
+require_preparation_ready returns no authority, never signals or executes, and
+has a finite deadline capped at thirty seconds. Refusal retains the existing
+Scope's cancellation capability. It is explicitly point-in-time: trusted launch
+must keep the worker held, and separately prove the prepared private user/mount/
+root transition, fence the worker and drain the controller before any SDK
+release. That integration is not implemented by this initial precondition.
+Default Scope admission/EOF/stop/close and Snapshot defaults remain unchanged.
+
+Primary Linux v6.18 UAPI/kernel sources for PIDFD_GET_INFO and namespace queries:
+https://raw.githubusercontent.com/torvalds/linux/v6.18/include/uapi/linux/pidfd.h
+https://raw.githubusercontent.com/torvalds/linux/v6.18/fs/pidfs.c
+Actual native preparation regressions are not copied-Python/Torch, ASR, GPU
+security admission, same-SHA CI, native-editor review or a new ZAR deliverable.
+
+### D-329 Implementation: Original Prepared-View Witness
+
+2026-10-13. Approved launch-plan RT2A now has an additive outside-owner witness.
+Capture original task/root/mount descriptions while original PID2 is held,
+before preparation. Separate unnamed original SEQPACKET channel requires fresh
+nonce, exact original PID1 kernel credentials, three namespace/root rights and
+sealed EOF. Independent OFD anchors reject substitutions and same-inode reopen.
+Observe actual PID1 through original pidfds/tasks, direct child private user,
+mount-owner binding, current root/cwd, new readonly tmpfs and genuine readonly
+proc for original PID1. Original PID2 must remain stopped in its initial view.
+Check original PID1 lineage, NNP, single-thread/untraced state; preserve early
+preparation capabilities, not premature full dropping. Thirty-second maximum.
+
+Custody uncertainty is sticky. Collect all delivered rights before anchoring;
+real allocation failure must not leak rights. Close only verified owned OFDs,
+preserve foreign primary/anchor/witness slots and refuse uncertain cleanup.
+Closing a witness does not claim original Scope drain. Default Scope admission,
+EOF/stop/close and Snapshot behavior remain unchanged. No path/callback/boolean
+SDK grant, general FD service, namespace join or unfenced Snapshot is exposed.
+
+Test program transport uses existing bounded native stdin rather than exceeding
+Windows argument limits. Visible self-edit marker; existing assertions and
+fixture/golden/gate steps unchanged. Genuine kernel controls, not simulation.
+Original worker join/final fence, actual copied runtime/model/producer/ZAR and
+qualified current VEX/CI/quality acceptance remain separate unfinished work.
+
+### D-329 Implementation: Joined Original Worker Re-Observation
+
+2026-10-13. Approved launch-plan RT2A step6 now has an additive outside-owner
+verify_joined observation. Reuse retained original pidfds/tasks and authenticated
+prepared rights; require the same original PID2/parent/credentials/PID namespace
+in exactly the prepared user/mount/root/cwd. Worker must remain stopped,
+single-thread, untraced and NNP with all five capability sets zero, including
+CapBnd. This later boundary intentionally differs from pre-copy readiness.
+Repeat original worker status/custody/liveness checks; refuse sticky uncertainty.
+verify_prepared's unjoined contract and all Scope/Snapshot defaults stay intact.
+
+Actual trusted kernel fixtures perform setns/chroot/capability drop and refuse
+damaged transitions, tracing, additional mounts, retained bounding capabilities,
+threads, death, running state and reopened descriptions. No SDK import/exec.
+Observation signals nothing, returns no authority and proves neither closed
+outside handles nor Landlock/seccomp policy. Typed Snapshot integration, final
+worker/controller fences and copied runtime remain mandatory before any model
+release. No new architecture authority, dependency, rights, spending or bypass.
+
+### D-329 Implementation: Non-Returning Fenced Worker Component
+
+2026-10-14. Approved launch-plan steps6--7, WIP, not full RT2B adoption. Extract
+existing cap-drop/Landlock/namespace-fence primitives for shared trusted use;
+Snapshot defaults, its ordinary BPF rules and final inspection remain intact.
+RootedCommand contains only an exact manifest-listed ELF, bounded direct argv
+and explicit bounded environment. No shell dispatcher, callback or generic FD
+allowlist. Original PID2's entry authenticates PID1 nonce/credentials/exact three
+rights/sealed EOF, direct user/mount relationships and actual PID1 root/cwd/
+proc, enters only that root and verifies every declared copied file hash/size/
+mode before selecting the copied executable. Close all outside/bootstrap/query
+handles, drop all caps, require actual Landlock ABI6+, check genuine entropy
+write refusal, then install the shared genuine notification fence before exec.
+
+Worker canonical fopen opens are notified before general write denials; the
+trusted controller permits only the registry's distinct anchored-leaf open
+shape. Both retain namespace/network/foreign-FD refusals. Controller is trusted
+code only, not a model process; final controller Landlock/default fence/drain
+and production typed Snapshot ownership still need integration. Roles are
+private primitives, not constructor options or a returned unfenced Snapshot.
+Original registry TRACEME/start/birth/exec handling is reused unchanged.
+
+Real source failures exposed a lazy ASCII codec after root entry, unbound
+ctypes prctl pointer truncation and mismatched worker/controller open flags.
+Fix with trusted pre-entry codec materialization, explicit native ABI binding
+and the genuine registry open shape, not syscall rewriting or wider writes.
+Host/controller misuse raises before process termination; genuine private
+worker failures exit74. Execution lifetime/result bounds remain the original
+owner/controller's obligation, not claimed by this standalone component.
+
+Actual copied ELF and existing base Python3.12.0 start under original Scope/View/
+Registry in diagnostic fixtures. Kernel observation sees only three null streams,
+original channel and copied executable before SDK startup; zero capabilities/
+NNP/seccomp/readonly root are checked. Native brokers inject/refuse real FDs.
+This does not copy/admit the complete Cortex SDK, Torch/model/resources/input,
+protected producer or a new ZAR reel; no qualified review/CI/10 claim follows.
+
+### Typed Diagnostic Controller Adoption, 2026-10-14
+
+Approved launch-plan RT2B gains default-off RootedLaunch in the existing Snapshot,
+not a second pipeline or an unfenced returned object. The controller owns only
+original PID2 and pre-communication original channels, binds exact immutable
+files/command before copy, exchanges original prepared/joined View observations,
+services existing Registry/Broker and bounded combined output, drains, then
+requires final Landlock/fence/inspection before releasing a pending result.
+Diagnostic30s/64KiB/64birth/32request ceilings remain; GPU is explicitly refused
+until the distinct controller combined-policy unit, not silently downgraded.
+
+Kernel SO_PASSCRED autobinding requires capturing unnamed channels before send,
+not relaxing name assertions after a handshake. Worker exit can make a listener
+readable through hang-up without a pending notification: drain kernel registry
+events and check POLLIN. A Windows-only placeholder-root declaration defect is
+fixed by making the validation placeholder host-absolute, without touching bytes
+or changing actual Linux roots/hash/capability policy. Native/pure regressions
+cover all these cases. No new dependency, model release or security disposition.
+
+Owner separately approves specs/protected-asr-producer/plan.md on2026-10-14,
+including finite full-source duration and host-owned transport/checkpoints.
+This architecture approval does not renew independent VEX, accept unseen model
+licences, permit installation, increase the US$5 transcript-only cloud cap or
+authorize publication. Qualified security/model/resource and actual media
+acceptance remain separate from engineering and diagnostic results.
+
+### Controller Combined-Policy Proof, 2026-10-14
+
+Approved protected-ASR PA1 first unit, WIP. Snapshot installs and records its
+original trusted controller's non-GPU filter directly; Launch uses that method
+after the original joined-worker handshake. No caller-supplied True flag or
+arbitrary denial-code union constitutes filter evidence. Final default Snapshot
+fence remains stacked and verified before result release.
+
+For this internal profile, separately require EACCES from the exact broker-shaped
+O_WRONLY|O_NOFOLLOW|O_CLOEXEC entropy open (it passes seccomp and reaches mandatory
+Landlock), and EPERM from direct and original-description alias O_RDWR opens.
+The ordinary GPU profile still requires exact EACCES for both original probes.
+Replay, unregistered filters and a boolean standing in for filter identity refuse.
+This fixes proof composition without permitting GPU worker launch yet. Actual
+GPU broker servicing before final controller Landlock, complete copied CUDA,
+resource guards, ASR transport and protected pipeline admission remain required.
+No wider proc grant, new dependency, security waiver or model release.
+
+### Original Task-Root Service And Final GPU Policy, 2026-10-14
+
+Approved protected-ASR PA1 follow-up. Genuine copied Python comm service first
+fails EROFS because the controller opened its task root through readonly proc.
+Hold only the stopped original PID2's private proc-task directory before image
+preparation, with original-description anchors alongside the pidfd/channels.
+Worker receives no task root and retains mandatory readonly proc/root, zero
+capabilities, GPU Landlock and restricted notification/trace fences. No host
+directory or broader outside-FD exception is admitted.
+
+Trusted controller services existing original Registry/Broker under non-GPU
+fence. Verify the registry's one actual filter increment against the kernel,
+then drain/close services, enforce final controller GPU Landlock, stack final
+Snapshot fence and inspect before releasing a pending result. Default no-launch
+GPU ordering, exact original EACCES assertions and diagnostic ceilings remain.
+Mismatch and same-inode task-root reopening refuse before copy, preserving
+foreign slots. Genuine CPU/GPU comm writes and foreign-thread refusals pass;
+actual dxg open is not proof of CUDA computation. Complete SDK/model/resource
+closure, protected canonical inference/host checkpoints, qualified current VEX,
+native Sorani review and a real ZAR reel remain separate requirements.
+
+### Authenticated Diagnostic Completion Evidence, 2026-10-14
+
+GPU null stderr must not conceal init failures in native tests. Worker-death
+observation alone is not a passing final controller result. Keep production
+isolation unchanged; test uses a separate fixed original unnamed SEQPACKET
+channel through existing strict GPU control_fds policy. Parent requires exact
+case-bound frame and kernel credentials of original Scope init after every
+final assertion. Real init exit73 and corrupt final frame refuse test success.
+Earlier75f3a58 canonical gate cancelled by verified exact child PID only;
+no completed JUnit/gate result or original GPU acceptance attributed to it.
+No simulation of kernel results, caller ready flags, writable proc, broader
+FD admission, SDK/model release, source policy change or gate bypass.
+
+### Original Worker Diagnostic Resource Proof, 2026-10-14
+
+Approved producer PA2 prerequisites may use irreversible process-local kernel
+limits inside original PID2. Typed optional limits are explicit and never
+silently substituted for defaults. Apply only after capabilities are dropped,
+read back exact AS/CPU/NOFILE/CORE bounds before copied exec and refuse inherited
+hard-policy relaxation. Diagnostic ceilings stay separate from proposed
+producer budgets. Genuine copied Python allocation/FD/CPU/thread tests and
+original authenticated drain are required. RLIMIT_RSS/NPROC, image quotas,
+global free memory and PyTorch allocator settings are not owned VRAM/effect
+guards. No model/security/producer grant follows from this proof. Evidence:
+evidence/original-worker-resources-20261014.md; ledger remains unpromoted.
+
+### Host-Owned Protected ASR Checkpoint Boundary, 2026-10-14
+
+Approved producer PA3 extracts only the shared canonical inference and an
+operation-cache protocol. Legacy CLI keeps no-clobber file publication and its
+local journal. Protected inference requires the remote host journal, does not
+write worker files, and preserves champion/adapter/validator/origin/alignment
+and first-failure behavior. Host paths never come from frames: opaque audio IDs
+select source/configuration/runtime-bound host files, rehashed with clocks.
+Strict canonical UTF-8 frames cap64KiB; unique monotonically sequenced exchanges
+bind request and payload hashes. An error poisons the session, not a fallback.
+Host ACK follows actual atomic/fsynced persistence under the existing writer
+lease. A final private transcript is capped16MiB, transported in32KiB binary
+chunks, individually retained and hash-checked before a durable result record.
+This pending result is not canonical pipeline completion or publication.
+
+Frame hashes do not authenticate an endpoint. Original-owner native lifecycle,
+private channel credentials, deadline/resource enforcement, complete copied
+SDK closure, qualified current VEX and final effect drain still precede model
+release and acceptance. This unit deliberately does not widen RootedLaunch's
+EOF handoff, add generic callback/executable admission or switch to the legacy
+unprotected subprocess. Controlled backend tests establish protocol parity,
+not Sorani accuracy. No new dependency, licence or spending authority.
+
+---
+
+## D-330 · Per-shot adaptive vertical framing across camera cuts
+
+**Date:** 2026-10-14 · **Blueprint ref:** §3 Stage 6, §4.3.6 · **Type:** deviation from one-placement rule (reframe.median_face_box)
+
+`reframe.median_face_box` originally enforced a strict "one placement for the whole clip" rule to prevent vertical camera shimmer during continuous podcast table dialogue. However, real multi-camera footage (e.g., episode 29) cuts between intimate close-ups (speaker face ~320px) and wide studio shots (speaker face ~140px, showing extensive empty table and chair legs). A single global median causes close-up dimensions to dominate, leaving wide shots without zoom and visually awkward in a 9:16 vertical crop.
+
+D-330 introduces per-shot adaptive framing:
+1. `reframe.per_shot_face_boxes` computes median `(center_y, face_height)` per camera cut interval defined by `shot_cuts_ms`.
+2. Within each camera shot, vertical position and zoom remain strictly stable (no intra-shot shimmer).
+3. At camera cuts, `render.crop_filter` switches crop dimensions via ffmpeg `sendcmd` (using the same proven mechanism as dynamic punch-ins) and steps the target eye line to the new shot's composition line, respecting `MAX_VERTICAL_ZOOM = 1.5`.
+
+**Measurement:** Tested in `tests/test_render.py` and `tests/test_reframe.py`. Backward compatibility verified for single-shot clips without camera cuts.
+
+## D-331 - Draft with a fused champion checkpoint, on GPU 1 only
+
+2026-10-14; owner-approved specs/v12-fused-model plan T1-T6: "make v12 fully set and
+ready to use anywhere", then "Approve all T0–T8". BLUEPRINT sections 2, 3 Stage 1, 6
+and 7; D-136, D-181, D-260, D-281, D-285, D-286 unchanged except as stated; BLOCKED #21.
+
+**Fused checkpoint.** v12 is a rank-64 LoRA trained on fused v11 and then fused into
+one fairseq2 `.pt` (wav2vec2_llama/7b, 10288 ids), so it cannot be an adapter folder.
+`OmniAsrBackend(fused_checkpoint=)` loads it through the LoRA route's direct `7b` card
+and tokenizer-derived vocabulary (D-181, D-285), without PEFT. The tokenizer is the
+held canonical written-v2 file and must report `FUSED_VOCAB_SIZE = 10288` ids, else
+the run halts before weights load. Only CTC-3B and that tokenizer are held from the
+stock set; the stock LLM is neither read nor hashed on this route. A fused checkpoint
+and a LoRA adapter are mutually exclusive everywhere; the LoRA route is unchanged.
+
+**Admission is a code allowlist, never a neighbouring file.** `FUSED_CHECKPOINT_ASSETS`
+sits beside `OMNI_ASSETS` in `omni_assets.py` and holds exactly one entry, "Kurdish
+OmniASR-7B v12 fused checkpoint (c750)": `kurdish_omniasr_7b_v12_c750.pt`, 15,610,646,560
+bytes, SHA-256 `f7b3a5e272e52d6c0677f78fd44c22cf6196a79a3a3057a85b7d72f759ff5fb2`.
+Adding an entry is an owner decision. A `SHA256SUMS` file is not an authority, because
+whoever writes the `.pt` can write it too (VEX control audit, 2026-10-14: CVE-2026-4538
+controls 1 and 2, CVE-2026-24747).
+
+**Identity `fused:<sha256>`.** The host checks that the path is a regular file (not
+followed through a link) whose filename and exact size match an allowlist entry, and
+takes that entry's SHA-256 as the identity. This is cheap, so it keys reuse before the
+worker runs, as D-260 requires. Before any loader, the worker opens the file no-follow
+and single-link, refuses a size other than the allowlisted one before hashing, then
+hashes the held bytes once per process and stat identity. It refuses any digest other
+than the allowlisted one and loads only through a `/proc/self/fd` alias of that
+descriptor. The worker accepts `lora:` with an adapter and `fused:` with a
+checkpoint, never crossed, never both; a stock request still claims nothing. The
+`fused_checkpoint` request field exists only on fused runs, so stock and LoRA
+requests stay byte-identical (D-136). `AsrProvenance.adapter` records the identity.
+
+**Selection.** `--omni-asr-checkpoint PATH` or `HAWEDIT_CHAMPION_CHECKPOINT` selects
+it; either is refused beside `--omni-asr-adapter` or `--stock-decoder`. Set means
+required: a missing `.pt`, a file off the allowlist or a byte mismatch is
+`ChampionUnavailable`, never a fallback to the LoRA champion or the base decoder.
+Unset keeps the LoRA default; making v12 the default is plan T7, an owner decision
+not taken here. The studio host binds the fused path, allowlisted digest and kind; its
+LoRA descriptor bytes are unchanged.
+
+**Not yet bound in the VEX gate.** The WSL runtime receipt, its parser, the probe and
+`tests/test_vex.py` consume `OMNI_ASSETS` through `provision_omni_assets`, which
+downloads each asset from its HTTPS URL. The fused file has no URL and is supplied by
+the operator, so it is not added there. Adding it would need a new provisioning step
+and would change the receipt's three-asset, 43,546,500,168-byte checks and VEX
+`applicability.assets`. Until the owner rewrites the D7/D8 justifications and binds it,
+the VEX's statement that "only the exact reviewed 43.5 GB checkpoint/tokenizer byte set
+may reach the loaders" does not cover fused runs. `security/wsl-asr-vex.json` is
+owner-only and unchanged here.
+
+**GPU 1 only, diverging from BLUEPRINT sections 2, 3 and 6 by owner rule.** LLM, CTC
+and validator default to `DEFAULT_ASR_DEVICE = "cuda:1"`; `HAWEDIT_ASR_*_DEVICE` still
+override. GPU 0 stays visible and the two-GPU setup checks remain, because
+`gpu_runtime` refuses `CUDA_VISIBLE_DEVICES`; Stage 1 simply does not use it. LLM and
+CTC now share one 24 GB card in parallel threads, and D-286's release still precedes
+the validator. That co-residency is unmeasured: plan T0 must record process-local
+peak bytes first, and a peak above about 22.5 GiB re-plans to sequential decoding.
+
+**:8000 coordination.** The omniasr server holds about 14.6 GB of GPU 1 and HawEdit
+never stops it. Before loading, the worker reads `torch.cuda.mem_get_info` for each
+Stage 1 device and halts naming the busy GPU below `DEFAULT_MIN_FREE_GPU_GIB = 20.0`
+(`HAWEDIT_ASR_MIN_FREE_GPU_GIB`). That number is judgment, not a measurement: an idle
+card passes and a card holding the server does not; T0 must replace it.
+`scripts/run-with-omniasr-paused.sh` is the operator route: it takes
+`app/MAINTENANCE` with its own PID (refusing an existing lock), runs `stop_server.sh`
+and the command, then always removes its own lock and runs `restart_server.sh`,
+keeping the command's exit status.
+
+No dependency, licence, model-default, spending or release change; BLOCKED #21 covers
+fused weights too. Synthetic fakes are not inference evidence: loading the real `.pt`
+with fairseq2 0.6, the completion contract on it, and VRAM peaks belong to T0.
+
+## D-332 - Re-decode a looping greedy segment once with beam 5, else halt (amends D-281)
+
+2026-10-14; owner-approved specs/v12-fused-model plan T8. The owner chose "Approve all
+T0–T8", which names "the T8 loop guard (beam-5 retry, else an honest halt)". Amends
+D-281's single-beam admission for exactly this case. BLUEPRINT sections 3 Stage 1 and
+8.1; D-260, D-278, D-331.
+
+**Why.** Measured on the omniasr side (research.md, 2026-10-13; RTX 3090 Ti, GPU 1,
+fairseq2 0.6, omnilingual-asr 0.2.0): greedy v12 loops on 4 of 922 FLEURS clips, and
+upstream stops a loop by compression ratio without EOS, so D-281 halts the whole run.
+Beam 5 removed the loop on 97 of 113 genuine greedy loops (median CER 89.6 to 10.8).
+
+**Rule.** Greedy decoding is unchanged for every segment. A segment is suspect when
+greedy has no sampled natural EOS (`NoNaturalEos`), when its text repeats a unit of
+1-4 words at least 4 times in a row, or when it exceeds
+`DEFAULT_LOOP_MAX_CHARS_PER_S = 30.0` (`HAWEDIT_LOOP_MAX_CHARS_PER_S`; measured
+references peak at 19.3). A suspect segment is decoded once more by the same loaded
+champion, audio and language with upstream `BEAM_RETRY_NBEST = 5` and upstream's other
+beam defaults. The retry is kept only if its selected hypothesis ended on a sampled
+natural EOS and its text passes both admission checks; otherwise `DecodeIncomplete`
+names the segment and both attempts. Contract refusals (version, class, source hash)
+never retry.
+
+**Beam completion.** Upstream returns row 0 after its last reorder. The observer
+records the generation's own state-bag reorders on that call's local bag, follows
+each row's ancestry to the EOS it inherited, and refuses a selected row still
+decoding at the length limit. An EOS first seen right after an upstream compression
+check (every 250 steps, past the window) cannot be told from that check's forced stop,
+so it is refused too: an honest halt rather than a guess.
+
+**Not a fallback.** It is a second decode of the same champion. Nothing trims repeats,
+splices attempts, guesses words or switches model. Each retried `SegmentConfidence`
+records `decode_mode: beam5_retry` and why; greedy segments omit both keys, so their
+artifact bytes are unchanged. The run report counts `beam5_retries`. The completion
+policy becomes `omni-natural-eos-greedy-beam5-retry-v1`, so cache records and
+checkpoint journals written under the single-beam policy refuse as D-281 specifies.
+
+**Retry memory (measured 2026-10-15; owner chose option 1).** specs/v12-fused-model/research.md,
+"T8 beam-5 retry path measured 2026-10-15" (RTX 3090 Ti, GPU 1, torch 2.8.0+cu128, fairseq2 0.6,
+omnilingual-asr 0.2.0, :8000 stopped): greedy with fused v12 and CTC-3B both resident fits
+(33.9 s segment: 21.90 GiB allocated, 23.41 GiB reserved), but the beam-5 retry beside a
+resident CTC-3B overflows the 24 GB card (19.2 s: 126.9 s, 24.38 GiB reserved; 33.9 s: 586.2 s,
+31.04 GiB reserved, about 6 GB of WDDM spill). Owner decision 2026-10-15: "option 1", move
+CTC-3B off the GPU only while a retry runs. So the retry runs after the segment's greedy and CTC
+forwards have joined (no CTC forward overlaps it); only when LLM and CTC share a CUDA device,
+CTC moves to the CPU, `torch.cuda.empty_cache()` runs, the retry decodes, and CTC returns to its
+configured device in a `finally`. A failed return is `DecodeIncomplete`: the run never continues
+with CTC off its device and never switches model. Greedy segments do not move CTC, and their
+bytes are unchanged. The retry's wall time and peak with CTC parked are not yet measured.
+
+**Residual risk.** 16 of the 113 measured loops still looped under beam (long read
+speech); those segments halt. Genuine stuttering can match the repeat rule and is
+retried, then halts if beam repeats it. Real upstream context-length types are a T0
+hardware fact. A CTC-length guard (arXiv 2408.09491)
+stays an option only after measurement.
+
+## D-333 - Renew the WSL ASR VEX for the v12 tree, with the reviewed digest pinned
+
+2026-10-15; owner approval: asked "Do you approve me applying the VEX update from the review
+packet, with you as the reviewer (review date today, the 3 new advisory rulings, the over-strong
+claims reworded to match the code, v12's file added to the allowlist)?", the owner chose
+"Approve VEX update". Resolves BLOCKED #24 by its option 1. Evidence: the 2026-10-14 review
+packet in `omniasr-v11-audit/release/vex_review/` (`VEX_REVIEW_PACKET.md`, `control_audit.md`,
+`osv_scan_2026-10-14.json`, an OSV scan of all 138 packages of the current runtime lock). D-331,
+D-332, D-115.
+
+**Review binding.** `security/wsl-asr-vex.json`: `reviewed` 2026-10-15, `expires` 2026-11-14,
+`applicability.source_sha256` = `package_digest(src/hawedit)` of this tree,
+`4e607203a558ec9c916827783f785f85a953375208080a903a046fcdffc2f415`. Lock digests and the three
+`OMNI_ASSETS` are unchanged. `tests/test_vex.py` pins `REVIEWED_VEX_SOURCE` to that
+(date, digest) pair, so changing `source_sha256` without moving `reviewed` fails; moving both
+means editing the pin, the deliberate re-review step. The unit tests evaluate at 2026-10-15.
+
+**Claims reworded to the code, not code weakened.** The control audit found nine control
+sentences only partly true. Each now says exactly what the code does: the receipt bypass under
+`HAWEDIT_WSL_PYTHON`/`HAWEDIT_WSL_SOURCE`/`interpreter=` is named as outside the disposition;
+request model paths (validator directory, LoRA adapter, fused checkpoint) are named with what
+binds each; unknown request keys and the unbounded request size are stated; `local` runtime runs
+in-process; LoRA weights load as safetensors; canonical assets are not rechecked after load; the
+validator's identity comes from `models/integrity.json`; the host-side VideoChat3 reader's
+`trust_remote_code=True` is named as outside the product boundary.
+
+**v12 fused checkpoint.** CVE-2026-4538 (not_affected) and CVE-2026-24747 (affected) now cover
+it: admitted only through the code allowlist `FUSED_CHECKPOINT_ASSETS` (exact filename,
+15,610,646,560 bytes, SHA-256 `f7b3a5e2…`) and held no-follow, single-link, before fairseq2
+`load_model`. `applicability.assets` stays the three `OMNI_ASSETS`, because the receipt, its
+probe and the live gate derive their asset set from `OMNI_ASSETS`; the fused file has no
+download URL. Binding it in the gate would need a local-asset provisioning step (follow-up).
+
+**New dispositions (12 to 15).** accelerate 1.12.0 CVE-2026-69112 `affected`: the validator
+loads with `device_map`; its verified file set has no sharded index. transformers 4.57.6
+CVE-2026-9856 `not_affected`: no `save_pretrained` under `src/hawedit`, and a test now fails if
+one appears. transformers CVE-2026-80047 `affected`, not the packet's draft `not_affected`: the
+packet made that ruling conditional on the worker enforcing `HF_HUB_OFFLINE`, and it does not;
+no `custom_generate` under `src/hawedit` (tested) and local verified checkpoints are the controls.
+`accelerate` joins `applicability.packages` at its locked version.
+
+**Not covered.** The live gate was not run; it remains the runtime confirmation. Sources for the
+new rulings are the OSV records, because the scan stored no reference URLs.
+
+**Addendum, re-pinned 2026-10-15.** The same day as the owner review, `source_sha256` and
+`REVIEWED_VEX_SOURCE` moved from `4e607203…` to
+`666b8770c22a0574abf1eb91ce276d48d37266fba336700e120e32395187298e` for a diff limited to the
+T8 retry's device moves: `src/hawedit/asr.py` (`_greedy_draft`, `_beam_retry`, `_ctc_parked`,
+`_park_ctc`, `_restore_ctc`; CTC-3B parked on the CPU while a shared-device beam-5 retry runs,
+D-332), with tests in `tests/test_asr_completion.py`. It changes no VEX control: no new loader,
+input, asset or dependency. The owner approved the change ("option 1, yes push and open the
+PR") but did not separately re-review the new digest; `reviewed` stays 2026-10-15.
+
+**Addendum, re-pinned again 2026-10-15.** Also the same day as the owner review,
+`source_sha256` and `REVIEWED_VEX_SOURCE` moved from `666b8770…` to
+`18fe2dd71870faebd43e3adaafefdadf4ae1a7c12fec55817ac6debb2daefe37` for a diff limited to type
+annotations and `sys.platform` guards around Windows-only APIs, so mypy passes on the Linux CI
+runner: `src/hawedit/{ingest_cache,linux_snapshot,models,native_io,native_process,
+studio_artifacts,studio_history,studio_private}.py`. Windows behaviour is unchanged, and no VEX
+control is affected: no new loader, input, asset or dependency. The owner approved the change
+("yes fix the CI errors") but did not separately re-review the new digest; `reviewed` stays
+2026-10-15.
+
+## D-334 - Kurdish captions are laid out right-to-left: Encoding -1 and a leading U+200F (supersedes D-269 clause 1)
+
+2026-11-17; owner approval: asked "Approve the caption plan, including new golden images and the
+cleanup?", the owner chose "Approve plan" (`specs/kurdish-rtl-base-direction/plan.md`).
+Blueprint ref: §4.3, §4.3.6. Type: defect elimination, not a deviation. D-269, D-307.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12, ffmpeg 8.1.1-full (gyan.dev; libass,
+HarfBuzz, FriBidi), `assets/fonts/NotoNaskhArabic-Regular.ttf`, production filter string
+(`subtitle_filter`). Frames and both probes: `specs/kurdish-rtl-base-direction/captures/`.
+All three Style writers emitted `Encoding = 1`, and libass laid every line out left-to-right:
+
+- `WORD_HIGHLIGHT` drew the words in reversed order (D-269 recorded this). It is the default
+  for `PODCAST`, `INTERVIEW` and `SOCIAL`, and `PODCAST` is `DEFAULT_CONTENT_TYPE`, so a default
+  run burned reversed Sorani.
+- `LINE`, `VIRAL_POPUP` and `RTL_WORD_HIGHLIGHT` drew a sentence-final full stop at the sentence
+  start. Not recorded before this ADR.
+- A line containing a Latin word or digits drew that segment at the wrong end.
+- `kurdish-caption.png` and `kurdish-viral-karaoke.png` were rendered from that output, so
+  §4.3.6's safeguard was protecting it.
+
+| Variant | Golden, question, mixed-script lines | Line opening on a Latin word |
+|---|---|---|
+| Encoding -1 | correct in all four styles | still left-to-right |
+| U+200F alone | unchanged | unchanged |
+| Encoding -1 and leading U+200F | correct | correct |
+
+**Decision.**
+1. `ASS_ENCODING_AUTO = -1` in `style_row`, `plate_style_row` and the width probe.
+2. `build_ass` starts every visual line of every Dialogue with `RTL_MARK` (U+200F), in one
+   place, where the events are joined. The width probe's line carries the same mark.
+3. Readers drop the mark with the override tags (`_ASS_OVERRIDE_TAGS`, and the sanity gate's own
+   pattern), so text verification and line-length counts are unchanged.
+4. D-269 clause 1 ("retain `WORD_HIGHLIGHT` ... byte-identical") is superseded: the bytes it
+   preserved were the defect. `RTL_WORD_HIGHLIGHT` and its position maths are kept as they are.
+5. The four golden references were re-rendered once through the golden tests' own render path;
+   the previous files are kept in `captures/golden-before/`. Tests that pinned the old Style
+   ending or Dialogue prefix were moved to the new bytes, including one negative assertion
+   (`",140,1" not in ass`) that would otherwise have passed vacuously.
+
+**Not established.** The Linux ffmpeg CI fetches (`scripts/fetch-ffmpeg.sh`) has not rendered
+this; the golden comparison there decides. Latin words fall back to a larger bold font; that is
+a separate defect. So is the `\kf` fill inside each `WORD_HIGHLIGHT` word: the words are now in
+reading order, but the colour still sweeps each word from its left edge, which is the end of a
+Sorani word (visible in the new `kurdish-caption-fixture.png`; libass issue #406). Not fixed here. `security/wsl-asr-vex.json` binds `package_digest(src/hawedit)`, so this
+source change moves that digest and `tests/test_vex.py` fails until the owner re-pins it; no
+loader, input, asset or dependency changed, and the pin was not moved by this ADR.
+
+**Addendum, VEX source binding re-pinned 2026-11-17.** Asked "Re-pin the security review binding
+to the new source digest?", the owner chose "Approve re-pin". `security/wsl-asr-vex.json`
+`applicability.source_sha256` and `tests/test_vex.py` `REVIEWED_VEX_SOURCE` moved from
+`18fe2dd71870faebd43e3adaafefdadf4ae1a7c12fec55817ac6debb2daefe37` to
+`fef53d73c7a7c7d1f5425ff16399d059984c40884dc38a3fc1c42da891619a7a`, which is
+`package_digest(src/hawedit)` at commit `6fe4f9f`. The diff behind it is this ADR's:
+`src/hawedit/captions.py` and `src/hawedit/sanity_gate.py`. No VEX control is affected: no new
+loader, input, asset or dependency. As in D-333's addenda, the owner approved the change but did
+not separately re-review the digest; `reviewed` stays 2026-10-15. `expires` stays 2026-11-14,
+which had already passed on the day of this re-pin; it was not extended, and the unit tests
+evaluate at 2026-10-15.
+
+## D-335 - In the delivery face measurement, a detection is a face only at 5 % of frame height or more (resolves BLOCKED #26)
+
+2026-11-17; owner approval: told of BLOCKED #26's three ways out, the owner chose "Fix the
+measurement", then "Approve plan" (`specs/face-probe-height-floor/plan.md`).
+Blueprint ref: §2, §3 Stage 6. Type: defect elimination, not a deviation. D-258, D-263 clause 7.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, opencv-python-headless 4.12.0,
+ffmpeg 8.1.1-full, tree `b1cba30`. Scripts and raw output:
+`specs/face-probe-height-floor/captures/`. `measure.probe_face_tracking` counted any Haar box of
+30 px or more as a face. On 1080x1920 frames that contain no face:
+
+| Input | Samples | Samples with a box | Box height |
+|---|---|---|---|
+| Test render at `0ea5158` (before D-334) | 10 | 5 | 58 px = 3.02 % |
+| Same render at `b1cba30` (after D-334) | 10 | 1 | 53 px = 2.76 % |
+| Golden `kurdish-caption-fixture.png` | 1 | 1 | 53 px = 2.76 % |
+| Three other goldens | 3 | 0 | none |
+| 144 caption-only clips on black (12 sentences x 6 styles x font 64 and 108) | 2,160 | 1 | 48 px = 2.50 % |
+
+Every box is a frontal-cascade hit on caption text, centred 78-79 % down the frame, inside
+`DEFAULT_BOTTOM_CAPTION_BAND`. Eight samples with a box out of 2,184, four distinct boxes, two
+bundled fonts. Real faces were not re-measured: no real footage is on this machine. D-258
+(2026-08-27, same cascades, three real episodes) recorded face heights of 28.5 %, 16.2 % and
+11.6 % of frame height.
+
+**Decision.**
+1. `MIN_FACE_HEIGHT_SHARE = 0.05` in `measure.py`. `probe_face_tracking` drops a box whose
+   height is under that share of the frame height. A dropped box does not count the sample as
+   "face detected" and does not feed `median_face_height_share`, `median_y_center_share` or
+   `first_frame_face_share`.
+2. The drop happens after each cascade call, so a frontal hit on caption text no longer stops
+   the profile and mirrored-profile fallback.
+3. 0.05 is the share `delivery.py` Clause 7b already requires of an opening-frame subject. It
+   is 1.65x the tallest false box measured and under half the smallest real face in D-258. This
+   is judgment between two small samples, not a fitted threshold.
+4. `tests/test_pipeline.py::test_ambiguous_speaker_tracking_falls_back_without_claiming_speaker_provenance`
+   now expects what the gate does with a faceless `face_tracked` render: it is not published,
+   with `face_tracking_unsubstantiated` measured 0.0. The clip still claims `face_tracked` and
+   not `speaker_face`, which is what the test's name is about.
+
+**Considered and not chosen.** Ignoring boxes inside the caption band (adds nothing on this
+evidence, and a real face can sit there); raising `minNeighbors` (changes sensitivity to real
+faces, unmeasurable here); swapping the probe to YuNet (`models/face_detection_yunet.onnx` is not
+in this checkout; larger change, own ADR); changing only the test (the probe would still certify
+caption text as a face).
+
+**Effect on the existing suite, logged before the change** (`captures/whatif-log.txt`): 113
+probe calls from 95 tests; 64 saw no box, 48 saw one 2.71-2.76 % box, one saw a faked 80 px box
+(4.17 %) on a `static_centre` clip that Clause 7 does not check. No call saw a box at or above
+5 %. At least 8 `test_review_candidate_cache.py` tests did not reach the probe in that run (a
+long temp path broke their ingest step), so the gate, not this log, decides.
+
+**Not established.** The floor on real footage: a real face under 5 % of frame height now counts
+as no face. Other fonts or larger captions producing a false box above 5 %. Clause 7b's own
+`0.05` literal is left as it is. The Haar probe's low recall on real faces (56 % of samples on
+episode ep29, vault note `HawEdit road to number one 2026-09-08`) is untouched; replacing the
+detector is separate work. The Linux CI runner has not run this.
+
+**VEX source binding re-pinned 2026-11-17.** The plan listed the re-pin as one of three things
+its approval covers, and the owner chose "Approve plan". `security/wsl-asr-vex.json`
+`applicability.source_sha256` and `tests/test_vex.py` `REVIEWED_VEX_SOURCE` moved from
+`fef53d73c7a7c7d1f5425ff16399d059984c40884dc38a3fc1c42da891619a7a` to
+`a7b54139328bd7a9a79c0d62237683ebc517d9e247367fe81928425ac1ea62f2`, which is
+`package_digest(src/hawedit)` with this ADR's one source change (`src/hawedit/measure.py`). No
+VEX control is affected: no new loader, input, asset or dependency. As in D-333's and D-334's
+addenda, the owner approved the change but did not separately re-review the digest; `reviewed`
+stays 2026-10-15. `expires` stays 2026-11-14, already past; it was not extended.
+
+## D-336 - Desktop one-command multi-clip reels: plain WSL runtime, configurable ingest threads, fused v12 auto-discovery, and --output-dir export
+
+2026-11-19; owner approval: Hawa approved `specs/a2-one-command-reels/plan.md` in chat (2026-11-19, all Phase A plans approved; coordinator Option 1 in board #25).
+Blueprint ref: §3 Stage 0/Stage 1, §6, §7. Type: desktop production ergonomics + operational unblocking, preserving strict-mode and pre-existing Stage-0-only tests. D-136, D-331, D-337, D-339.
+
+**Problem measured (`HawaPC01`, 2026-11-18).** On the 5-minute 4K VP9 excerpt `zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4` (`264,329,839` B, SHA-256 `6f784e239a371306313882d3377906eb6d3d0afd3927804dc37c68d567aaf4e0`), Stage 0 ingest took `341.341 s` (`0.88x` RT) under hardcoded `-threads 1`, whereas a 1440p H.264 derived copy (`bbc2acc40...`) took `136.554 s` (`2.20x` RT) with identical `33` shot cuts and `61` speech regions. `extract_proxy` hardcoded `-threads 1`, Stage 1 required a sealed `.ready` receipt missing on desktop (`evidence/a2-pipeline-refusal-2026-11-18.md`), `VALIDATOR_MODEL_ID` was resolved unconditionally even without `qwen-asr` in WSL, fused v12 (`kurdish_omniasr_7b_v12_c750.pt`) required manual checkpoint flags, and `pipeline` lacked `--output-dir` reel export and per-stage timings.
+
+**Decision.**
+1. Plain WSL resolution (`/home/ai/.venv-wsl-whisper/bin/python` + checkout `src` on `PYTHONPATH`) runs by default unless `--strict-runtime` / `HAWEDIT_STRICT_RUNTIME=1` is active (D-337). `WslOmniAsrProducer` accepts `validate_hard_segments` (CLI `--validate-asr`, default `False` on CLI desktop runs, retaining `True` default on direct `WslOmniAsrProducer()` / `asr_worker` calls without the flag); `asr_resume.worker_journal` skips `"qwen-asr"` and `ModelStore().verify_checkpoint` when `validate_hard_segments=False` and selects `_FUSED_HELD_ASSETS` for `fused:` identities (D-331).
+2. `asr.discover_default_champion_checkpoint()` checks `DEFAULT_CHAMPION_CHECKPOINT_PATHS` (`F:\Kurdish Sorani Dataset\omni_7b_v3_continuation\runs\champion_v12_lora64_750_fused\kurdish_omniasr_7b_v12_c750.pt`) via `fused_checkpoint_asset` allowlisting before falling back to LoRA lookup.
+3. `ingest.ingest(..., *, threads=...)` parameterizes ffmpeg threads (direct `extract_audio`/`extract_proxy` retain default `threads=1`), and `pipeline.build_parser` adds `--reels`, `--ingest-threads`, `--output-dir`, `--strict-runtime`, `--validate-asr`. Passing `--reels` or `--output-dir` activates desktop multi-clip defaults (`omni_asr=True` unless `--transcript`, `gemini=True` unless `--verdict`/`--vertex-project`, `auto_select=True`, `max_clips=10` if unset, `ingest_threads=0` if unset), leaving bare `--work-dir` Stage-0-only so all existing CLI and `test_durable` parity tests remain intact.
+4. `PipelineRun.stage_timings_s` records monotonic stage durations; `pipeline.cli_json_report` includes `"stage_timings_s"` in CLI `--json` output while keeping `PipelineRun.to_dict()` deterministic; `--output-dir` atomically exports `.mp4` and `.mp4.measured.json` sidecars.
+
+**Derived 1440p full episode (`evidence/a2-1440p-transcode-2026-11-19.md`).** Read-only source `zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4` (`17a54701...`, `2,391.694 s`) transcoded on GPU 0 NVENC (`CUDA_VISIBLE_DEVICES=0`, `363.391 s`) into `D:\HawEdit-media\excerpts\zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM__1440p.mp4` (`2,559,797,435` B, SHA-256 `dff407fd45bd25eb3a1d7801c09d6a4bd3d1736ac72c52b5f8a3444e2d071b56`). Final 10-reel episode production waits for Phase 3 post-merge integration.
+
+## D-337 - Park heavy runtime isolation controls behind --strict-runtime / HAWEDIT_STRICT_RUNTIME and --protected-studio / HAWEDIT_PROTECTED_STUDIO
+
+2026-11-19; owner approval: Hawa approved `specs/a3-park-heavy-runtime-controls/plan.md` in chat (2026-11-19; lead Option 2 in coordinator #16 keeping VEX files untouched for merge-time re-pin).
+Blueprint ref: §3 Stage 1, §6. Type: policy gate separation (parked, never deleted). D-134, D-333, D-336, D-338.
+
+**Decision.**
+1. Single-user desktop execution is unblocked by defaulting `strict_runtime_enabled()` (`HAWEDIT_STRICT_RUNTIME`) and `protected_studio_enabled()` (`HAWEDIT_PROTECTED_STUDIO`) to `False` when unset, while preserving every sealed control intact behind explicit opt-in flags (`--strict-runtime` / `HAWEDIT_STRICT_RUNTIME=1` in `asr.py` / `pipeline.py`, `--protected-studio` / `HAWEDIT_PROTECTED_STUDIO=1` in `web.py`).
+2. `WslOmniAsrProducer` continues defaulting `strict_runtime=True` on direct instantiation so strict unit tests remain active without env mutation; `create_omni_asr_producer()` resolves `strict_runtime_enabled(strict=strict_runtime)` cleanly. `CUDA_VISIBLE_DEVICES` forwarding into WSL happens only when `not self.strict_runtime`.
+3. `security/wsl-asr-vex.json` and `tests/test_vex.py` remain untouched on the feature lane for coordinated lead re-pinning after parallel lane integration (Option 2 in board #16).
+
+## D-338 - Connect Studio POST /api/repurpose to desktop JobManager pipeline queue with SSE stage progress and verified clip previews
+
+2026-11-19; owner approval: Hawa approved `specs/a4-studio-pipeline-runner/plan.md` in chat (2026-11-19).
+Blueprint ref: §3, §5, §6. Type: Studio local orchestration, preserving protected 503 mode behind `--protected-studio`. D-336, D-337.
+
+**Decision.**
+1. `web.py` replaces the unconditional `503 studio_runner_unavailable` stub on `POST /api/repurpose` and `GET /api/status` when `protected_studio_enabled()` is `False`: `/api/status` reports `runner_ready: True` and `status: "ready"`/`"running"` (still honoring `503` when historical storage itself is unavailable), and `POST /api/repurpose` enqueues a real serialized desktop job in `JobManager` returning HTTP `202` with `events_url`. When `HAWEDIT_PROTECTED_STUDIO=1` or `--protected-studio` is set, the exact `503 studio_runner_unavailable` behavior remains intact.
+2. `JobManager` desktop jobs invoke `pipeline._build_and_run` with `--reels` (defaulting `max_clips=5`, configurable up to `10` via `{1, 2, 3, 5, 10}` in `studio_generation.py` and `studio_ui.py`), persist `report.json` alongside delivered bundles, and serve verified MP4 previews via `/api/jobs/<id>/clips/<clip_id>/preview` (`studio_artifacts.open_preview`).
+3. `GET /api/jobs/<id>/events` streams live `text/event-stream` SSE stage events (`id:`, `event:`, `data:`) using `threading.Condition(self._lock)` and closes cleanly on terminal `completed`/`failed`. `studio_ui.py` consumes `EventSource` with zero `setInterval` polling while preserving historical disk job read-only guarantees in `studio_history.py`.
+
+## D-339 - Upgrade Stage 4 editorial judge to gemini-4-carbon and shadow to gemini-4-argon
+
+2026-11-19; owner approval: Hawa approved `specs/a5-judge-model-upgrade/plan.md` in chat (2026-11-19; coordinator #16).
+Blueprint ref: §3 Stage 3/4, §4.4, §7 (diverges from frozen §7 `gemini-2.5-pro` / `gemini-3.1-pro` cells ahead of vendor `gemini-2.5-pro` December 2026 auto-routing).
+
+**Decision.**
+1. `judge.KURDISH_EDITORIAL_JUDGE` is updated from `"gemini-2.5-pro"` to `"gemini-4-carbon"` and `judge.JUDGE_SHADOW` from `"gemini-3.1-pro"` to `"gemini-4-argon"`. `registry.py` registers both models while preserving `blueprint_model_cell` provenance strings for claim tracing, and all runtime modules (`judge.py`, `path_a.py`, `pipeline.py`, `credentials.py`, `setup_panel.py`, `smoke.py`) route through `KURDISH_EDITORIAL_JUDGE` without hardcoded legacy literals.
+2. `gemini.extract_response_text` skips `thought: True` thinking parts when parsing structured JSON outputs from thinking-capable Gemini 4 responses in both `GeminiJudge` and `PathADiscovery`.
+3. **Live verification (`evidence/a5-live-judge-smoke-2026-11-19.md`, `HawaPC01`, 2026-11-19):** Live `hawedit.smoke --yes` against `zar-ai-lamo__RO1PmSoqmCM__05m00-10m00__1440p.mp4` (`bbc2acc40...`) completed HTTP `200` `countTokens` + K=5 Path A calls on `gemini-4-carbon` (`44.860 s`, `1,498` tokens, `~0.0030 USD`), and live Stage 4 `GeminiJudge.judge_with_count` on `20` real keyframes (`0..35,000 ms`) returned a schema-valid Sorani `JudgeVerdict` (`18.469 s`, `23,520` tokens, `~0.047040 USD`, title `"داهاتووی ڕۆژنامەوانی و ژیریی دەستکرد لە هەولێر"`).
+
+## D-340 - Scope final strict ASR to padded chosen clip regions when a draft transcript exists
+
+2026-11-19; owner approval: in chat (`/goal ... all approved`), implementing `specs/b2-clip-scoped-final-asr/plan.md`. Blueprint ref: §3 Stage 1, §4.1, §4.2, §7. Amends Stage 1 whole-episode execution; preserves `D-136`, `D-281`, `D-331`, `D-332`, and Kurdish invariants #1–#5.
+
+**Measured.** `HawaPC01` (Threadripper 3990X, WSL2 `Linux-6.18.58.1`, isolated `/home/ai/.cache/hawedit-plain-wsl-venv` CPython 3.12.13, PyTorch 2.8.0+cu128 CUDA 12.8, `fairseq2 0.6`, `omnilingual-asr 0.2.0`, `klpt 0.1.7`, GPU 1 RTX 3090 Ti `CUDA_VISIBLE_DEVICES=1`, fused `kurdish_omniasr_7b_v12_c750.pt` + `omniASR-CTC-3B-v2.pt`, validator off).
+- On the 5-min Zar AI excerpt (`zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4`, `300.014 s`, SHA-256 `6f784e239a371306313882d3377906eb6d3d0afd3927804dc37c68d567aaf4e0`): whole-excerpt Stage 1 transcribed `21` context-grouped regions (`290,366 ms` from `61` Silero VAD segments) into `749` words (`0` unaligned) in `256.041 s` cold load + `194.378 s` inference (`RTF 0.6479` excl. load; peak `21,831.3 MiB` allocated / `23,364.0 MiB` reserved). Running Stage 1 via `select_contextual_regions_for_spans(..., pad_ms=4_000)` on two representative 40 s clip spans (`25..65 s` and `185..225 s`) transcribed `8` grouped regions (`121,984 ms`, `42.01%` of speech audio) in `52.154 s` inference (`3.73x` speedup over whole-excerpt inference) with **`335/335` exact word text, ms timestamp, and confidence parity** (`0` mismatches).
+- On the full 40-min AI episode (`zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4`, `2,391.694 s`, SHA-256 `17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72`): Stage 0 extracted `540` VAD segments grouped into `175` context regions (`2,247,876 ms`). Whole-episode Stage 1 transcribed regions `0..76` (`2,608` words; median `5.08 s/region`, mean `5.35 s/region` for regions `2..77`, `3` beam-5 retries) before failing stop per D-332 at region `78/175` (`1,048,834..1,062,334 ms`, `speech-0077.wav`, greedy+beam-5 repetition loop). Whole-episode strict ASR is therefore sensitive to any single non-clip loop anywhere in 40+ min episodes, whereas clip-scoped final ASR runs strict CTC-3B Viterbi alignment only on chosen clip context regions.
+
+**Decision.**
+1. Add `select_contextual_regions_for_spans(speech_segments, clip_spans_ms, *, duration_ms, pad_ms=4000)` in `src/hawedit/asr.py`, bounded by `CLIP_ASR_MIN_PAD_MS = 3000`, `CLIP_ASR_DEFAULT_PAD_MS = 4000`, and `CLIP_ASR_MAX_PAD_MS = 5000`. Selected regions snap cleanly to `_contextual_speech_regions(speech_segments)` bounds (never slicing mid-utterance at the pad edge) and remain ordered and deduplicated so per-word decoding and CTC-3B Viterbi timestamps match a whole-episode run on those regions.
+2. Add `--clip-scoped-asr` and `--clip-asr-pad-ms` to `pipeline.py` (CLI and `run_pipeline(..., clip_asr=..., clip_asr_pad_ms=...)`). Stage 0–4 run against the draft `--transcript`, all selected clips (single-clip or `--max-clips` episode batch) are refined in a single `clip_asr.transcribe(...)` invocation, sentences are re-segmented and remapped strictly before Stage 5/6, and `clip_scoped_asr_wall_s` / `clip_scoped_asr_regions` / `clip_scoped_asr_audio_ms` are reported on `PipelineRun`.
+3. Persist clip-scoped final transcripts inside an isolated `work_dir/clip_asr/transcripts` `TranscriptStore` keyed with sorted `clip_regions` in `admission_policy`, never mutating the draft `work_dir/transcripts` store (`D-136`) and failing stop with zero renders if clip-scoped final ASR fails (`GEMINI.md` zero-fallback rule).
+
+**Not established.** End-to-end speedup when `--transcript` is produced by a live fast external/draft ASR rather than supplied as an existing JSON file; paired VEX source digest re-pin (`security/wsl-asr-vex.json`) stays separate for lead integration (`tests/test_vex.py` is unpinned for lane branches).
+
+## D-341 - Default OmniASR hard-segment validation to off (--validate-asr opts in) pending paired WER ablation
+
+2026-11-19; owner approval: in chat (`/goal ... all approved`), implementing `specs/b6-validator-ablation/plan.md`. Blueprint ref: §3 Stage 1, §7. Amends D-281, D-285, D-286, D-324 (`BLOCKED.md` #1, #24).
+
+**Context.** On `HawaPC01`, `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` weights and `qwen-asr==0.0.6` are not provisioned, and no paired WER benchmark on real Sorani episodes established that validator rewrites improve fused v12 + CTC-3B output enough to justify model load, VRAM churn, and correction-failure risk. Unconditional validator admission in `asr.py` (`WslOmniAsrProducer`, `OmniAsrProducer`) and `asr_resume.worker_journal` blocked all v12 Stage 1 execution whenever `qwen-asr` or `rzgar` was absent.
+
+**Decision.**
+1. Set `validate_hard_segments=False` by default in `create_omni_asr_producer` (`src/hawedit/asr.py`) and add `--validate-asr` / `--no-validate-asr` (`BooleanOptionalAction`) in `src/hawedit/pipeline.py` (`--validate-asr` opts back in cleanly with strict D-285 / D-324 `ModelStore`, `qwen-asr`, and `validator_model_dir` enforcement).
+2. Thread `validate_hard_segments` cleanly through `WslOmniAsrProducer`, `OmniAsrProducer`, `asr_worker.py` (legacy schema-2 requests without the field stay `True`), and `asr_resume.worker_journal(..., validator_path: Path | None)` (skipping `ModelStore`, `verified_checkpoint_access`, and `qwen-asr` metadata lookup only when disabled). Append `+validator-off` to `admission_policy` so validator-off and validator-on cached `RawTranscript` stores never collide (`D-136`).
+3. Add uniform `"validator-disabled"` `SegmentOrigin` validation in `src/hawedit/transcripts.py` (`RawTranscript._validate_origins` refuses mixed `"validator-disabled"` and validator-active origins) and explicit `"asr_routing_status": "validator-disabled"` / `"validator_enabled": False` / `"escalated": 0` (preserving counterfactual `"would_escalate"`) reporting in `PipelineRun.to_dict()` and `_print_report`.
+4. Add `normalized_wer` (`src/hawedit/metrics.py`) and `score_validator_ablation` (`src/hawedit/bench.py`) so T4 can score `--no-validate-asr` vs `--validate-asr` once `B5` reference text (`>= 20` clips, `BLOCKED.md` #1) and staged `rzgar` + `qwen-asr` are available.
+
+**Not established.** Live paired WER delta between `--no-validate-asr` and `--validate-asr` on `>= 20` human-transcribed Sorani clips (`specs/b6-validator-ablation/tasks.md` `T4` remains open awaiting #1 + `rzgar`); keep-or-retire judgment will amend this ADR once measured.
+
+## D-342 - Split a failed multi-segment _ContextSpeechRegion back into constituent raw Silero VAD segments on DecodeIncomplete (amends D-332)
+
+2026-11-19; owner approval: coordinator assignment `#38` (amending D-332 under `BLUEPRINT.md` §3 Stage 1 while preserving strict fail-stop). Affects `_ContextSpeechRegion`, `_cut_speech_regions`, `transcribe_prepared_segments`, `WslOmniAsrProducer`, `asr_completion.py`, `asr_worker.py`, `asr_resume.py`; preserves `D-281`, `D-331`, `D-332`, `D-340`, `D-341`, and `GEMINI.md` zero-fallback rule.
+
+**Context.** During full-episode validation of `RO1PmSoqmCM` (`zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4`, SHA-256 `17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72`, `540` Silero VAD segments coalesced into `175` `_ContextSpeechRegion`s), Stage 1 halted under `D-332` at grouped region `77` (`speech-0077.wav`, `1,048,834..1,062,334 ms`, RMS `0.0589`, peak `0.3238`), which merged `3` raw Silero VAD segments across `132 ms` pauses (`speech[223]`: `1,048,834..1,052,510 ms`; `speech[224]`: `1,052,642..1,055,006 ms`; `speech[225]`: `1,055,138..1,062,334 ms`).
+
+**Measured.** `HawaPC01` (WSL2 `Linux-6.18.58.1`, isolated `/home/ai/.cache/hawedit-plain-wsl-venv` Python 3.12.13, `CUDA_VISIBLE_DEVICES=1` RTX 3090 Ti, fused `kurdish_omniasr_7b_v12_c750.pt` + `omniASR-CTC-3B-v2.pt`, validator off):
+- Standalone GPU 1 probe of the `3` constituent raw Silero VAD sub-segments of grouped region `77` decoded `3/3` cleanly on first-pass greedy (`223.229 s` model load, `0` beam-5 retries): `speech[223]` (`3,676 ms`, `2.314 s` wall, `7` words, `mean_logprob = -9.4666`), `speech[224]` (`2,364 ms`, `1.064 s` wall, `7` words, `mean_logprob = -6.807`), `speech[225]` (`7,196 ms`, `3.39 s` wall, `21` words, `mean_logprob = -5.2487`).
+- Re-running `RO1PmSoqmCM` via `OmniAsrProducer(..., context_grouping=True, validate_hard_segments=False)` with constituent splitting active automatically triggered `[D-342 split #1]` on `speech-0077.wav` (`1,048,834..1,062,334 ms`), sliced `speech-0077-sub-00.wav` (`117,676` bytes), `speech-0077-sub-01.wav` (`75,692` bytes), and `speech-0077-sub-02.wav` (`230,316` bytes), decoded all `3` on greedy (`1.25 s` / `7` words, `0.91 s` / `7` words, `3.22 s` / `21` words), and progressed cleanly through grouped region `89`. At grouped region `90` (`speech-0090.wav`, `1,229,858..1,243,998 ms`, `14,140 ms`, a singleton raw Silero VAD segment with `1` constituent), `DecodeIncomplete` (`greedy: no natural EOS; beam-5 retry: loop`) triggered strict fail-stop (`AsrProductionFailure`), leaving no partial raw transcript written.
+
+**Decision.**
+1. Add `DecoderContractError(DecodeIncomplete)` in `src/hawedit/asr_completion.py` and raise it for decoder installation/contract violations (`transcribe_completed`, `require_natural_completion`, `_restore_ctc` in `src/hawedit/asr.py`) so runtime contract breaks always fail stop immediately without split recovery.
+2. Carry raw VAD `(start_ms, end_ms)` boundaries across `_ContextSpeechRegion.constituents`, `_cut_speech_regions` -> `_PreparedSpeechSegment.sub_segments` (only when `len >= 2`), `WslOmniAsrProducer` segment JSON (`sub_segments` omitted on singletons), `asr_worker.py` strict request parsing, and `asr_resume.worker_journal` (`binding["inputs"]["audio"][*]["sub_segments"]` plus `_assert_bound_subsegment` parent-slice PCM verification on resume).
+3. On non-`DecoderContractError` `DecodeIncomplete` inside `transcribe_prepared_segments`, when a failing prepared segment carries `len(sub_segments) >= 2`, slice per-constituent `-sub-NN.wav` PCM16 clips (`_cut_pcm_subsegments` using stdlib `wave`) and retry each constituent sub-segment strictly; if ANY constituent fails or the failing segment is already a singleton raw Silero VAD segment (`len(sub_segments) < 2`), fail stop immediately via `AsrProductionFailure`.
+
+**Not established.** Whole-episode completion past unbroken singleton raw Silero VAD turns that loop on OmniASR-7B (`RO1PmSoqmCM` `speech-0090.wav`, `14,140 ms`), which remain handled cleanly by `D-340` (`--clip-scoped-asr`) unless a separate VAD max-speech ADR is approved; VEX digest re-pin (`security/wsl-asr-vex.json`) stays reserved for lead integration.
+
+## D-343 - Split a failing long singleton speech segment once at a deep sliding RMS dip, else halt (amends D-332 and D-342)
+
+2026-11-19; owner approval: coordinator directive `#49` (amending `D-332` and `D-342`, lane-2 reserved slot `D-343`). Affects `src/hawedit/asr.py` (`silence_dip_split_ms`, `_cut_pcm_dip_halves`, `_write_pcm_slices`, `transcribe_prepared_segments`) and `src/hawedit/asr_resume.py` (`OperationJournal._assert_bound_subsegment`); preserves `D-281`, `D-331`, `D-340`, `D-341`, `omni-asr-request.json` schema, and `GEMINI.md` zero-fallback rule.
+
+**Context.** After `D-342` cleared all multi-segment context-grouping loops on `RO1PmSoqmCM` (`zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4`, SHA-256 `17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72`, `540` Silero VAD segments -> `175` grouped regions), diagnostic scanning of all remaining regions (`91..174`, `84` regions) on GPU 1 succeeded `84/84` (`0` unaligned, `2,850` words, with `D-342` splitting `speech-0149.wav` `5/5` and `speech-0169.wav` `5/5`), proving grouped region `90` (`speech-0090.wav`, `1,229,858..1,243,998 ms`, `14,140 ms`) was the sole singleton failure across the entire 40-min episode.
+
+**Measured.** `HawaPC01` (WSL2 `Linux-6.18.58.1`, isolated `/home/ai/.cache/hawedit-plain-wsl-venv` Python 3.12.13, `CUDA_VISIBLE_DEVICES=1` RTX 3090 Ti, fused `kurdish_omniasr_7b_v12_c750.pt` + `omniASR-CTC-3B-v2.pt`, validator off):
+- Sliding RMS dip analysis of singleton `speech-0090.wav` (`14,140 ms`, `overall_rms = 0.055895`) inside `[3_000, 11_140] ms` (`200 ms` window, `10 ms` hop) located a `0.001335` RMS breath dip (`<= 0.15 * overall_rms`) centered at `9,340 ms` (`1,239,198 ms` media clock). Decoding `[0, 9,340] ms` and `[9,340, 14,140] ms` succeeded `2/2` on first-pass greedy with natural EOS (`6.218 s` / `32` words / `mean_logprob = -4.4269`, and `2.341 s` / `16` words / `mean_logprob = -4.9452`).
+- Complete end-to-end 40-min `RO1PmSoqmCM` Stage 1 execution with `D-342` + `D-343` active (`task-1463`) completed **`175 / 175` grouped regions** (`186` decoded items, **`5,951` aligned words**, **`0` unaligned**, `mean_logprob = -6.3986`) in `202.405 s` model load + `1,024.241 s` inference (`RTF 0.4282` excl. load, `1,226.646 s` / `RTF 0.5129` incl. load, peak `21,894.0 MiB` alloc / `23,402.0 MiB` reserved), firing `3` `D-342` constituent splits (`speech-0077`, `speech-0149`, `speech-0169`), `1` `D-343` singleton dip split (`speech-0090` -> `1,229,858..1,239,198` & `1,239,198..1,243,998 ms`), and `5` `beam5_retry` rescues. Saved canonical raw transcript at `D:\HawEdit-media\excerpts\zar-ai-lamo__RO1PmSoqmCM.transcript.raw.json` (`2,152,666 B`, SHA-256 `9286cab3d58eeb5bae8f72621c26bf9c4e64678f19e317ea2e39eda9110c1d9e`).
+
+**Decision.**
+1. Trigger singleton energy-dip splitting ONLY when a singleton segment (`len(sub_segments) < 2`) with duration >= `SINGLETON_DIP_MIN_DURATION_MS = 8_000` ms raises non-`DecoderContractError` `DecodeIncomplete` (never on `DecoderContractError`, never inside `D-342` constituent retries, never recursively).
+2. `silence_dip_split_ms(path)` scans exact integer 16 kHz mono PCM16 frames inside `[3_000, duration_ms - 3_000] ms` (`SINGLETON_DIP_EDGE_GUARD_MS = 3_000`, `SINGLETON_DIP_WINDOW_MS = 200`, `SINGLETON_DIP_HOP_MS = 10`). Require `overall_rms > 0` and `min_window_rms <= 0.15 * overall_rms` (`SINGLETON_DIP_MAX_RMS_RATIO = 0.15`); otherwise return `None` and halt immediately via `AsrProductionFailure`.
+3. `_cut_pcm_dip_halves` slices `{stem}-dip-00.wav` and `{stem}-dip-01.wav` ONCE via shared `_write_pcm_slices(..., contiguous_to_end=True)` covering contiguous `[0, split_frame]` and `[split_frame, total_frames]`; both halves must succeed strictly or `AsrProductionFailure` halts immediately.
+4. Keep `omni-asr-request.json` schema unchanged; extend `asr_resume.OperationJournal._assert_bound_subsegment` to verify `{parent_stem}-dip-(0|1).wav` deterministically against the bound singleton parent WAV hash (`parent["sha256"]`), recomputed `silence_dip_split_ms(parent_path)`, and exact PCM slice bytes.
+
+**Not established.** Recovery of continuous-speech `>= 8_000 ms` singletons that lack a `<= 0.15 * overall_rms` silence dip, which continue to fail stop intentionally (`AsrProductionFailure`); VEX source digest re-pin (`security/wsl-asr-vex.json`) stays reserved for lead integration.
+
+## D-344 - Path A discovery uses 0-based sentence numbers mapped to CTC word times instead of a 4,000-word millisecond table
+
+2026-11-19; owner approval (`Approved-by: Hawa` in `specs/c1-sentence-number-discovery/plan.md`).
+Blueprint ref: §3 Stage 3, §4.1, §4.2, §5. Supersedes `D-036`'s word-timing table mechanism.
+
+**Problem.** `src/hawedit/path_a.py` formatted up to 4,000 aligned words as `<start_ms>-<end_ms> <word>` above the transcript (`_timing_table(limit=4000)`) and asked Gemini for `in_ms` / `out_ms` integers. Real long episodes such as `zar-ep54-younis-gardwni-cosmos-2026-11-12__xMEcurfWjic.mp4` (~16,000 words) lost all timestamps past word 4,000, duplicating tokens below 4,000 words and tempting the model to invent millisecond offsets or cut inside incomplete fragments.
+
+**Decision.**
+1. Delete `_timing_table(limit=4000)` completely and prompt Gemini with all 0-based numbered sentences `[i] <normalized sentence text>` derived from `Sentence` boundaries via `normalize_sorani` (Kurdish invariant #3, unlimited length).
+2. Replace `in_ms` / `out_ms` in `CANDIDATE_SCHEMA` with inclusive integer indices `start_sentence` and `end_sentence`, mapped deterministically in code to `(sentences[start_sentence].start_ms, sentences[end_sentence].end_ms)`.
+3. Fail-stop (`JudgeUnusable`) on non-integer/boolean indices, out-of-range indices, `end_sentence < start_sentence`, or any candidate boundary where `Sentence.complete` is `False` (§5 sentence-completeness invariant).
+4. Bind sentence boundaries into `PathADiscovery`'s K-run SHA-256 cache digest, pass pre-segmented `sentences` from `pipeline.py:3289` cleanly when supported by the discoverer signature, and import `KURDISH_EDITORIAL_JUDGE` from `hawedit.judge` instead of hardcoding model strings.
+
+## D-345 - Clean-room MIT TextTiling topic-segmentation candidates via Sorani word and n-gram embeddings
+
+2026-11-19; owner approval (`Approved-by: Hawa` in `specs/c4-topic-segmentation-candidates/plan.md`).
+Blueprint ref: §2, §3 Stage 3, §4.1, §4.2, §5, §8.2.
+
+**Problem.** Path A relies on a single hosted Gemini call (`KURDISH_EDITORIAL_JUDGE` / Pro judge), while local Stage 3 has no zero-API verbal candidate source. We want a deterministic, CPU-only topical boundary detector over normalized Sorani sentences with zero AGPL code copied from external clip tools.
+
+**Decision.**
+1. Implement clean-room Hearst (1997) TextTiling (`text_tile_depths`, `discover_topics`) in `src/hawedit/topic_segmenter.py` behind a `SentenceEmbedder` Protocol (MIT method, written from first principles, zero AGPL code or extra runtime dependencies).
+2. Default `SoraniTfIdfEmbedder` reuses `hawedit.index.index_tokens` and `character_ngrams` (`DEFAULT_NGRAM_SIZE=3`, `DEFAULT_NGRAM_WEIGHT=0.5`, matching `D-016`) over normalized Sorani (`assert_model_input` at entry).
+3. Restrict candidates to contiguous complete-sentence runs (`Sentence.complete == True`), splitting over-long segments at deepest internal valleys and merging adjacent sub-floor segments across shallowest valleys along sentence boundaries within `[MIN_CANDIDATE_SPAN_MS, MAX_CANDIDATE_SPAN_MS]` (`30_000..90_000` ms).
+4. Emit `DiscoveryPath.VERBAL` candidates (`{media_id}-topic-{rank}`) preserving §5's frozen three-path enum, united with Path A via `combine_verbal_candidates` in `src/hawedit/discovery.py` (preserving rank precedence ahead of `merge_candidates`) and wired behind `--topic-candidates` / `topic_candidates=True` in `src/hawedit/pipeline.py` without masking Path A `discovery_skipped` errors.
+
+## D-346 - Swiss pairwise editorial ranking via Gemini replaces asserted score weights in judge.py
+
+2026-11-19; owner approval (`Approved-by: Hawa` in `specs/c5-pairwise-ranking/plan.md`).
+Blueprint ref: §2, §3 Stage 4, §4.1, §8.2. Retires the `0.40/0.30/0.20/0.10` composite weights in `src/hawedit/judge.py`.
+
+**Problem.** `tournament_score` in `src/hawedit/judge.py` combined scalar rubric fields using uncalibrated constants (`0.40 * hook_score + 0.30 * payoff_strength + 0.20 * meaning_fidelity + 0.10 * cultural_landing - 0.20 * risk + 0.05 * ends_on_a_beat`) without any empirical calibration set backing those coefficients, overriding how editorial tradeoffs actually hold across Sorani clips.
+
+**Decision.**
+1. Retire `tournament_score` and all asserted composite coefficients from `src/hawedit/judge.py` cleanly, keeping zero `"virality"` fields or prompt tokens anywhere in `judge.py` (`screener.py:167` `0.50/0.35/0.15` and `story.py:981` `0.50/0.50` remain outside C5 scope).
+2. Add `PAIRWISE_SCHEMA`, `PairwiseMatch`, `PairwiseComparator`, and `GeminiPairwiseJudge` (composition over `StructuredJsonClient`, refusing `JUDGE_SHADOW` via `route()` with `NotRoutable`, enforcing `< 200K` token tier, normalized Sorani inputs, and `_kurdish_field` validation on `reason_ckb`) asking which candidate a Kurdish viewer would keep watching through payoff.
+3. Implement bounded `pairwise_rank_verdicts` (`<= 12` eligible candidates, `2..3` Swiss rounds with A/B slot balancing, aggregated via `hawedit.repurposing.pairwise_preference` + Buchholz tiebreak, `0` comparator bouts when `<= 1` eligible verdict) after hard §2 eligibility filtering (`meaning_fidelity >= 0.70`, `misleading_edit_risk <= 0.10`, `self_contained == True`).
+4. Wire `pairwise_rank_verdicts` and `GeminiPairwiseJudge` into `pipeline.py` Stage 4 winner selection (`max_clips=None`) and `episode.py` (`plan_episode` / `select_episode_plan`), failing Stage 4 visibly (`StageSkipped` operational failure) instead of silently falling back if pairwise comparison errors occur.
+
+## D-348 - Replace inline ASS `\kf` in `WORD_HIGHLIGHT` with two-layer per-word `\clip` sweep (RTL for Sorani, LTR for Latin/digits)
+
+2026-11-19; owner approval: approved `specs/d6-rtl-karaoke-fill/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §4.3.1, §4.3.6, §5. Type: defect elimination, not a deviation. Supersedes D-334's open
+limitation on intra-word `\kf` sweep direction (libass #406); builds on D-259 and D-268.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, ffmpeg 8.1.1-full (`libass` + `HarfBuzz`
++ `FriBidi`), raw captures in `specs/d6-rtl-karaoke-fill/captures/` and
+`evidence/d6-d7-picture-baseline-2026-11-18.md`. Inline `\kf` sweeps left-to-right inside every
+Sorani word (libass issue #406): on `"ڕۆژنامەوانی کوردی لە هەولێر."` at `t=0.25s`, highlighted gold
+pixels clustered on the left (`mean_x=739.3`) while unhighlighted white pixels sat to their right
+(`mean_x=870.5`, gap `-131.2 px`), sweeping backwards across connected glyphs. Two-layer compositing
+(`Layer 0` base unspoken style in `theme.secondary` + `Layer 4` identical full-line text with
+`KurdishHighlight` in `theme.primary` and `\clip(x1,y0,x1,y1)\t(0,dur,\clip(x0,y0,x1,y1))`)
+preserves Arabic cursive joining and achieves `max_diff=0` over the unclipped portion when highlight
+style keeps the base outline and shadow (`BorderStyle=1`), or `border_style=1, outline=0, shadow=0`
+over `BorderStyle=3` plates so semi-transparent backing boxes do not double-darken.
+
+**Decision.**
+1. `CaptionStyle.WORD_HIGHLIGHT` in `src/hawedit/captions.py` emits two synchronized layers:
+   - `Layer 0` renders each complete popup/wrapped event using the base `Kurdish*` style set to
+     `PrimaryColour = theme.secondary` (unspoken colour).
+   - `Layer 4` renders one event per word in `Kurdish*Highlight` (`PrimaryColour = theme.primary`,
+     active during `[word_start, event_end]`) animated with `\t(0, dur_ms, \clip(x0, y0, x1, y1))`
+     from `[x1..x1]` (RTL when Arabic-script letters are present) or `[x0..x0]` (LTR for pure
+     Latin/digit tokens). `Layer 4` stays disjoint from `Hook` (`1`), `SpeakerTag` (`2`), and
+     `EndCard`/`HookBanner` (`3`).
+2. Per-word pixel bounding boxes are measured once per unique styled line tuple via
+   `_measure_word_boxes` (single-pass ffmpeg `rgb24` probe painting each batch of up to 12 words in
+   distinct saturated `\1c` colours with transparent outline/shadow, cached under `_WIDTH_LOCK` and
+   keyed by full font/style/file stat context; fails closed with `CaptionVerificationError` if
+   ffmpeg or bound fonts are unavailable). No static center-x formula or silent fallback.
+3. `verify_caption_text` skips `Kurdish*Highlight` styles when collecting primary `dialogue_lines` so
+   repeated words across separate chunks do not collapse, while still inspecting `all_lines` for
+   cursive joining and keeping highlight-only ASS files covered via fallback.
+4. `_karaoke` remains intact only if referenced directly by unit tests; `build_ass` no longer emits
+   `\kf`. All affected goldens are slated for batch regeneration after D6 + D7 + D5 land.
+
+**Considered and not chosen.** Per-word `\pos` events (breaks baseline metrics on mixed script and
+disables `WrapStyle: 2` single-line shaping); `BorderStyle=3` on highlight layer (double-darkens
+semi-transparent caption plates); three-call-per-word `compute_rtl_word_positions` probing (3x slower
+and ignores `\N` line breaks).
+
+**Not established.** Multi-word long events above 256 words in one line (batched cleanly by 12 words
+with transparent fills, only 1–2-line captions tested). Linux CI runner not yet run on this branch.
+
+## D-349 - Switch default caption font to bundled `Vazirmatn` and bind mixed-script Latin glyphs in `assert_ass_fonts_cover_kurdish`
+
+2026-11-19; owner approval: approved `specs/d7-latin-fallback-font/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §4.3.4, §5. Type: defect elimination, not a deviation. Extends D-133 / D-163 font
+binding without adding any new font file (`assets/fonts/Vazirmatn.ttf` is already bundled, OFL-1.1,
+in `release.py` SBOM).
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, `fontTools 4.60.2`, ffmpeg 8.1.1-full
+(`libass` + `HarfBuzz` + `FriBidi`), raw captures in `specs/d7-latin-fallback-font/captures/` and
+`evidence/d6-d7-picture-baseline-2026-11-18.md`. `NotoNaskhArabic-Regular.ttf`
+(`sha256:2f4b88e6ee50...`, OFL-1.1) lacks ASCII `A-Z` / `a-z` glyphs (`cmap` misses Latin entirely),
+so any Latin/brand word inside a Sorani caption triggered Windows host fontconfig fallback to
+unrelated sans-serif glyphs that rendered `1.483x` taller (`86 px` vs `58 px` at `108 pt`) and
+`1.514x` taller (`53 px` vs `35 px` at `64 pt`). Bundled `Vazirmatn.ttf`
+(`sha256:696249a2c74b...`, OFL-1.1) covers both `KURDISH_REQUIRED_GLYPHS` and ASCII Latin/digits,
+measuring `1.017x` (`60 px` vs `59 px` at `108 pt`) and `1.029x` (`36 px` vs `35 px` at `64 pt`),
+and differs cleanly between `shaping=complex` and `shaping=simple` (`5,598 px` diff on the
+1080x1920 fixture).
+
+**Decision.**
+1. Export `DEFAULT_CAPTION_FONT = "Vazirmatn"` in `src/hawedit/captions.py` and make it the default
+   `font_name` across `measure_rendered_caption_width`, `wrap_caption_lines`,
+   `chunk_caption_events`, `compute_rtl_word_positions`, `build_ass`, and `mobile_caption_layout`.
+2. Extend `assert_ass_fonts_cover_kurdish` to inspect visible displayed ASS `Dialogue:` text
+   (excluding `{...}` override tags and `\N`/`\n`/`\h` escapes) per bound family: if `[A-Za-z]`
+   appears under a family, assert those Latin codepoints against the resolved font's `cmap` so host
+   fallback is refused before burn. Pure Sorani captions passed with explicit
+   `font_name="Noto Naskh Arabic"` continue to bind and validate.
+3. No font files are removed; `NotoNaskhArabic-Regular.ttf` stays bundled for explicit callers.
+
+**Considered and not chosen.** Stripping or transliterating Latin words into Sorani (violates
+Kurdish invariant #1 canonical surface forms); inline `\fn` per-word switching (forbidden by
+`assert_ass_fonts_cover_kurdish` `_INLINE_FONT_OVERRIDE` check and splits shaping).
+
+**Not established.** Linux container fontconfig fallback behavior when an explicit font lacks Latin
+is inferred to match Windows DirectWrite mismatch and is blocked symmetrically by the `cmap` gate.
+
+## D-350 - Phone-readable 128 pt captions in lower-middle safe zone and wired protection against faces, tables, and burned-in teaser labels
+
+2026-11-19; owner approval: approved `specs/d5-phone-readable-captions/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §4.3, §5. Type: quality upgrade / defect elimination, not a deviation. Updates D-268
+`VIRAL_FONT_SIZE`, `VIRAL_THEME`, and `POPUP_MAX_CHARS`, and wires VE-10 `caption_layout.py` into
+`pipeline.py`.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, OpenCV 4.12.0, ffmpeg 8.1.1-full,
+captures in `specs/d5-phone-readable-captions/captures/` (`probe_d5.py.txt`, real Zar Podcast
+excerpts/sources):
+- On `1080x1920`, `Vazirmatn` at `128 pt` with `outline=6.0, shadow=2.0, margin_v=450` produces
+  `72 px` glyph ink height (`2.06x` of `64 pt`'s `35 px`) centered at `y = 1405 px` (cleanly above
+  Reels/Shorts/TikTok ~300 px UI bar and above Zar `"لەم پۆدکاستەدا:"` teaser banner measured at
+  `y = 1525..1734 px` / `0.794..0.903`).
+- Across real Zar frames: `"لەم پۆدکاستەدا:"` banner scores `blue_low = 0.300` (`up = 0.000`,
+  `width = 0.87`) vs `0.000` on non-banner frames; wide table shots (`excerpt_35s`, `excerpt_110s`,
+  `ai_open_03s`) score `canny_edge = 0.171..0.174`, `sobel_y = 0.419..0.424`,
+  `hlines = 48..54` vs plain talking-head close-ups (`edge = 0.031..0.048`,
+  `sobel_y = 0.084..0.098`, `hlines = 0..2`).
+
+**Decision.**
+1. `src/hawedit/captions.py`: set `VIRAL_FONT_SIZE = 128`, `VIRAL_THEME` (`outline=6.0, shadow=2.0,
+   margin_v=450`), and `POPUP_MAX_CHARS = 20` (aligning with `sanity_gate.py` `<= 20` char limit).
+2. `src/hawedit/shot_plan.py`: add `ProtectedRegionKind.TABLE_OBJECT` and optional temporal
+   bounds `start_ms: int | None = None`, `end_ms: int | None = None` on `ProtectedContentRegion`.
+3. `src/hawedit/caption_layout.py`: update `BOTTOM_BAND_BOX = (0.05, 0.70, 0.95, 0.80)`, make
+   `_boxes_intersect` symmetric across either region, filter `plan_caption_layout` cues against
+   `active_regions` by temporal overlap and include `TABLE_OBJECT`, add
+   `caption_layout_to_avoidance_intervals` and calibrated `detect_protected_visual_regions`.
+4. `src/hawedit/assembly.py` (`render_assembled_reel`) & `src/hawedit/pipeline.py` (shared
+   `_resolve_caption_avoidance_intervals` at both render entrypoints): wire `VIRAL_FONT_SIZE`,
+   `VIRAL_THEME`, `POPUP_MAX_CHARS`, `POPUP_MAX_WORDS`, `POPUP_MAX_WIDTH_PX`, and detected
+   `face_intervals` into `build_ass`.
+
+**Considered and not chosen.** Shrinking caption font below 100 pt to squeeze between overlays
+(violates phone legibility and `sanity_gate.py:114`); global per-clip top placement when only one
+shot shows a table or teaser card (temporal cue filtering moves only affected cues).
+
+**Not established.** Table threshold behavior on non-Zar vertical studio table layouts outside the
+three audited Zar recordings. Linux CI runner not yet executed.
+
+## D-351 - Apply symmetric 30 ms `qsin` audio boundary fades across cut, splice, and clip edges
+
+2026-11-19; owner approval: approved `specs/d8-cut-audio-fades/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §3 Stage 6. Type: defect elimination, not a deviation. Complements D-269/D-270
+two-pass linear `loudnorm` and keeps A/V duration invariants intact.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, ffmpeg 8.1.1-full, probe in
+`specs/d8-cut-audio-fades/captures/probe_d8.py.txt`:
+- Direct `[0:a]atrim=...,asetpts=PTS-STARTPTS` + `concat=v=1:a=1` produced abrupt step clicks at
+  jump cuts (`±1 ms` peak `26,753` on a `437 Hz` sine cut and `17,843` on `kurdish-speech-3cuts.mp4`).
+- Using `acrossfade` shortens audio relative to concatenated video (`n-1` overlap), breaking A/V
+  span parity. Per-segment `30 ms` `qsin` `afade` out/in keeps exact `1:1` PCM duration (`0.00 ms`
+  drift vs raw concat) while reducing `±1 ms` boundary amplitude by `24.5x–36.8x` (`peak 726` /
+  `1,092`).
+
+**Decision.**
+1. Export `CUT_AUDIO_FADE_MS = 30` and `audio_cut_fade_filters(duration_ms, *, fade_in, fade_out)`
+   from `src/hawedit/silence.py`, safely clamping fade duration to `min(fade_ms / 1000, dur_s / 2)`
+   for segments under `60 ms`.
+2. Wire internal boundary fades (`fade_in=(i > 0)`, `fade_out=(i < n - 1)`) into
+   `silence_trim_filter` (`src/hawedit/silence.py`), `assembled_splice_filter`
+   (`src/hawedit/assembly.py`), and `measure_audio_loudness` (`src/hawedit/render.py`) so Pass 1
+   and Pass 2 evaluate matching audio.
+3. Apply outer clip-edge `30 ms` `qsin` fade-in/out after `audio_filter()` (`loudnorm`) in
+   `render_clip` and before `aformat` in `render_assembled_reel`, keeping Pass 1 and Pass 2
+   `loudnorm` input streams identical and preserving all existing filter-chain tests.
+
+**Considered and not chosen.** `acrossfade` (shortens concatenated audio stream vs video cuts,
+breaking `assert_encoded_span`); zero-crossing search per cut (still leaves slope clicks across
+divergent talker/room tone and is fragile at shot cuts).
+
+**Not established.** Real Zar multi-cut perceptual preference beyond objective PCM discontinuity
+and EBU R128 Pass 1/Pass 2 agreement. Linux CI runner not yet executed.
+
+## D-352 - Usable-rate scoreboard CSV schema and module CLI (Phase A7)
+
+2026-11-19; owner approval: `"all approved"` (`specs/a7-usable-rate-sheet/plan.md`).
+Type: measurement & review ledger; no change to frozen BLUEPRINT §3-§8 pipeline stages.
+
+**Findings (`tests/test_claims.py`).**
+1. `test_new_evidence_names_its_commit_media_and_host` inspects `evidence/*.md` only, so keeping the human review ledger as `evidence/usable-rate.csv` does not collide with Markdown report header checks (while any Phase F3 Markdown summary under `evidence/*.md` must include `commit`, `media_sha256`, `host`, and `command`).
+2. `tests/test_claims.py` asserts exact 16-script parity between `pyproject.toml` `[project.scripts]` and `AUDIT_REPORT.md` (`_NUMBER_WORDS` stops at 16). Adding a 17th `[project.scripts]` entry is therefore rejected.
+
+**Decision.**
+1. Create `evidence/usable-rate.csv` with leading schema columns `episode,reel,verdict,reason` followed by provenance columns `reel_sha256,commit,recorded_at`.
+2. Add stdlib-only `src/hawedit/usable_rate.py` invoked via `python -m hawedit.usable_rate add|summary` (reusing `hawedit.cli.use_utf8_streams` and `hawedit.comparison_kit.wilson_score_interval`) with `USABLE_RATE_BASELINE = 0.62`, `USABLE_RATE_TARGET = 0.80`, and `VALID_VERDICTS = ("publishable", "needs_fix", "unusable")`.
+3. Fail stop when `verdict` is unrecognized, when a non-publishable verdict lacks a non-empty `reason`, or when `(episode, reel)` duplicates an existing row without `--replace`.
+
+## D-353 - Post-publish per-reel contact sheets alongside rendered MP4s (Phase E1)
+
+2026-11-19; owner approval: `"all approved"` (`specs/e1-reel-contact-sheet/plan.md`).
+Type: CPU inspection sidecar; preserves `ArtifactBundle._SUFFIXES` and `candidate_review.REVIEW_SUFFIXES`.
+
+**Findings (`artifact_bundle.py`, `candidate_review.py`, `pipeline.py`).**
+`ArtifactBundle._validate` and `candidate_review` enforce closed suffix sets inside staging and signed review packets. Meanwhile `pipeline.py` already places `.cover.png` into `bundle.final_dir` after `bundle.publish()`.
+
+**Decision.**
+1. Implement CPU-only `src/hawedit/contact_sheet.py` (`python -m hawedit.contact_sheet`) using pinned `find_ffmpeg()`, `measure.probe_container`, `measure.probe_scene_cuts`, `measure._parse_ass_dialogue_cues`, and `VisualEditPlan` cuts with `CONTACT_SHEET_SUFFIX = ".contact-sheet.jpg"`, `GRID_COLUMNS = 4`, `MAX_CUT_PAIRS = 12`, and `CAPTION_BAND_RATIO = 0.34`.
+2. Render `FIRST` (`0 ms`), frame-accurate pre/post cut pairs, explicit slate-grey `FILLER / NO TILE` padding cells (preventing empty grid cells from reading as black frames), and a full-width enlarged caption strip centered on active ASS cue midpoints.
+3. Invoke `render_reel_contact_sheet` post-`bundle.publish()` in both `_render_episode_single_clip` and `run_pipeline` in `src/hawedit/pipeline.py` without modifying `ArtifactBundle._SUFFIXES` or `REVIEW_SUFFIXES`.
+
+## D-354 - Authoritative EDL hard edit rules, two-sided silence cut padding, and wired `render_critic.py` (Phase E3)
+
+2026-11-19; owner approval: `"all approved"` (`specs/e3-hard-edit-rules/plan.md`) and coordinator clarification (#23).
+Type: pre-render and post-render guardrail consolidation; no third critic added.
+
+**Findings (`edit_plan.py`, `silence.py`, `render_critic.py`, `sanity_gate.py`, `pipeline.py`).**
+1. No `validate_edl()` validator existed before E3. `silence.py` set `cut_end = gap_end`, leaving `0 ms` before the post-cut word onset. `render_critic.py` was already called at two `pipeline.py` sites and guarded by 11+ tests (`tests/test_render_critic.py`, `tests/test_robustness_audit.py` RB-11/RB-12), while Check #0 sampled 1 frame at `mid_ms` despite `TemporalCritiqueWindow` claiming `frame_count >= 2` and `sanity_gate.py` had zero `src/` callers.
+2. Pre-existing `test_pipeline.py` `_MeasuredDiarizer` tests assert `(0, 1_950)` (`250 ms` `speaker_turn_end` extension within `SHOT_CUT_WINDOW_MS = 400`), and `test_review_candidate_cache.py` asserts `silence_target_gap_ms = 5` yields `silence_removed_ms = 295` on the 4.16 s fixture.
+
+**Decision.**
+1. Keep and wire `render_critic.py` (no deletion, no third critic, `sanity_gate.py` left unwired), and host authoritative `validate_edl()` in `src/hawedit/edit_plan.py` with standalone defaults `MIN_CUT_PADDING_MS = 30`, `MAX_CUT_PADDING_MS = 200`, `MAX_STAGE5_SIGNAL_EXTENSION_MS = 600`, `DEFAULT_MIN_REEL_DURATION_MS = 30_000`, `DEFAULT_MAX_REEL_DURATION_MS = 90_000`, `SOCIAL_MIN_REEL_DURATION_MS = 30_000`, and `SOCIAL_MAX_REEL_DURATION_MS = 55_000`.
+2. Require zero mid-word cuts (`word.start_ms < cut_ms < word.end_ms`), `[30, 200]` ms cut padding (permitting physical `0` / `media_duration_ms` outer clamps while failing stop if an unselected adjacent word sits `< 30 ms` outside), and output duration bounds. In `pipeline.py`, forward configured clip bounds via `pipeline_edl_duration_bounds` / `pipeline_edl_padding_bounds` (keeping `[30, 200]` strict on internal cuts, unaligned `None`/`tail` outer edges, and bounded runs, while permitting `shot_cut` up to `SHOT_CUT_WINDOW_MS` = 400 ms and measured Stage 5 audio/diarization/visual outer extensions `vad_onset`/`natural_silence`/`speaker_turn_*`/`timelens_interval_end` up to `MAX_STAGE5_SIGNAL_EXTENSION_MS = 600`).
+3. Fix `silence.py` (`plan_silence_tightening` via `_two_sided_keep_ms`) to preserve `[30, 200]` ms padding on both sides whenever `target_gap_ms >= 60` (and symmetric `target_gap_ms // 2` split for explicit sub-60 ms synthetic overrides), wire pre-render `validate_edl()` before `render_clip`, wire `edit_plan` validation into `render_critic.inspect_rendered_sequence`, and fix Check #0 to sample `>= 2` frames per multi-frame temporal window.
+
+## D-356 - CPU Acoustic Excitement Signals for Multimodal Stage 3 Discovery & Teaser Overlap Benchmark
+
+2026-11-20; owner approval: `"set a research grade plan to make it content aware real 10/10, then using swarm implement all whn u sure"` (`specs/content-aware-10-of-10/plan.md`).
+Type: zero-weight multimodal Stage 3 enhancement (`BLUEPRINT.md` §3 Stage 3).
+
+**Findings (`path_a.py`, `topic_segmenter.py`, `evidence/teaser-gold-timestamps.md`).**
+Stage 3 Path A and C4 TextTiling previously read text only, missing vocal energy spikes, laughter bursts, and delivery pace, and had no automated evaluator for human-edited opening teaser overlap on `cooking` (17 gold spans) and `ep54` (16 gold spans).
+
+**Decision.**
+1. Add stdlib/NumPy `src/hawedit/audio_signals.py` computing per-sentence `rms_z`, `peak_burst_count`, `speech_rate_wps`, and `pause_before_ms` directly from Stage 0 `audio.wav` (`< 2 s` on 40 min audio), plus `evaluate_teaser_overlap()` returning deterministic precision/recall/F1 and per-gold-region hit coverage.
+2. Extend `path_a._numbered_sentences` / `discover_verbal` and `topic_segmenter.discover_topics` with optional `audio_metrics` (`None` default preserving full backward compatibility) to surface compact `[high-energy]` / `[burst]` / `[fast]` cues and gently favor `35–65 s` viral arcs.
+
+## D-357 - Intra-Shot Active Speaker Switching, Non-Face `BLURRED_FILL`/Saliency Framing, and Explicit GPU NVENC Resolution
+
+2026-11-20; owner approval: `specs/content-aware-10-of-10/plan.md`.
+Type: computer-vision framing and hardware encode acceleration (`BLUEPRINT.md` §3 Stage 6).
+
+**Findings (`reframe.py`, `render.py`, `pipeline.py`, Pass 6 measurements).**
+1. Per-shot active-speaker clustering fixed 16/16 shots on `RO1PmSoqmCM`, but long uncut 2-person wide shots (`>= 5 s`) locked onto one speaker even if the second speaker took over mid-shot.
+2. Zero-face action shots (e.g., cooking pans/hands) raised `RuntimeError("zero faces detected")` in `pipeline.py` instead of using existing `Reframe.BLURRED_FILL` or motion saliency.
+3. Pass 6 spent ~65 min rendering 6 reels on CPU `libx264` despite `encoder_available(Encoder.NVENC) == True` on HawaPC01's RTX 3090 Ti, and ran Haar detection at full 1440p resolution.
+
+**Decision.**
+1. Add rolling-window intra-shot active-speaker switching (`>= 5 s` multi-person wide shots, `>= 2.0 s` dwell hysteresis, `>= 1.6×` mouth-motion dominance) emitting zero-flash hard cut steps, downscaled (`<= 960 px`) Haar detection mapped cleanly back to source coordinates, and `detect_motion_focus_points()` for non-face visual action in `src/hawedit/reframe.py`.
+2. Add explicit `resolve_encoder(choice, ffmpeg)` (`auto | h264_nvenc | libx264`) in `src/hawedit/render.py`: explicit `h264_nvenc` fails-stop if unavailable (zero silent fallback); `auto` probes `h264_nvenc` once and records exact encoder provenance.
+
+## D-358 - Clip-Only Audio-Grounded Sorani Caption Polish & E3-Safe Dead-Air Tightening
+
+2026-11-20; owner approval: `specs/content-aware-10-of-10/plan.md`.
+Type: display-layer caption hygiene and silence-trimming root-cause fix (`BLUEPRINT.md` §4.1, §4.3, D-343, D-354).
+
+**Findings (`silence.py`, Pass 6 transcript audit).**
+1. Chosen 60 s reels still carried occasional CTC micro-stutters (`تۆپ تۆپ تۆپ`) and minor Sorani orthography/ASR slips (`نابزانی`, `تێئەگە`, `چیت سکۆدس`), while D-343 rightly keeps full-episode validation disabled.
+2. `silence.plan_silence_tightening` ran `_identify_filler_words(..., detect_restarts=True)` even when `filler_tokens is None`, excising Kurdish emphatic repeats (`زۆر زۆر`) with `0 ms` padding and failing E3 `validate_edl` on 6/6 Pass 6 reels.
+
+**Decision.**
+1. Add `src/hawedit/caption_polish.py` providing deterministic micro-stutter deduplication (preserving intentional emphatic Kurdish repeats like `زۆر زۆر`) and optional clip-only multimodal Sorani display-caption polishing (`polish_clip_sentences`) with immutable `raw.json`, strict monotone CTC timestamp preservation, and `<= 25%` character-divergence guardrail.
+2. Fix `src/hawedit/silence.py` so `detect_restarts` runs ONLY when `filler_tokens is not None` (`--excise-fillers`), keeping pure dead-air tightening (`--silence-threshold-ms`) strictly `[30, 200] ms` word-padded and E3-compliant.
+
+## D-359 - End-to-End Content-Aware Pipeline Wiring & Automated Broadcast Scorecard
+
+2026-11-20; owner approval: `specs/content-aware-10-of-10/plan.md`.
+Type: Stage 3–8 integration and objective quality reporting (`BLUEPRINT.md` §3, §8).
+
+**Decision.**
+1. Wire `audio_signals`, explicit `--encoder` (`auto | h264_nvenc | libx264`), zero-face `Reframe.BLURRED_FILL` fallback, and opt-in `--polish-captions` into `src/hawedit/pipeline.py` (preserving all existing defaults and strict fail-stop guarantees).
+2. Add deterministic `BroadcastScorecard` (`double_cuts_count`, `zero_double_cuts`, `loudness_ok`, `contrast_ok`, `face_framing_ok`, `all_passed`) into `src/hawedit/measure.py` and `.measured.json` sidecars.
+
+## D-360 - Zero-Double-Cut `per_shot_boxes`, Broadcast Linear Speech Mastering & Acoustic-Driven Push-Ins
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: render physics and audio mastering upgrade (`BLUEPRINT.md` §4.3, §6, D-264, D-330).
+
+**Findings (measured on `ai-c10/topic-14` and `cooking-30m/verbal-8`).**
+1. `per_shot_boxes` (`y_center_expr` and `sendcmd` `w/h`) switched `31 µs` after `pts_time` on `topic-14` `CUT #5`, producing the sole `double_cuts_count=1` across 6 real reels.
+2. High-crest-factor audio (`input_i=-19.06 LUFS, input_tp=+1.5 dBTP`, crest `20.56 dB > 13.0 dB`) forced `loudnorm` out of linear mode to `-14.7..-15.0 LUFS`, failing delivery on `cooking/verbal-5` and `cooking/verbal-8`. Appending `acompressor=threshold=-22dB:ratio=3:attack=8:release=100:makeup=3,alimiter=limit=-3.0dB:attack=5:release=50:level=disabled` converged `cooking/verbal-8` linearly to `-13.96 LUFS / -1.68 dBTP` (`normalization_type='linear'`).
+
+**Decision.**
+1. Snap `per_shot_boxes` `y_center_expr` and `sendcmd` `w/h` cuts `-2 ms` early matching `_interpolated()`.
+2. Append transparent `acompressor` + `alimiter` peak control to `SPEECH_CHAIN_FILTERS` and add `two_pass_loudness: bool = False` on `render_clip()` so episode review renders achieve pure linear `-14.0 LUFS / <= -1.0 dBTP`.
+3. Add `content_aware_push_schedule()` scaling eased push-in depth by `SentenceAudioMetrics.excitement_score` and `verdict.payoff_at_ms`.
+
+## D-361 - Edge-Guard Smooth-Follow Camera & Per-Shot Zero-Face Cutaway Framing
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: camera stabilization and multi-genre reframe upgrade (`BLUEPRINT.md` §4.2, D-258, D-357).
+
+**Decision.**
+1. Add optional `edge_guard_px` and `edge_settle_ms` to `stabilize()` so leaning speakers approaching crop boundaries trigger a smooth follow pan before half-face clipping occurs, while remaining tripod-locked inside `dead_zone_px`.
+2. In `OpenCvFaceTracker.track()`, frame individual zero-face cutaway shots inside multi-shot clips via `detect_motion_focus_points()` instead of holding the prior shot's speaker X.
+
+## D-362 - Face-Aware 2-Line Hook Card, Zero-Orphan Chunking, Sorani Digit Normalization & Acoustic Karaoke Pop
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: display-layer typography and pacing upgrade (`BLUEPRINT.md` §4.3, D-259, D-350, D-358).
+
+**Decision.**
+1. When `face_intervals` is provided to `build_ass()`, wrap `title_ckb` at `30` chars (sleek 2-line card) and relocate the hook card out of the frame-0 face bounding box (leaving `face_intervals=None` / `GOLDEN_HOOK_CARD` byte-identical).
+2. Add opt-in `merge_short_orphans: bool = False` (merging `<= 4`-char trailing 1-word orphans when gap `<= 250 ms` and width fits) and `excited_intervals_ms` (subtle `\fscx107\fscy107` active-word micro-pop on high-energy bursts) in `build_ass()`.
+3. Add deterministic `normalize_sorani_digits()` in `caption_polish.py` converting isolated numerals `0`–`10` to Sorani words in display captions while preserving exact CTC timestamps and immutable `raw.json`.
+
+## D-363 - Director v2 End-to-End Pipeline Integration
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: Stage 3–8 pipeline wiring (`BLUEPRINT.md` §3, §4, §8).
+
+**Decision.**
+Wire D-360, D-361, and D-362 into `src/hawedit/pipeline.py` (episode review renders use two-pass broadcast linear loudness, acoustic-driven push-ins, edge-guard stabilization, face-aware hook cards, zero-orphan digit-normalized captions, and excited karaoke emphasis) with full regression tests and real multi-genre visual verification on `ai` and `cooking-30m`.
+
+## D-364 - Cinema Playback Polish: Zero Zoom Strobe, Zero Karaoke Ghosting, Editorial Hook Typography, Natural Vocal Dynamics & Clean Tail Cuts
+
+2026-11-21; owner review feedback on rendered `ai-v2` and `cooking-v2` playback.
+Type: playback fidelity, visual polish, and natural audio dynamics (`BLUEPRINT.md` §4.2, §4.3, §6).
+
+**Findings (direct playback & frame-by-frame audit of `ai-v2` and `cooking-v2`).**
+1. 80 ms discrete integer `sendcmd crop w/h` steps created a 3.6× alternating even/odd frame strobe (`even_med=2.21` vs `odd_med=0.61`) across multi-cam shots that already cut every 6–11 s.
+2. Putting `\t(0,80,\fscx107\fscy107)` on Layer 4 (`KurdishHighlight`) inside a fixed 100%-scale `\clip(...)` box displaced yellow glyphs against Layer 0 white glyphs, producing double-vision ghosting.
+3. Face-aware `Hook` cards inherited jagged per-line `BorderStyle=3` black boxes overlapping chest/hands on close-ups.
+4. `SPEECH_CHAIN_FILTERS` `-22 dB / 3:1` compression squeezed podcast loudness range to `2.4–2.9 LU`; measured `-18 dB / 2.2:1 / +3.5 dB` + `-5 dB` limiter preserved warm `4.9–5.1 LU` dynamics while staying 100% `linear` across synthetic 16 dB crest (`-14.15 LUFS`), `ai` (`-13.91 LUFS / -2.62 dBTP / LRA 4.9 LU`), and hot-mic `cooking` (`-13.77 LUFS / -1.29 dBTP / LRA 5.1 LU`).
+5. Post-speech tails crossed trailing shot cuts, flashing a brand-new camera angle for `18 ms` (`cooking-v2/verbal-3`) and `122 ms` (`ai-v2/verbal-4`) right before clip end.
+
+**Decision.**
+1. Use `step_ms=40, min_push_span_ms=15_000` in `pipeline.py` so multi-cam studio shots stay rock-steady (`0.00` strobe) while long static `>= 15 s` holds push frame-aligned at 25 fps, skipping no-op `sendcmd` zoom filters and ignoring `1.0 -> 1.0` hold keyframes as discrete cuts in `delivery.py`.
+2. Replace Layer 4 `\fscx107` scaling with zero-displacement luminous electric-lime color accent (`\1c&H002EFFB8&`, `#B8FF2E`, BT.601 luma `210 > 175`, `>=16.5:1` stroke contrast).
+3. Style face-aware hook cards (`face_intervals is not None`) with clean `BorderStyle=1` bold outlined studio-gold editorial typography (`HOOK_EDITORIAL_THEME`, `#FFD700`, `outline=7, shadow=4`, `\fad(0,250)` over `2.4 s` for crisp frame-0 thumbnails), leaving `face_intervals is None` (`GOLDEN_HOOK_CARD`) byte-identical.
+4. Update `SPEECH_CHAIN_FILTERS` to natural-dynamics `-18 dB / 2.2:1 / +3.5 dB` compression + `-5 dB` limiter.
+5. Add `_trim_trailing_flash_cut()` in `pipeline.py` snapping `final_out_ms` cleanly before any shot cut landing in the post-speech tail (`>= anchor_out_ms + 30 ms`).
+
+## D-365 - Sub-Phrase Word-Level Acoustic Peak & Payoff Highlight Rhythm
+
+2026-11-21; Cinema Intelligence v4 (`/goal` audit of `ai-v3/topic-14.ass`).
+Type: multimodal acoustic-visual caption pacing (`BLUEPRINT.md` §4.3, D-356, D-362, D-364).
+
+**Findings.**
+On `ai-v3/topic-14`, OmniASR emitted a continuous 56 s Sorani utterance, so sentence-level excitement marked `152/152` (`100.0%`) of karaoke words in electric lime, erasing contrast between normal delivery and vocal peaks.
+
+**Decision.**
+Add deterministic CPU-only `analyze_word_energy_peaks()` in `src/hawedit/audio_signals.py` computing per-word RMS Z-scores with 3-word neighbourhood weighting strictly capped at `<= 25%` of clip words plus a `±1.2 s` spotlight around `payoff_at_ms`, wired into `_excited_caption_intervals_ms()` for real clips (`>= 12` words with Stage 0 WAV) while preserving sentence-level fallback on short synthetic fixtures.
+
+## D-366 - Kurdish Syntactic Phrase Chunking & Spoken Function-Word Stutter Cleanup
+
+2026-11-21; Cinema Intelligence v4 (`/goal` line-by-line Sorani audit of `ai-v3/topic-14.ass`).
+Type: Sorani Kurdish typography & display-layer caption polish (`BLUEPRINT.md` §4.3, D-358, D-362).
+
+**Findings.**
+Line-by-line reading of `ai-v3/topic-14.ass` uncovered dangling Kurdish proclitics/prepositions at popup ends (`بکڕیت و`, `کەی بە`, `هەیە ئەم`, `تیک تۆک و`), three stranded 1-word popups (`تەنک`, `ئەبێتە`, `ئەجووڵێن`), and a rapid spoken function-word stutter (`وەکو وەکو ڕۆژنامەی`) exceeding the 120 ms CTC micro-stutter ceiling.
+
+**Decision.**
+1. Add `KURDISH_NON_TERMINAL_WORDS` and `_rebalance_kurdish_chunks()` in `src/hawedit/captions.py` (enabled with `merge_short_orphans=True`, keeping legacy/golden callers byte-identical) to carry dangling Kurdish proclitics onto the next chunk and rebalance `[3, 1] -> [2, 2]` stranded 1-word popups while respecting real pauses and `max_width_px`.
+2. Extend `deduplicate_micro_stutters()` in `src/hawedit/caption_polish.py` to collapse adjacent repeated Kurdish function/filler words (`وەکو`, `بە`, `لە`, `کە`, `و`, etc.) up to `380 ms` per token and `220 ms` gap while strictly preserving intentional Kurdish emphatic adverbs (`زۆر زۆر`, `جوان جوان`).
+
+## D-367 - Resilient 300 s Full-Episode Path A Timeout & Hook-First Discovery
+
+2026-11-21; Cinema Intelligence v4 (`/goal` audit of `ai-v3` & `cooking-v3` Path A timeouts).
+Type: Stage 3 editorial discovery reliability (`BLUEPRINT.md` §3 Stage 3).
+
+**Findings.**
+Hardcoded `timeout=120` in `src/hawedit/gemini.py:_https()` aborted full-episode `gemini-4-carbon` Path A thinking calls at `121.5 s` (`ai-v3`) and `215.9 s` (`cooking-v3`), dropping all `verbal-*` candidates and cutting reel yield from 3–4 down to 1.
+
+**Decision.**
+Raise `_https()` default socket read timeout to `300.0 s` (`timeout_s: float = 300.0`) and add explicit hook-first guidance in `src/hawedit/path_a.py` to skip weak conversational greetings/throat-clearing so `start_sentence` lands directly on the scroll-stopping hook.
+
+## D-368 - Broadcast Loop Boundary Audio Micro-Fades
+
+2026-11-21; Cinema Intelligence v4 (`/goal` audio loop-edge polish).
+Type: broadcast audio mastering (`BLUEPRINT.md` §4.2, D-360, D-364).
+
+**Decision.**
+Add opt-in `boundary_fade_ms` + `duration_ms` to `audio_filter()` in `src/hawedit/render.py` and pass `(15, 60)` ms quadratic-sine start/end micro-fades from `render_clip()` when `speech_chain=True` and `effective_duration_ms >= 500`, eliminating start/end DC pops on social-feed auto-loops with zero loudness shift.
+
+## D-369 - E3-Safe Kurdish Filler Excision & Tight Dead-Air Multi-Cut Pacing
+
+2026-11-21; V5 Human-Editor Director Engine (owner playback review of `ai-v4` & `cooking-v4` reels).
+Type: editorial pacing & E3 edit-rule integration (`BLUEPRINT.md` §4.2, D-348, D-351).
+
+**Findings.**
+1. Running `excise_fillers=True` on real Sorani CTC transcripts crashed E3 `validate_edl()` (`segment N end padding 0 ms outside allowed [30, 200] ms`) whenever an excised filler touched an adjacent surviving word (`sil_before < 30 ms` or `sil_after < 30 ms`), leaving reels with uncut fillers (`یەعنی`, `ئێ`, `نازانم چی و چی`) and loose 1100 ms dead-air thresholds.
+2. `n=1` repeat excision in `_identify_filler_words()` mistakenly flagged the first token of intentional Kurdish emphatic reduplications (`زۆر زۆر`, `هێواش هێواش`).
+
+**Decision.**
+1. Expand `KURDISH_FILLER_TOKENS` in `src/hawedit/silence.py` with `نازانم چی و چی`, `نازانم چی`, `و نازانم چی`, `ئێ`, `ئا`; add `preserve_emphatic_repeats: bool = False` (passed as `True` by `pipeline.py`) protecting `_KURDISH_EMPHATIC_REPEATS`; cap filler-splice keep buffers at `_MAX_CUT_PADDING_MS` (`200 ms`).
+2. Record verified interior filler-excision boundary edges in `SilencePlan.filler_cut_edges_ms` and persist them on `VisualEditPlan.filler_cut_edges_ms`. Permit `[0, max_padding_ms]` strictly on those interior filler splices inside `validate_edl()` (where `silence_trim_filter` applies 30 ms `qsin` audio crossfades), keeping outer clip boundaries, pure silence cuts, and zero word-splitting strictly enforced.
+
+## D-370 - Sub-Pixel Floating-Point `zoompan` Director Motion & A/B Jump-Cut Scale Toggles
+
+2026-11-21; V5 Human-Editor Director Engine (owner playback review & real 1440p FFmpeg 8.1 NVENC benchmark).
+Type: dynamic camera cinematography (`BLUEPRINT.md` §4.1, D-359, D-364).
+
+**Findings.**
+D-364 disabled discrete integer `sendcmd crop` zoom on `< 15 s` shots (`min_push_span_ms=15_000`) to stop 12.5 Hz even-pixel quantization strobe, leaving 6–13 s talking-head shots completely static (zero zoom, zero camera life). Direct benchmarking on real 1440p footage proved FFmpeg `zoompan=d=1:s=1080x1920:fps={fps}` evaluates floating-point zoom & offset per frame with `1.04x` even/odd inter-frame ratio (zero strobe), `0.000 ms` AV drift (`300/300` frames at `12.000000 s`), and `5.5x` realtime NVENC throughput.
+
+**Decision.**
+Add `CinemaMotionPlan` and `build_cinema_motion_filter()` in `src/hawedit/render.py` plus optional `cinema_motion: str | None = None` on `render_clip()` spliced on the exact post-trim output timeline before subtitles and progress bar:
+- Beat 0 (0..~4–5 s hook): smooth `1.00 -> 1.13x` push-in anchored to upper-third eye line (`y = 0.33`).
+- Silence/filler jump-cuts and long holds (`> 5.5 s`): crisp `1.00x <-> 1.14x` A/B cam scale toggles masking jump-cuts like a two-camera switch, with planned jump timestamps registered in `build_effective_source_cuts()` for Level C Clause 5 reconciliation.
+- Source shot cuts: alternating smooth push-in (`1.00 -> 1.12x`) and breathing pull-back (`1.12 -> 1.01x`).
+- Payoff beat: tight `1.14 -> 1.19x` lock-in with subtle motorized-slider horizontal drift (`(iw-iw/zoom)*0.12*sin(in*0.022)`).
+
+## D-371 - Tighter 30-55 s Viral Arc Preference in Path A Discovery
+
+2026-11-21; V5 Human-Editor Director Engine.
+Type: Stage 3 editorial pacing (`BLUEPRINT.md` §3 Stage 3, D-367).
+
+**Decision.**
+Update `_PROMPT` in `src/hawedit/path_a.py` to explicitly prefer tight, high-retention 30–55 s single-idea arcs over meandering 65+ s monologues while preserving configured `{min_s}`..`{max_s}` bounds.
+
+## D-372 - Studio Filmic Color Grade & Top Studio-Gold Retention Progress Bar
+
+2026-11-21; V5 Human-Editor Director Engine.
+Type: visual mastering & retention UX (`BLUEPRINT.md` §4.1, D-268, D-364).
+
+**Decision.**
+1. Append subtle broadcast studio grading (`eq=contrast=1.04:saturation=1.08:brightness=0.01,unsharp=3:3:0.30:3:3:0.0`) inside `build_cinema_motion_filter(..., cinema_grade=True)` so zoomed 1080p renders carry crisp studio contrast and natural skin-tone pop.
+2. When `--progress-bar` is enabled without an explicit `--brand-kit`, render a sleek 6 px Studio-Gold (`#FFD700`) top retention progress bar matching the Studio-Gold frame-0 hook and karaoke highlight palette.
+
+## D-373 - Balanced Two-Line Kurdish Editorial Hook Cards & Crisp Micro-Pop Entrance
+
+2026-11-21; V6 Cinema Masterwork Engine (`/goal` frame-by-frame visual audit of V5 `ai-v5` & `cooking-v5`).
+Type: Sorani Kurdish typography & frame-0 thumbnail polish (`BLUEPRINT.md` §4.3, D-364).
+
+**Findings.**
+Greedy 28-character wrapping in `build_ass()` wrapped 54–55 char Kurdish hook titles onto 3 lines, leaving a stranded 1-word orphan (`نییە`) on line 3 in `ai-v5/s86-87` and crowding 3 lines at the top of `cooking-v5/s7-7`.
+
+**Decision.**
+For face-aware editorial hook cards (`face_intervals is not None`, leaving legacy `GOLDEN_HOOK_CARD` byte-identical), balance Kurdish titles into 2 even lines minimizing `max(len(left), len(right))` when `<= 36` chars per line, scale font responsively (`86 / 76 / 68 px`), and append a crisp 160 ms pop-in (`{\fs...\fscx93\fscy93\t(0,160,\fscx100\fscy100)}`) while keeping frame 0 sharp and full-opacity.
+
+## D-374 - Cosine S-Curve Camera Dolly, Post-Crop Eye-Line Lock & Filmic Vignette
+
+2026-11-21; V6 Cinema Masterwork Engine (`/goal` visual & face-share audit of V5 renders).
+Type: sub-pixel cinematography & visual mastering (`BLUEPRINT.md` §4.1, D-370, D-372).
+
+**Findings.**
+1. Linear zoom ramps start and stop with constant velocity rather than natural motorized-dolly acceleration.
+2. Passing raw source `face_center_y / source_height` (`~0.43`) to `zoompan` on `cooking-v5` shifted zoom away from the post-`crop_filter` eye-line (`y = 0.324`), reducing `face_detected_share` from `0.8839` (`anchor_y = 0.33`) to `0.8452`.
+
+**Decision.**
+1. Upgrade `build_cinema_motion_filter()` to cosine ease-in-out S-curve motion (`0.5-0.5*cos(PI*min(1,max(0,(in-f0)/span)))`) with unmistakable 2-cam A/B scale contrast (`hook: 1.00->1.14x`, `A/B toggle: 1.00->1.09x <-> 1.14->1.18x`, `payoff: 1.14->1.19x`).
+2. Lock `anchor_y = 0.33` in `_resolve_cinema_motion()` (the verified post-`crop_filter` eye-line in 1080×1920 vertical space).
+3. Add a subtle broadcast cinema vignette (`vignette=PI/7:eval=init`) alongside studio contrast/sharpness (`eq=contrast=1.05:saturation=1.09:brightness=0.01,unsharp=3:3:0.35:3:3:0.0`).
+
+## D-376 - Deterministic Procedural Cinema Micro-SFX Sound Design
+
+2026-11-21; V6 Cinema Masterwork Engine (`/goal` audio/sound-design polish).
+Type: broadcast audio finishing (`BLUEPRINT.md` §4.2, D-360, D-364, D-368).
+
+**Decision.**
+Add zero-dependency stdlib procedural SFX synthesis (`src/hawedit/sound_design.py`: `select_sfx_transitions_ms`, `write_cinema_sfx_wav`) generating a frame-0 warm velvet sub-thump (`92 -> 44 Hz`, `300 ms`, `-23 dBFS`) plus up to 6 well-spaced (`>= 5.0 s`) whisper-soft low-pass airy transition whooshes (`180 ms`, `-26 dBFS`) on major A/B jump-cuts, mixed softly via `amix=inputs=2:duration=first:dropout_transition=0:normalize=0` prior to two-pass linear `-14.0 LUFS` loudnorm when `cinema_sfx_events_ms` is passed to `render_clip()` (and no external music bed is active).
+
+## D-377 - Audio-VAD Sub-Word CTC Onset Tightening
+
+2026-11-21; V7 Masterpiece Engine (audio audit of V6 `ai-v6` & `cooking-v6` renders).
+Type: acoustic word-boundary alignment & dead-air removal (`BLUEPRINT.md` §4.2, D-369).
+
+**Findings.**
+CTC-3B forced alignment stretched word `start_ms` timestamps across pre-word pauses (e.g. `'نازانی'` `1,322 ms` hiding a `0.79 s` silence at `40.23 s` in AI `s86-87`, and `'بەجێی'` `961 ms` hiding a `0.65 s` silence at `6.7 s` in Cooking `s7-7`). Because the word-to-word timestamp gap looked like `0 ms`, `plan_silence_tightening()` left those `0.65–0.79 s` silences uncut.
+
+**Decision.**
+Add pure-stdlib `tighten_ctc_word_onsets()` in `src/hawedit/silence.py` (using `wave`, `array`, `math`; strict fail-stop on missing/corrupt WAV) that measures 20 ms frame RMS dBFS inside words `>= 550 ms`, skips brief weak release bleed (`<= 60 ms`, `>= 6 dB` below word peak), and advances `word.start_ms` to `onset_ms - 25 ms` when leading silence `>= 180 ms` (and optionally trims unvoiced tails `>= 250 ms` leaving 35 ms breath pad) while preserving `>= 120 ms` voiced span and monotonic order. Wire it in `pipeline.py` right before `plan_silence_tightening()` / `tighten_sentences()` / `tighten_clip()` whenever silence trimming or filler excision is enabled and the Stage 0 WAV exists, guarding outer boundary padding bounds for E3 `validate_edl()`.
+
+## D-378 - Opt-In Cold-Open Hook Teaser & Middle-Tangent Story Condenser
+
+2026-11-21; V7 Masterpiece Engine (editorial pacing audit of V6 `ai-v6/s19-22` 88.6 s reel).
+Type: multi-span narrative assembly & viral pacing (`BLUEPRINT.md` §3 Stage 5/6, D-354).
+
+**Findings.**
+Long multi-sentence clips like AI `s19-22` (`88.6 s`, 4 sentences with a `43.6 s` middle tangent) ran past the 30–52 s short-form retention sweet spot and opened on slow conversational setup rather than a punchy 2–3 s climax teaser.
+
+**Decision.**
+Add `ViralStoryPlan` and `plan_viral_story_cut()` in `src/hawedit/assembly.py` (reusing `AssemblySpan` extended with `role: str = "body"` and `condenser.py` scoring helpers `score_interior_sentence` / `interval_overlap_ms`). Expose explicit opt-in CLI flags `--condense` and `--cold-open` (default `False`) wired into Stage 5/6 of `pipeline.py`: drops lowest-scoring interior sentences (`1..N-2`, never hook sentence 0 or final payoff) down to `[30, 48] s`, prepends a 1.8–3.4 s late payoff climax clause on E3-safe word boundaries (`0` split words), applies interior silence/filler tightening per body span, remaps captions/focus/shot-boxes/excited-intervals onto the assembled output timeline, and upgrades `measure_audio_loudness()` + `render_clip()` CFR normalization for exact two-pass `-14.0 LUFS` linear audio and `0 ms` AV sync across spliced spans.
+
+## D-379 - Contextual Kurdish Kinetic Keyword Callout Cards
+
+2026-11-21; V7 Masterpiece Engine (visual pattern-interrupt audit of V6 talking-head reels).
+Type: visual retention graphics & Sorani typography (`BLUEPRINT.md` §4.3, D-364, D-373).
+
+**Decision.**
+Add `extract_kurdish_callout_cards()` and optional `callout_cards: Sequence[tuple[int, int, str]] = ()` to `build_ass()` in `src/hawedit/captions.py` (default `()`, preserving legacy goldens byte-identical). Extracts 1–3 word punchy Kurdish key phrases anchored to vocal peak intervals (`>= 4.5 s` clear of the 0–2.4 s hook card, spaced `>= 10 s`, ending `>= 1.2 s` before clip end, stopwords/particles filtered), styled with `CALLOUT_CARD_THEME` (bold `Vazirmatn` 66 px Electric-Lime `#B8FF2E`, thick black outline + shadow) on Layer 2 with face-aware top (`y=155`) / chest (`y=1240`) placement. Automatically wired in `pipeline.py` when `cinema_plan is not None`.
+
+## D-380 - Zero-Ghosting Kinetic Caption Entrance & Broadcast Speaker Lower-Third Polish
+
+2026-11-21; V7 Masterpiece Engine (kinetic typography audit of V6 karaoke renders).
+Type: Sorani subtitle motion & lower-third polish (`BLUEPRINT.md` §4.3, D-359, D-364).
+
+**Decision.**
+Add optional `kinetic_entrance: bool = False` to `build_ass()` in `src/hawedit/captions.py` (default `False`, wired to `cinema_plan is not None` in `pipeline.py`). Applies `\fad(50,0)` on both Layer 0 base popup and Layer 4 `\clip` karaoke highlight lines (`0.00 px` displacement = zero ghosting), adds subtle vertical `\move` micro-lift strictly on non-clipped `Hook` (`12 px`, keeping frame-0 visibility), `Callout` (`14 px`), and `SpeakerTag` (`12 px`, plus smooth `\fad(180,250)` and Studio-Gold title accent).
+
+## D-381 - Deterministic Sorani ASR Orthography Repair & Local OpenAI-Compatible LLM Polish
+
+2026-11-21; V7 Masterpiece Engine (frame-by-frame Kurdish caption proofread of V6 reels).
+Type: display-layer Sorani orthography & local LLM client (`BLUEPRINT.md` §4.1, D-358).
+
+**Findings.**
+V6 frames exhibited unambiguous Sorani CTC spelling/phonetic errors (`ئەگەزانی -> ئەزانی`, `مۆدەی بڵاو -> مۆدێل بڵاو`, `بەیانیەکەی -> بەیانییەکەی`, `ڕەستۆرانتەکە -> ڕێستۆرانتەکە`, `کاشەرەکە -> کاشێرەکە`), and runs without a live cloud judge skipped LLM polish entirely.
+
+**Decision.**
+Add `KURDISH_ASR_ORTHOGRAPHY_FIXES`, `KURDISH_ASR_BIGRAM_FIXES`, and `repair_kurdish_asr_orthography()` (including consonant+`ی` double-yaa rule before definite/plural suffixes) in `src/hawedit/caption_polish.py`, always executed during `polish_clip_sentences()` while strictly preserving 1:1 CTC timestamps and immutable `transcript.raw.json`. Strengthen the LLM polish prompt for English tech/proper-noun loanword garbles and add pure-stdlib `LocalLlmJsonClient` (`StructuredJsonClient` over OpenAI-compatible `HAWEDIT_LOCAL_LLM_URL` with fail-loud `LocalLlmUnavailable`, zero silent fallback), wired into `pipeline.py` via `_resolve_polish_client()`.
+
+
+## D-382 - V8 Declarative DirectorScript Schema & Hard Camera Restraint Law
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: cinematography restraint & declarative edit-script architecture (`BLUEPRINT.md` §3 Stage 6, D-375).
+
+**Findings.**
+Owner visual inspection of V7 renders identified continuous `0.08 * sin(in * 0.022)` horizontal sway and forced 5.5 s timer zoom toggles in `build_cinema_motion_filter()` as "unnecessary zoom and movement" that reads as algorithmic rather than human-edited.
+
+**Decision.**
+Isolate the V8 Lean Director in `src/hawedit/v8/` (`schema.py`, `compiler.py`, `__main__.py`) without adding heuristic bloat to `pipeline.py`. Define strict immutable `DirectorScript` dataclasses (`WordRepair`, `CutRegion`, `CameraMove`, `CaptionBeat`, `VisualInterrupt`, `CritiqueVerdict`) with `validate_director_script()` enforcing the Hard Camera Restraint Law:
+- Scale strictly bounded to `[1.00, 1.16]`.
+- At most `max(2, ceil(duration_ms / 15_000))` active camera moves (max 4 per 60 s clip).
+- Moving-camera (`abs(scale_end - scale_start) > 1e-3`) total screen time `<= 25%` of clip duration (`>= 75%` rock-steady locked `1.00x` tripod).
+- `compile_restrained_camera_filter()` forbids `sin(...)` sway (`x='iw/2-(iw/zoom/2)'`), omits `zoompan` completely when no active move is scheduled (emitting studio color grade only), and renders only Director-motivated cosine S-curve `slow_push` or instant 1-frame `punch_cut`/`wide_release` windows.
+
+## D-383 - Viral TikTok Animated Kurdish (Sorani RTL) Subtitle Engine & Licence Audit
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: kinetic Sorani RTL subtitles & runtime dependency licence audit (`BLUEPRINT.md` §4.3, D-002, D-380).
+
+**Findings.**
+3–4 word static caption lines feel wordy on mobile short-form feeds, and ASS `\clip` karaoke cannot scale active words without glyph ghosting.
+
+**Decision.**
+Add `src/hawedit/v8/tiktok_subs.py` enforcing the strict viral word-chunking law (`chunk_viral_kurdish_words`): `1` word for `>= 8`-char words or Director `power_word` beats, `2` words by default, `3` words ONLY when all 3 fit in `<= 14` chars total (with Kurdish proclitic protection), and NEVER `4+` words. Support two explicit renderers (zero silent fallback):
+1. `skia` (default): Native HarfBuzz + Skia 1080×1920 RGBA lossless `.mov` (`qtrle`/`argb`) overlay composited via opt-in `subtitle_overlay_path: Path | None = None` in `src/hawedit/render.py`, featuring damped spring-bounce pop (`0.82 -> 1.07 -> 1.00` over `140 ms`), `#FFD700` Studio-Gold / `#B8FF2E` Electric-Lime rounded active-word pill with `60 ms` RTL ease-out glide, frosted-glass top hook card, and 100% joined HarfBuzz Sorani shaping (`Vazirmatn.ttf` `wght=800`).
+2. `libass`: Pure zero-dependency viral fallback (`build_viral_tiktok_ass`) using non-overlapping sequential slices (`0.00 px` ghosting, no `\clip`) while leaving legacy §4.3.6 goldens byte-identical.
+
+**Licence Audit (`D-002` — NonCommercial and copyleft rejected):**
+- `skia-python==144.0.post2` — **BSD-3-Clause** (verified directly in `skia_python-144.0.post2.dist-info/licenses/LICENSE`, Windows Python 3.12.10). Commercial-safe.
+- `uharfbuzz==0.56.0` — **Apache-2.0** (verified directly in `uharfbuzz-0.56.0.dist-info/licenses/LICENSE`). Commercial-safe.
+- `pybind11==3.1.0` (transitive dependency of `skia-python`) — **BSD-3-Clause** (verified in `pybind11-3.1.0.dist-info/licenses/LICENSE`). Commercial-safe.
+- `python-bidi` — **REJECTED (LGPL-3.0)**; NOT installed. Replaced with pure-stdlib `unicodedata.bidirectional` directional run splitting (`_split_directional_runs`) for zero-LGPL Sorani RTL + English loanword shaping.
+Pinned in `pyproject.toml` under `[project.optional-dependencies].media` and hash-locked across all 14 host targets via `scripts/lock_host_dependencies.py` (keeping the existing `2026-08-13T00:00:00Z` resolver cutoff unchanged so zero unrelated dependencies drifted).
+
+## D-384 - Unified Dual-Backend Multimodal Director Brain (Cloud Gemini + Local Qwen-Omni + Explicit Offline)
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: native video+audio multimodal directing (`BLUEPRINT.md` §3 Stage 4/6, D-381).
+
+**Decision.**
+Add `src/hawedit/v8/director.py` (pure stdlib + existing HawEdit helpers, zero new runtime dependencies) exposing the `DirectorBrain` protocol and three explicit backends via `create_director_brain(backend)` with strict fail-stop and ZERO silent fallback between backends:
+- `gemini` (`GeminiVideoDirector`): Sends a compact 360p @ 1 fps H.264 + 64 kbps 16 kHz mono AAC clip proxy (`inlineData` `video/mp4`) + word-indexed Sorani transcript to Gemini with strict `responseMimeType: "application/json"` and `responseSchema`, listening directly to the audio to repair Sorani/English loanwords and selecting restrained camera moves and power words.
+- `local-omni` (`LocalOmniDirector`): Targets an OpenAI-compatible multimodal server (`HAWEDIT_OMNI_URL`, e.g., local Apache-2.0 Qwen2.5-Omni / Qwen3-Omni on GPU 1 or LM Studio) with sampled JPEG keyframes (`image_url`) + 16 kHz WAV (`input_audio`) + strict `json_schema`.
+- `offline` (`OfflineRestrainedDirector`, explicit `--director offline` ONLY): Deterministic content-aware director combining `repair_kurdish_asr_orthography()`, VAD/silence/filler cuts, stdlib WAV acoustic Z-score power words, and strict `>= 80%` locked-tripod camera restraint (max 1 `slow_push` + max 2 `punch_cut` on `>= 600 ms` jump-cuts).
+
+## D-385 - Audio-Visual Active Speaker Detection (Light-ASD ONNX + Mouth-AV Correlation) & Locked Per-Shot Crops
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: multi-speaker framing & active speaker detection (`BLUEPRINT.md` §3 Stage 6, `BLOCKED.md` #4).
+
+**Decision.**
+Add `src/hawedit/v8/asd.py` (using already-installed `cv2`, `numpy`, `onnxruntime`, `wave` — zero new dependencies; Light-ASD/LR-ASD architecture is commercial-safe Apache/MIT) providing:
+1. `score_active_speakers()` with two explicit backends: `light_asd_onnx` (when `--asd-onnx` is explicitly supplied; prefers `CUDAExecutionProvider` on GPU 1, strict fail-stop if missing/corrupt) and default `mouth_av_corr` (sub-pixel translation-compensated 48×32 mouth-ROI motion correlated against a 300–3400 Hz speech-bandpass 16 kHz RMS envelope over a lag-tolerant ±80 ms / ±600 ms window so smaller speaking faces cleanly beat larger silent listeners).
+2. `compute_locked_shot_crops()` partitioning on `shot_cuts_ms` and verified active-speaker switches with `>= 2,200 ms` anti-ping-pong hysteresis, emitting ONE rock-steady median `(focus_x_px, face_center_y_px, face_height_px)` per hold with hold-and-step framing and zero micro-drift.
+
+## D-386 - Watch-Before-Ship Bounded Multimodal Self-Critique Loop
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: post-render self-critique & bounded repair (`BLUEPRINT.md` §2, D-382).
+
+**Decision.**
+Wire `critique_rendered_clip()` (`480p @ 2 fps` preview + audio inspected against 5 checks: unnecessary camera motion, broken Kurdish text, awkward cuts, subtitle legibility, viral hook) inside `compile_v8_clip()` (`src/hawedit/v8/compiler.py`). If rejected with a structured JSON `patch` over `PATCHABLE_DIRECTOR_FIELDS`, apply at most `1` bounded revision (`MAX_CRITIQUE_REVISIONS`) via `apply_critique_patch()`, re-validate against `validate_director_script()`, and re-render; fail loudly (`V8CompileError`) if still rejected after 1 revision. Human QC discipline (`for_review=True`, `evidence/usable-rate.csv` untouched) remains strictly enforced.
+
+
+## D-387 - Permanent Post-Render Forensic Video Grill Gate & Zero-Double-Cut V8 Polish
+
+2026-11-22; HawEdit V8 Forensic Grill Round (frame-by-frame audit of initial V8 1440p renders).
+Type: post-render forensic video quality gate, exact frame-locked shot transitions, and visual-interrupt overlay rendering (`BLUEPRINT.md` §3 Stage 6, §4.3, D-382..D-386).
+
+**Findings.**
+Forensic frame-by-frame grilling of the initial 3 V8 MP4s exposed 5 real production defects:
+1. **1–2 frame double-cut flashes on source shot cuts:** `_detect_clip_shot_cuts_ms()` ran on the 5 fps (`200 ms/frame`) tracking proxy (40–160 ms quantization error), manual `(cut_ms - 1, old_x)` focus points split `x` from `y/w/h` by 1 ms inside `render.py:_interpolated()`, and assembled CFR timelines drifted slightly from raw span sums.
+2. **Harsh mid-shot zoom snap-backs & ramping `punch_cut`:** `punch_cut` needed an instant 1-frame snap + rock-steady hold, and `slow_push` ending mid-shot needed a smooth cosine ease-out return (or cut-snapped invisible release within `<= 700 ms` of a real cut).
+3. **Unrendered `visual_interrupts` & mixed Latin+Arabic BiDi:** `gemini-2.5-pro` emitted contextual Kurdish `visual_interrupts` that were not yet drawn by `render_tiktok_overlay_video()` / `build_viral_tiktok_ass()`, and neutral hyphens/spaces between Latin and Kurdish tokens needed UAX #9 N1/N2 directional resolution.
+4. **Stray ASCII hyphens in repaired Kurdish words** (e.g. `جوابت-ئەداتەوە`) and a `0.77 s` dead-air trough trapped inside CTC-smeared single word `'ئیشە'` plus a `0.49 s` gap in `s19-22`.
+5. **No automated post-render forensic grill gate** catching double-cut flashes, trailing cuts, long silences, or audio clipping before shipping.
+
+**Decision.**
+1. **Exact Native/CFR Shot Cuts & Zero-Skew Crop Steps (`src/hawedit/v8/asd.py` + `compiler.py`):** Replace 5 fps proxy cut detection with native-FPS `detect_exact_shot_cuts_ms()`, add `detect_exact_assembled_cuts_ms()` + `snap_locked_crops_to_cuts()` for assembled CFR timelines, and emit zero-skew `(cut_ms, prev_x), (cut_ms + 1, next_x)` render inputs via `locked_crops_to_render_inputs()` so `x`, `y`, `w`, and `h` transition on the exact same frame (`0` double-cut flashes).
+2. **Cut-Snapped Camera Restraint (`src/hawedit/v8/schema.py`):** Add `snap_camera_moves_to_cuts()` (`<= 700 ms` snap window), instant 1-frame `punch_cut`/`wide_release` holds, and `450 ms` cosine ease-out return on mid-shot `slow_push`.
+3. **Visual Interrupt Badges & Mixed BiDi (`src/hawedit/v8/tiktok_subs.py`):** Render `visual_interrupts` (strictly `>= 2600 ms`, dark-glass rounded badge with `#B8FF2E` top / `#FFD700` chest border, spring pop-in + 200 ms fade-out, zero face/pill overlap) in both Skia RGBA overlay and `libass`, and harden `_split_directional_runs()` for mixed Latin+Kurdish tokens (`AIـەکە`, `AI-یەکە`, `GPT-5ی`).
+4. **Kurdish Hyphen Sanitizer & Internal Word Silence Exposure (`src/hawedit/v8/compiler.py`):** Sanitize stray ASCII hyphens inside Kurdish tokens in `apply_word_repairs()`, expose dead-air troughs trapped inside CTC-smeared `>= 1,100 ms` words via `_tighten_internal_word_silences()`, and tighten default V8 silence thresholds to `420 ms -> 140 ms`.
+5. **Permanent Forensic Video Griller (`src/hawedit/v8/compiler.py`):** Wire `VideoGrillReport` + `grill_rendered_v8_video()` (verifying `0` double-cut flashes `<= 0.20 s`, `0` trailing cuts in final `0.80 s`, `0` silences `>= 0.48 s`, and `0.0` audio `Flat factor` clipping) into `compile_v8_clip()`, writing `{clip_id}.grill.json`, auto-locking camera to `1.00x` on camera-induced flashes, and failing loudly (`V8CompileError`) on any remaining defect.
+
+
+## D-388 - Multi-Client Brand Kits & 5 Curated Agency Subtitle Style Presets
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: multi-client styling, lower-third speaker bio, outro end card, and preset camera restraint (`BLUEPRINT.md` §3 Stage 6, §4.3, D-382, D-383).
+
+**Decision.**
+Add `src/hawedit/v8/styles.py` defining frozen `ClientStylePreset`, `CLIENT_STYLE_PRESETS`, `get_client_style_preset()`, `resolve_client_style_preset()`, and `list_client_style_presets()` with 5 curated agency presets meeting `WCAG >= 7:1` active-pill contrast:
+- `viral_gold` (default): `#FFD700` active pill / `#0B0B0F` ink, `#B8FF2E` power pill, `allow_camera_moves=True`, `max_camera_scale=1.14`.
+- `crimson_punch`: `#FF2E63` active pill / `#FFFFFF` ink, `#FFD700` power pill, `allow_camera_moves=True`, `max_camera_scale=1.15`.
+- `executive_cyan`: `#00D4FF` active pill / `#07131C` ink, `#FFFFFF` power pill, `allow_camera_moves=True`, `max_camera_scale=1.08`.
+- `luxury_minimal`: `#161820` (`alpha=235`) + `#F5C451` ink & `2px` hairline trim, `#F5C451` power pill, `allow_camera_moves=True`, `max_camera_scale=1.08`.
+- `broadcast_news`: `#102446` (`alpha=240`) + `#FFFFFF` ink & `#FFD700` trim, `#FFD700` power pill, `allow_camera_moves=False`, `max_camera_scale=1.00` (enforced inside `compiler.py` as 100% locked `1.00x` camera).
+Wire optional `style_preset`, `brand_accent_hex` (strict `#RRGGBB` validation), `speaker_bio` (`2600..6200 ms` dark-glass RTL lower-third badge), and `end_card` (final `2.0 s` centered frosted outro CTA card with handle pill) into `tiktok_subs.py`, `compiler.py`, and `python -m hawedit.v8` with 100% backward-compatible `None` defaults.
+
+## D-389 - One-Command Full-Episode Arc Discovery & Batch Multi-Reel Compiler
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: full-episode multi-reel orchestration & deterministic offline arc discovery (`BLUEPRINT.md` §3 Stages 1–6, D-382, D-384).
+
+**Decision.**
+Add `src/hawedit/v8/episode.py` exposing `V8EpisodeConfig`, `V8EpisodeClipItem`, `V8EpisodeResult`, `discover_viral_arcs_offline()`, and `compile_v8_episode()` plus the `python -m hawedit.v8 episode` CLI subcommand.
+- Strict fail-stop requires EITHER `--transcript <json>` OR `--use-omni-asr` (Stage 0/1 WSL OmniASR); zero silent fallback between Gemini Path A discovery and offline acoustic+Kurdish arc discovery.
+- `discover_viral_arcs_offline()` scores contiguous complete-sentence spans inside `[min_duration_ms, max_duration_ms]` using Stage 0 WAV acoustic energy variance/peaks (`audio_signals.py`) and Sorani hook-opening heuristics (questions, contrast markers, concrete numbers, penalizing unresolved pronouns and dangling conjunctions) with greedy `>= min_separation_ms` NMS.
+
+## D-390 - Complete Client Delivery Pack, Overlay Cleanup & Zero-CDN HTML Review Gallery
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: client handoff artifacts, NLE conform export, and review gallery (`BLUEPRINT.md` §5, D-387).
+
+**Decision.**
+Add `src/hawedit/v8/delivery_pack.py` exposing `ClientDeliveryPack`, `write_client_delivery_pack()`, `verify_client_pack_complete()`, and `write_client_review_html()`:
+- Reuses `hawedit.delivery.build_srt`, `hawedit.delivery.build_edl`, and `hawedit.timeline` primitives to emit `.v8.srt`, `.v8.edl`, `.v8.otio` (`Timeline.1` with Hook/CameraMove/VisualInterrupt/Speaker markers), and 1080×1920 `.v8.cover.png` (`t = 0.6 s`) alongside `.v8.mp4`, `.director.json`, and `.grill.json`.
+- Reclaims bulky temporary `.v8.overlay.mov` (`~35–60 MB` per clip) ONLY after verifying `.v8.mp4` exists and passed the forensic grill unless `--keep-overlay` / `keep_overlay=True` is explicitly set.
+- Generates a self-contained, zero-CDN, RTL Kurdish dark-studio `client-review.html` gallery displaying per-reel video playback, cover thumbnails, green `GRILL PASSED ✓` / red `GRILL FAILED` badges, and one-click artifact links.
+
+## D-391 - Team Preflight Doctor & Hardened Local OpenAI-Compatible Director
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: operator readiness diagnostics & local LLM interoperability (`BLUEPRINT.md` §1, D-384).
+
+**Decision.**
+Add `src/hawedit/v8/doctor.py` (`DoctorCheck`, `DoctorReport`, `run_v8_doctor()`, `format_doctor_report()`) and `python -m hawedit.v8 doctor` running 7 fast read-only probes (`gpu_nvenc`, `ffmpeg_rtl`, `skia_harfbuzz`, `wsl_asr`, `gemini_director` secret-redacted, `local_omni_director` non-embedding model listing, `disk_space`).
+Harden `LocalOmniDirector` in `src/hawedit/v8/director.py` with explicit `modality: Literal["omni", "vision", "text"]` (`HAWEDIT_OMNI_MODALITY` / `--local-modality`), `DEFAULT_OMNI_TIMEOUT_S` (240.0 s), robust `<think>...</think>` / stray `</think>` / markdown fence stripping before JSON parsing, transparent HTTP 400 `input_audio`/`image_url` diagnostics, and strict fail-loud `DirectorUnavailable` with zero silent fallback to offline heuristics.
+
+## D-392 - Studio Web V8/V9 API & Agency Browser UI
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: local web server API & studio browser UI (`BLUEPRINT.md` §4, D-338, D-388..D-391).
+
+**Decision.**
+Upgrade `src/hawedit/web.py` and `src/hawedit/studio_ui.py` while keeping legacy `POST /api/repurpose` callers 100% backward-compatible:
+- Add `GET /api/v8/doctor`, `GET /api/v8/presets`, path-traversal-guarded artifact download routes (`/api/jobs/<id>/review.html`, `cover.png`, `artifacts/<kind>`, Range/ETag/HEAD preview streaming), and explicit `engine: "v8"` mode on `POST /api/repurpose` backed by `compile_v8_episode()`.
+- Upgrade `studio_ui.py` (zero `innerHTML`, zero `setInterval`, zero external URLs) with a live V8 Preflight Health Strip, clickable 5-Preset Client Style Cards with live color swatches, Director/Subtitles/Condense/Cold-Open controls, collapsible Client Brand Kit inputs, and per-clip `GRILL PASSED ✓` / `GRILL FAILED` badges + one-click deliverable links.
+
+
+## D-393 - Seven-finding audit repairs: speech preservation, evidence and fixture identities
+
+2026-11-22. Owner scope: Hawa's Codex chat instruction to fix all seven findings, high-priority first, while coordinating with Gemini. Base is Gemini `e65522f`; isolated `codex/audit-seven-fixes`. Research, acceptance criteria and impact mapping: `specs/deep-audit-seven-fixes/`. Blueprint sections 3–5 and 8, Kurdish invariants 1–3; continues D-344 and D-354. No new runtime dependency or model.
+
+- Silence tightening and explicit filler lists no longer imply automatic restart removal. Restart detection is a separate keyword opt-in, and prefix deletion additionally requires a visible partial-token marker (`-` or ellipsis). Unmarked morphology and emphatic repetitions survive the default pipeline. The legacy restart tests explicitly enable the operation and use a marked partial token; their assertions remain effective.
+- Preserve Gemini's effective episode-duration summary and complete numbered sentence grounding, verified by real trimmed episode output and a selected sentence after word 4000.
+- A critic source-context Boolean cannot establish evidence. The critic opens and samples the real mapped source, checks source bounds and unchanged file identity, and reports actual distinct decoded output-frame counts. Unsupported all-clear is refused by pipeline consumers. Diagnostic rule inspections without a source may still report defects, but do not establish all-clear or human editorial acceptance.
+- Discovery cache identity binds full transcript/source/media, exact sentence/word data, audio observations, model/provider, prompt/schema and vote/IoU settings. A malformed record refuses before any fresh paid request; cached identity, rank, type, score and aligned bounds are revalidated.
+- Opening-frame geometry is independent from whole-clip face presence; `speaker_face` also enforces presence without requiring an override. Signed publication and its unsupported-labelled-speaker refusal remain independent.
+- Real-media admission supports an explicitly reported `current-zar` profile with the source hashes documented in `D:/HawEdit-media/README.md`, plus the original pinned `legacy-ep29` profile. The legacy bytes/assertions are preserved; missing configured sources fail. This authorizes current-source admission/decode regression tests within the requested F7 fix and does not establish real editorial, ASR or human acceptance. No source masters are changed.
+
+VEX review and expiry dates are unchanged. Source digest re-binding and integration remain Gemini lead-owned, as acknowledged in the shared coordination note. This ADR does not attest a new security review. Local checks and any remaining refusal are recorded separately; task/CI completion is not asserted here.
+
+D-393 fixture addendum: stricter speaker_face presence exposed positive camera contract tests using the known faceless fixture. Add a separate camera-face-mechanics.mp4 (70,773 bytes), derived from the documented public-domain NASA Eileen Collins image distributed by scikit-image and original synthetic speech audio. Preserve the original fixture, all camera assertions and all production thresholds. The exact source/output hashes, pixel transformations and observed detections are in tests/fixtures/camera-face-mechanics.mp4.provenance.json; tests/fixtures/camera-face-mechanics.md states its license and non-identity/non-editorial scope. This is test input grounding, not calibration of policy or a real speaker-identity claim.
+
+## D-SORANI-01 — Private podcast review, localization and platform handoff (2026-11-24)
+
+The recovered V11.2 compiler remains the source of rendered media. Selection uses overlapping transcript windows with word indices mapped back to the episode. A failed local video check can promote a reserve candidate. Both subtitle deliveries use timed Kurdish display chunks. The private team service snapshots the accepted social ZIP and keys decisions to its SHA-256. Direct Instagram posting requires an explicit operator command and records the Meta container and media receipt. TikTok uses the downloadable package.
+
+The optional yt-dlp executable and Chatterbox worker live outside the locked host interpreter. The MIT-licensed ResembleAI/chatterbox weights used on this host are revision 5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18. The local voice worker preserves the upstream watermark. Cloned-voice inputs require human-confirmed consent scoped to the reference recording, episode render, target language and expiry. See specs/sorani-team-studio/operator.md.
+
+## D-394 — WSL ASR VEX re-pin after Sorani Studio recovery and hardening (2026-11-24)
+
+Owner approved updating `security/wsl-asr-vex.json` and `tests/test_vex.py` (`REVIEWED_VEX_SOURCE`) on 2026-11-24 (continuing BLOCKED.md #24 / D-333):
+- `reviewed`: `2026-10-15` → `2026-11-24`; `expires`: `2026-11-14` → `2026-12-24`.
+- `applicability.source_sha256`: `aa0ff96ac6eabddd365add97f50e1994d54812976efa998e5230ecaf84a94d35` → `d9383634a39f20e4292f73fbc4ad09a6536c570c2cf768c934ea177654ae6444` (commit `e65994019cc137d8a7e033b311c534d275832ee6`).
+- Control audit (`git diff --name-only 95bd60e..e659940 -- src/hawedit/`): all 18 changed files are inside `studio_history.py`, `studio_ui.py`, `studio_youtube.py`, `web.py`, and `v8/*.py`. Zero WSL ASR worker, lock, loader, or asset-verification files changed, and `tests/test_vex.py` confirms `save_pretrained` and `custom_generate` remain absent from `src/hawedit/`.
+- Scope boundary: this re-pin records the source-control audit; live `pip-audit` against a provisioned WSL2 runtime remains an independent runtime gate (`hawedit-wsl-vex`).
+- Same-day re-pin (2026-11-24, owner approved "continue"): `d9383634…` → `0c826cf05ab81d68156a5ad9b10ff3f72f861b523795aafadbdceff61f797e1d` (commit `f4c1703`) for 6 non-ASR files (`assembly.py`, `render.py`, `v8/compiler.py`, `v8/director.py`, `v8/story_editor.py`, `v8/tiktok_subs.py`); zero WSL ASR files touched.
+
+## D-395 — Archive 18 recovered Nov 18–22 historical evidence reports (2026-11-24)
+
+Owner approved archiving the 18 historical measurement reports recovered from the Nov 22 worktree (`752979b`) whose original Nov 18–22 commit objects no longer exist in git history:
+- Moved byte-for-byte into `evidence/recovered-nov22/`: `a2-1440p-transcode-2026-11-19.md`, `a2-pipeline-refusal-2026-11-18.md`, `a5-live-judge-smoke-2026-11-19.md`, `asr-profile-2026-11-18.md`, `audit-seven-fixes-20261122.md`, `b2-clip-scoped-asr-2026-11-19.md`, `cinema-intelligence-v4-2026-11-21.md`, `cinema-masterwork-v6-2026-11-21.md`, `cinema-playback-polish-v3-2026-11-21.md`, `content-aware-10-of-10-2026-11-20.md`, `d6-d7-picture-baseline-2026-11-18.md`, `human-editor-director-v5-2026-11-21.md`, `human-grade-director-v2-2026-11-21.md`, `phase-a-ten-reels-2026-11-19.md`, `teaser-gold-timestamps.md`, `v7-masterpiece-2026-11-21.md`, `v8-lean-director-2026-11-22.md`, `v9-client-production-ready-2026-11-22.md`.
+- `evidence/4k-vp9-decode-and-stage0-2026-11-18.md` was freshly re-measured on `HawaPC01` at `e65994019cc137d8a7e033b311c534d275832ee6` and stays in `evidence/`.
+- Zero assertions in `tests/test_claims.py` were changed: every active `evidence/*.md` file continues to strictly validate that its cited commit exists in git history, while the 18 archived reports remain preserved without forging new commit SHAs onto historical measurements.

@@ -1,0 +1,59 @@
+................FF...                                                    [100%]
+================================== FAILURES ===================================
+____ test_studio_submission_late_error_cannot_downgrade_confirmed_dispatch ____
+
+prepared = PreparedGeneration(source_id='99c313700c344d679bb9603cff95fa9d', source_sha256='ed038e743a6b1ee167290741ceda926ac1077f...l_distro":null},"screener":"none"}', content_sha256='87fd42e547efe30b2a92ca1e77b3dbf5d75f222014067dab6388823039af491a')
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6983/test_studio_submission_late_er0')
+
+    def test_studio_submission_late_error_cannot_downgrade_confirmed_dispatch(
+        prepared: PreparedGeneration, tmp_path: Path
+    ) -> None:
+        store = SubmissionStore(tmp_path / "submissions.sqlite")
+        job = store.reserve(prepared, BINDING, WORKER)
+        store.confirm_dispatch(job.job_id)
+        store.note_dispatch_error(job.job_id, "Concurrent request acknowledgement failed")
+        confirmed = store.get(job.job_id)
+>       assert confirmed.dispatch_state == "confirmed" and confirmed.last_error is None
+E       AssertionError: assert ('pending' == 'confirmed'
+E         
+E         - confirmed
+E         + pending)
+
+tests\test_studio_submissions.py:216: AssertionError
+_________ test_studio_submission_dangling_token_is_visible_corruption _________
+
+prepared = PreparedGeneration(source_id='98bb62d97735472491d87bf81d589a64', source_sha256='ed038e743a6b1ee167290741ceda926ac1077f...l_distro":null},"screener":"none"}', content_sha256='dd44bc02b9540305e73d1dc257bd98622700f4df1df252cb882013c5bd26489e')
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6983/test_studio_submission_danglin0')
+
+    def test_studio_submission_dangling_token_is_visible_corruption(
+        prepared: PreparedGeneration, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "submissions.sqlite"
+        store = SubmissionStore(path)
+        job = store.reserve(prepared, BINDING, WORKER)
+        with sqlite3.connect(path) as connection:
+            connection.execute("DELETE FROM submissions WHERE job_id=?", (job.job_id,))
+        with pytest.raises(StudioStorageError, match="missing snapshot"):
+>           store.reserve(prepared, BINDING, WORKER)
+
+tests\test_studio_submissions.py:228: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\studio_submissions.py:283: in reserve
+    return self._get(connection, job_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <hawedit.studio_submissions.SubmissionStore object at 0x00000278964B8BF0>
+connection = <sqlite3.Connection object at 0x000002789638B6A0>
+job_id = 'studio-d904344e47dd1c228fdf9cca7455ef650857e5147cdee26f229d412a8cc43015'
+
+    def _get(self, connection: sqlite3.Connection, job_id: str) -> StoredSubmission:
+        row = connection.execute(self._select() + " WHERE job_id=?", (job_id,)).fetchone()
+        if row is None:
+>           raise KeyError(f"Studio submission {job_id} not found")
+E           KeyError: 'Studio submission studio-d904344e47dd1c228fdf9cca7455ef650857e5147cdee26f229d412a8cc43015 not found'
+
+src\hawedit\studio_submissions.py:241: KeyError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_submissions.py::test_studio_submission_late_error_cannot_downgrade_confirmed_dispatch
+FAILED tests/test_studio_submissions.py::test_studio_submission_dangling_token_is_visible_corruption

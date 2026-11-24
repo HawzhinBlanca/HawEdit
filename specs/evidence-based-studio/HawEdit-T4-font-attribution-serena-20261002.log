@@ -1,0 +1,4 @@
+Could not find containing symbol for src\hawedit\registry.py:41:5. Returning file symbol instead
+Could not find containing symbol for src\hawedit\registry.py:54:5. Returning file symbol instead
+Could not find containing symbol for tests\test_registry.py:24:4. Returning file symbol instead
+Mapped 141 symbols with Serena

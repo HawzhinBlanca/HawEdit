@@ -1,0 +1,71 @@
+................................FFF..................                    [100%]
+================================== FAILURES ===================================
+_________ test_studio_history_invalid_bytes_count_toward_scan_budget __________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7013/test_studio_history_invalid_by0')
+
+    def test_studio_history_invalid_bytes_count_toward_scan_budget(tmp_path: Path) -> None:
+        root = tmp_path / "jobs"
+        for index in range(12):
+            record = stored_job(root, f"bad-{index}")
+            record.write_bytes(b" " * (1024**2 + 1))
+        result = read_history(root)
+>       assert result["jobs"] == [] and result["truncated"] is True
+E       assert ([] == []
+E         
+E         Use -v to get more diff and False is True)
+
+tests\test_studio_history.py:244: AssertionError
+____________ test_studio_history_encodes_portable_job_and_clip_ids ____________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7013/test_studio_history_encodes_po0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000023EE54E4CE0>
+
+    def test_studio_history_encodes_portable_job_and_clip_ids(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from urllib.parse import quote
+    
+        import hawedit.web as web
+    
+        root = tmp_path / "jobs"
+        job_id, clip_id = "old job % name", "clip # name"
+        record = stored_job(root, job_id)
+        (record.parent / "report.json").write_text(json.dumps({"episode_manifest": {"clips": [{
+            "clip_id": clip_id, "delivery_dir": "review/clip-directory",
+        }]}}), encoding="utf-8")
+        monkeypatch.setattr(web, "JOB_MANAGER", JobManager(root))
+        status, _, body = http(f"/api/jobs/{quote(job_id, safe='')}")
+>       assert status == 200
+E       assert 404 == 200
+
+tests\test_studio_history.py:263: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:58:36] "GET /api/jobs/old%20job%20%25%20name HTTP/1.1" 404 -
+__________ test_studio_history_jobs_list_cannot_hide_refused_entries __________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7013/test_studio_history_jobs_list_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000023EE54E5B20>
+
+    def test_studio_history_jobs_list_cannot_hide_refused_entries(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hawedit.web as web
+    
+        root = tmp_path / "jobs"
+        stored_job(root)
+        bad = stored_job(root, "bad-job")
+        bad.write_bytes(b"malformed persisted record")
+        monkeypatch.setattr(web, "JOB_MANAGER", JobManager(root))
+        status, _, body = http("/api/jobs")
+        document = json.loads(body)
+>       assert status == 409 and document["code"] == "history_incomplete"
+E       assert (200 == 409)
+
+tests\test_studio_history.py:283: AssertionError
+---------------------------- Captured stderr call -----------------------------
+127.0.0.1 - - [02/Oct/2026 20:58:36] "GET /api/jobs HTTP/1.1" 200 -
+=========================== short test summary info ===========================
+FAILED tests/test_studio_history.py::test_studio_history_invalid_bytes_count_toward_scan_budget
+FAILED tests/test_studio_history.py::test_studio_history_encodes_portable_job_and_clip_ids
+FAILED tests/test_studio_history.py::test_studio_history_jobs_list_cannot_hide_refused_entries

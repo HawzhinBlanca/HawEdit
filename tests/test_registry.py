@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from hawedit.judge import JUDGE_SHADOW, KURDISH_EDITORIAL_JUDGE
 from hawedit.registry import (
     EXCLUDED,
     LICENCE_DIVERGENCES,
@@ -244,8 +245,8 @@ def test_alignment_emissions_come_from_the_ctc_model() -> None:
 
 def test_judge_is_pinned_and_shadow_is_not_routable() -> None:
     """§4: SHADOW is 'evaluated, not routed'. Routing to it must be impossible by accident."""
-    assert resolve("gemini-2.5-pro").routable
-    assert not resolve("gemini-3.1-pro").routable
+    assert resolve(KURDISH_EDITORIAL_JUDGE).routable
+    assert not resolve(JUDGE_SHADOW).routable
 
 
 def test_gated_repos_are_flagged() -> None:

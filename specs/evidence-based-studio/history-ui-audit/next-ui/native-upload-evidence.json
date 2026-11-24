@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "observed_at": "2026-10-02T19:05:52.1782585+00:00",
+  "source_package_sha256": "66a377dabc4c08b265994e85ab18d66d8a89f90553e7a90cdec0f19ff8ebbd39",
+  "fixture": "tests/fixtures/kurdish-speech-3cuts.mp4",
+  "sources": [
+    {
+      "source_id": "bf624fcfc03b479dbe6e630b7f9e12e2",
+      "filename": "kurdish-speech-3cuts.mp4",
+      "size": 48021,
+      "state": "ready",
+      "record_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+      "actual_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+      "duration_ms": 4162,
+      "width": 640,
+      "height": 360
+    },
+    {
+      "source_id": "c7bad4be30d64db597508fc07654863f",
+      "filename": "kurdish-speech-3cuts.mp4",
+      "size": 48021,
+      "state": "ready",
+      "record_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+      "actual_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+      "duration_ms": 4162,
+      "width": 640,
+      "height": 360
+    }
+  ],
+  "private_download_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+  "scope": "isolated-fixture-upload-and-private-copy-not-publication"
+}

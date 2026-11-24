@@ -1,0 +1,160 @@
+{
+  "schema": 1,
+  "status": "unaccepted-frozen-source-under-verification",
+  "observed_at_utc": "2026-10-02T20:11:26.8562589Z",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "637e9acc148c7b9000605df4c2a4006abd7b5268b6e9617641f509e7a6b6c302",
+  "scope": "Studio and affected source/tests plus frozen tested module-map/ledger/ADR docs; not a full checkout or committed CI snapshot",
+  "files": [
+    {
+      "path": "DECISIONS.md",
+      "bytes": 949751,
+      "sha256": "62f193ce67be1dc2ad56fe0229a166e640e0995fb1294fbce4bc1f83983ab94a"
+    },
+    {
+      "path": "PROGRESS.md",
+      "bytes": 270693,
+      "sha256": "624b73d4382396fe3994e20b57b114a0869f2e0a261c77c13d0291079b886484"
+    },
+    {
+      "path": "pyproject.toml",
+      "bytes": 12990,
+      "sha256": "bf2bb21b034912de649728a46c21cf3e53bc8db3e27c8afa99670508ca0617ef"
+    },
+    {
+      "path": "README.md",
+      "bytes": 65094,
+      "sha256": "2a4cb0c3d9b91d36a55fd62b489f2e738b4a0ade4d9b8b792e71575cb0637104"
+    },
+    {
+      "path": "scripts/serena_studio_map.py",
+      "bytes": 3041,
+      "sha256": "9d3537e62beeb8968763b506554188877d33bceb4d3f64d8ca8088ed2954ae47"
+    },
+    {
+      "path": "src/hawedit/pipeline.py",
+      "bytes": 254565,
+      "sha256": "d4e23cb80a022d67ea973e6da6aea4e6b43fad76d1170a08fc2a6b8aa3553e9d"
+    },
+    {
+      "path": "src/hawedit/registry.py",
+      "bytes": 24181,
+      "sha256": "6fa701f7d8acaff9c7f3686f526cf45114dc2c9c01af5c82bfb2872fed4a808d"
+    },
+    {
+      "path": "src/hawedit/release.py",
+      "bytes": 50563,
+      "sha256": "e06f24489a53768c152e0d981c744103f572be8d0b33e6a2baa3b4f67614d897"
+    },
+    {
+      "path": "src/hawedit/studio_artifacts.py",
+      "bytes": 12552,
+      "sha256": "8251790f945d6d8787cbf56bf37cea330965469925c90c04303234ae24bace50"
+    },
+    {
+      "path": "src/hawedit/studio_billing.py",
+      "bytes": 22008,
+      "sha256": "0f62bab8a4571e0af8c36ec8d51da85b066eafa405a7a6f5b33c0690cb5ca5a5"
+    },
+    {
+      "path": "src/hawedit/studio_generation.py",
+      "bytes": 14455,
+      "sha256": "6cf3594cca8a73971fff0953a162cc3b2e8eb305c6d8c8ecf3b2886bc957a345"
+    },
+    {
+      "path": "src/hawedit/studio_history.py",
+      "bytes": 11320,
+      "sha256": "463a7d6dd5f81d9f17a4c4af9f1eedfbb11b90e3a12acb38b2184b5c60db0bb5"
+    },
+    {
+      "path": "src/hawedit/studio_private.py",
+      "bytes": 5942,
+      "sha256": "ac3e6892611affa7cf57633c66558fa7a13b64bbb7126aedde2c3d13c85fafdb"
+    },
+    {
+      "path": "src/hawedit/studio_queue.py",
+      "bytes": 4556,
+      "sha256": "fcd36c87cdabeb5883c01cfb576f8c5f3945f8ef09dd978c5a2394d5d4065f30"
+    },
+    {
+      "path": "src/hawedit/studio_submissions.py",
+      "bytes": 14203,
+      "sha256": "a96047f1986119ec4f8f8fa2a5e2fc783652b3136cb6852bce6df198da39cb54"
+    },
+    {
+      "path": "src/hawedit/studio_ui.py",
+      "bytes": 48676,
+      "sha256": "a08a45ae69de2437551417db5c786b89869c99a241151ab69e9a54961ed5c019"
+    },
+    {
+      "path": "src/hawedit/studio_uploads.py",
+      "bytes": 16477,
+      "sha256": "c1b4bcf8a3735fac1ffab3a8ad969c8e698edb48d10977fb9f71a84243c580e8"
+    },
+    {
+      "path": "src/hawedit/web.py",
+      "bytes": 35845,
+      "sha256": "6d3337a3ba08544dfb0ab0cea5365a5c9c7548eb4b2766a62aeb8c1eca362985"
+    },
+    {
+      "path": "tests/test_release.py",
+      "bytes": 37123,
+      "sha256": "5247ca69c0f0792aa342469630843dcb812e8a49cf85bb822f75e5fa0e7cde95"
+    },
+    {
+      "path": "tests/test_robustness_audit.py",
+      "bytes": 15942,
+      "sha256": "3d05a38faefc7e4f70a2de4630e7592dfe838d79e9ba2325648419fb6025921f"
+    },
+    {
+      "path": "tests/test_studio_artifacts.py",
+      "bytes": 18729,
+      "sha256": "d60b4f5521ecea985d5e1afa492918f318364c2248c9454bb9920861b07f7f2c"
+    },
+    {
+      "path": "tests/test_studio_billing.py",
+      "bytes": 26368,
+      "sha256": "ef5c8d0dd2b7b6d08ade38c559a6dc3755ccf0013293241bbd43a09bd4d6ea56"
+    },
+    {
+      "path": "tests/test_studio_generation.py",
+      "bytes": 12509,
+      "sha256": "22b425f66e3fe3b4558c4fa371d1a2061617e6f35d0f864b24a9f414cd979fda"
+    },
+    {
+      "path": "tests/test_studio_history.py",
+      "bytes": 21496,
+      "sha256": "12e4bb2db7cb030ebd71a90d89534c7a2843363c5d4a42360f791566033ef440"
+    },
+    {
+      "path": "tests/test_studio_private.py",
+      "bytes": 8080,
+      "sha256": "fe92a2600a79d4f22764daf022009d6c04e6a3d461072bb79a38a5f38998fc70"
+    },
+    {
+      "path": "tests/test_studio_queue.py",
+      "bytes": 11035,
+      "sha256": "1d35acf80c1c37c1ff49ba15c789fc805af95ccb3cc9697d98c7784abe8f4662"
+    },
+    {
+      "path": "tests/test_studio_submissions.py",
+      "bytes": 10911,
+      "sha256": "7a3c8a6de78b5e8c49716bb5bb64582ba988e98261d9f514c7b37a9100939169"
+    },
+    {
+      "path": "tests/test_studio_ui.py",
+      "bytes": 7217,
+      "sha256": "efab80adf9acf6c64d716dd7c7262bb56d1fc89938e1402c5887563c4961d131"
+    },
+    {
+      "path": "tests/test_studio_uploads.py",
+      "bytes": 16892,
+      "sha256": "e33c9f2ac65bd6600c80de5ed08379fab43a72a70f32ad0689158fbf8ce63f58"
+    },
+    {
+      "path": "tests/test_web.py",
+      "bytes": 19415,
+      "sha256": "e2ef2131f893377131347ef272f3cfbc961c689fa9e85717b47bdb3afe0270aa"
+    }
+  ]
+}

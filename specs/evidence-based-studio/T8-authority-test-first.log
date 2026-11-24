@@ -1,0 +1,460 @@
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF.F..FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF  [100%]
+================================== FAILURES ===================================
+______________ test_scoped_claims_cannot_authorize_acceptance[0] ______________
+tests\test_acceptance_authority.py:69: in test_scoped_claims_cannot_authorize_acceptance
+    assert report.acceptance_status == "refused_unverified_evidence"
+E   AssertionError: assert 'accepted' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + accepted
+_____________ test_scoped_claims_cannot_authorize_acceptance[160] _____________
+tests\test_acceptance_authority.py:69: in test_scoped_claims_cannot_authorize_acceptance
+    assert report.acceptance_status == "refused_unverified_evidence"
+E   AssertionError: assert 'accepted' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + accepted
+_____________ test_scoped_claims_cannot_authorize_acceptance[190] _____________
+tests\test_acceptance_authority.py:69: in test_scoped_claims_cannot_authorize_acceptance
+    assert report.acceptance_status == "refused_unverified_evidence"
+E   AssertionError: assert 'accepted' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + accepted
+_____________ test_scoped_claims_cannot_authorize_acceptance[200] _____________
+tests\test_acceptance_authority.py:69: in test_scoped_claims_cannot_authorize_acceptance
+    assert report.acceptance_status == "refused_unverified_evidence"
+E   AssertionError: assert 'accepted' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + accepted
+_____________ test_sustained_claims_cannot_authorize_rating[30-0] _____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+____________ test_sustained_claims_cannot_authorize_rating[30-160] ____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+____________ test_sustained_claims_cannot_authorize_rating[30-190] ____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+____________ test_sustained_claims_cannot_authorize_rating[30-200] ____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+____________ test_sustained_claims_cannot_authorize_rating[300-0] _____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+___________ test_sustained_claims_cannot_authorize_rating[300-160] ____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+___________ test_sustained_claims_cannot_authorize_rating[300-190] ____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+___________ test_sustained_claims_cannot_authorize_rating[300-200] ____________
+tests\test_acceptance_authority.py:89: in test_sustained_claims_cannot_authorize_rating
+    assert report.sustained_status == "refused_unverified_evidence"
+E   AssertionError: assert 'sustained' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + sustained
+_____________ test_scoped_claim_input_validation[1-gate_verified] _____________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_________ test_scoped_claim_input_validation[1-human_review_verified] _________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+______________ test_scoped_claim_input_validation[1-ci_verified] ______________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+___________ test_scoped_claim_input_validation[true-gate_verified] ____________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______ test_scoped_claim_input_validation[true-human_review_verified] ________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+____________ test_scoped_claim_input_validation[true-ci_verified] _____________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+___________ test_scoped_claim_input_validation[None-gate_verified] ____________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______ test_scoped_claim_input_validation[None-human_review_verified] ________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+____________ test_scoped_claim_input_validation[None-ci_verified] _____________
+tests\test_acceptance_authority.py:108: in test_scoped_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______ test_sustained_claim_input_validation[1-fresh_holdout_verified] _______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______ test_sustained_claim_input_validation[1-kurdish_editor_signoff] _______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+___________ test_sustained_claim_input_validation[1-owner_signoff] ____________
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+______ test_sustained_claim_input_validation[1-automatic_rating_claimed] ______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_____ test_sustained_claim_input_validation[true-fresh_holdout_verified] ______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_____ test_sustained_claim_input_validation[true-kurdish_editor_signoff] ______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+__________ test_sustained_claim_input_validation[true-owner_signoff] __________
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+____ test_sustained_claim_input_validation[true-automatic_rating_claimed] _____
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_____ test_sustained_claim_input_validation[None-fresh_holdout_verified] ______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_____ test_sustained_claim_input_validation[None-kurdish_editor_signoff] ______
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+__________ test_sustained_claim_input_validation[None-owner_signoff] __________
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+____ test_sustained_claim_input_validation[None-automatic_rating_claimed] _____
+tests\test_acceptance_authority.py:117: in test_sustained_claim_input_validation
+    with pytest.raises(EditorialAcceptanceError, match="boolean"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+___________ test_use_window_claim_requires_nonnegative_integer[-1] ____________
+tests\test_acceptance_authority.py:123: in test_use_window_claim_requires_nonnegative_integer
+    with pytest.raises(EditorialAcceptanceError, match="use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+__________ test_use_window_claim_requires_nonnegative_integer[True] ___________
+tests\test_acceptance_authority.py:123: in test_use_window_claim_requires_nonnegative_integer
+    with pytest.raises(EditorialAcceptanceError, match="use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+__________ test_use_window_claim_requires_nonnegative_integer[30.0] ___________
+tests\test_acceptance_authority.py:123: in test_use_window_claim_requires_nonnegative_integer
+    with pytest.raises(EditorialAcceptanceError, match="use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+___________ test_use_window_claim_requires_nonnegative_integer[30] ____________
+tests\test_acceptance_authority.py:124: in test_use_window_claim_requires_nonnegative_integer
+    _sustained(use_window_days=value)
+tests\test_acceptance_authority.py:63: in _sustained
+    return evaluate_sustained_acceptance(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\editorial_acceptance.py:2093: in evaluate_sustained_acceptance
+    if use_window_days < min_use_window_days:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: '<' not supported between instances of 'str' and 'int'
+_______________ test_invalid_commit_claim_is_not_verified[123] ________________
+tests\test_acceptance_authority.py:129: in test_invalid_commit_claim_is_not_verified
+    report = _scoped(commit_sha=value)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_acceptance_authority.py:49: in _scoped
+    return evaluate_scoped_acceptance(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\editorial_acceptance.py:1981: in evaluate_scoped_acceptance
+    if not commit_sha or len(commit_sha) < 7:
+                         ^^^^^^^^^^^^^^^
+E   TypeError: object of type 'int' has no len()
+_____________ test_invalid_commit_claim_is_not_verified[abcdef0] ______________
+tests\test_acceptance_authority.py:130: in test_invalid_commit_claim_is_not_verified
+    assert report.acceptance_status == "refused_unverified_evidence"
+E   AssertionError: assert 'accepted' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + accepted
+_ test_invalid_commit_claim_is_not_verified[gggggggggggggggggggggggggggggggggggggggg] _
+tests\test_acceptance_authority.py:130: in test_invalid_commit_claim_is_not_verified
+    assert report.acceptance_status == "refused_unverified_evidence"
+E   AssertionError: assert 'accepted' == 'refused_unverified_evidence'
+E     
+E     - refused_unverified_evidence
+E     + accepted
+_________________ test_acceptance_floor_cannot_be_lowered[0] __________________
+tests\test_acceptance_authority.py:137: in test_acceptance_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_sample_size"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+________________ test_acceptance_floor_cannot_be_lowered[199] _________________
+tests\test_acceptance_authority.py:137: in test_acceptance_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_sample_size"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+________________ test_acceptance_floor_cannot_be_lowered[True] ________________
+tests\test_acceptance_authority.py:137: in test_acceptance_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_sample_size"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______________ test_acceptance_floor_cannot_be_lowered[200.0] ________________
+tests\test_acceptance_authority.py:137: in test_acceptance_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_sample_size"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+________________ test_acceptance_floor_cannot_be_lowered[200] _________________
+tests\test_acceptance_authority.py:138: in test_acceptance_floor_cannot_be_lowered
+    _scoped(min_sample_size=value)
+tests\test_acceptance_authority.py:49: in _scoped
+    return evaluate_scoped_acceptance(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\editorial_acceptance.py:1984: in evaluate_scoped_acceptance
+    is_sample_sufficient = scorecard.total_proposed_clips >= min_sample_size
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: '>=' not supported between instances of 'int' and 'str'
+________________ test_sustained_use_floor_cannot_be_lowered[0] ________________
+tests\test_acceptance_authority.py:145: in test_sustained_use_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______________ test_sustained_use_floor_cannot_be_lowered[29] ________________
+tests\test_acceptance_authority.py:145: in test_sustained_use_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+______________ test_sustained_use_floor_cannot_be_lowered[True] _______________
+tests\test_acceptance_authority.py:145: in test_sustained_use_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+______________ test_sustained_use_floor_cannot_be_lowered[30.0] _______________
+tests\test_acceptance_authority.py:145: in test_sustained_use_floor_cannot_be_lowered
+    with pytest.raises(EditorialAcceptanceError, match="min_use_window_days"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_______________ test_sustained_use_floor_cannot_be_lowered[30] ________________
+tests\test_acceptance_authority.py:146: in test_sustained_use_floor_cannot_be_lowered
+    _sustained(min_use_window_days=value)
+tests\test_acceptance_authority.py:63: in _sustained
+    return evaluate_sustained_acceptance(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\editorial_acceptance.py:2093: in evaluate_sustained_acceptance
+    if use_window_days < min_use_window_days:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: '<' not supported between instances of 'int' and 'str'
+_______________ test_report_construction_cannot_forge_authority _______________
+tests\test_acceptance_authority.py:159: in test_report_construction_cannot_forge_authority
+    with pytest.raises(EditorialAcceptanceError, match="descriptive"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+______________ test_report_assertions_do_not_trust_status_fields ______________
+tests\test_acceptance_authority.py:178: in test_report_assertions_do_not_trust_status_fields
+    with pytest.raises(EditorialAcceptanceError, match="not authorization"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_ test_scorecard_direct_construction_validates_counts[total_proposed_clips-True] _
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+___ test_scorecard_direct_construction_validates_counts[accepted_count--1] ____
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+____ test_scorecard_direct_construction_validates_counts[refusal_count-1] _____
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_ test_scorecard_direct_construction_validates_counts[first_pass_publishable_rate-0.5] _
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+____ test_scorecard_direct_construction_validates_counts[refusal_rate-nan] ____
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+__ test_scorecard_direct_construction_validates_counts[margin_of_error-inf] ___
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+__ test_scorecard_direct_construction_validates_counts[episodes_evaluated-0] __
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_ test_scorecard_direct_construction_validates_counts[episodes_with_no_clips-21] _
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+_ test_scorecard_direct_construction_validates_counts[episodes_with_no_clips-20] _
+tests\test_acceptance_authority.py:202: in test_scorecard_direct_construction_validates_counts
+    with pytest.raises(EditorialAcceptanceError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE EditorialAcceptanceError
+________________ test_aggregate_uncertainty_is_reference_only _________________
+tests\test_acceptance_authority.py:210: in test_aggregate_uncertainty_is_reference_only
+    assert card.to_dict()["margin_of_error_method"] == "unclustered-wald-reference-only"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'margin_of_error_method'
+__________ test_visual_descriptions_are_not_release_authority[10/10] __________
+tests\test_acceptance_authority.py:239: in test_visual_descriptions_are_not_release_authority
+    assert report.is_release_eligible is False
+E   AssertionError: assert True is False
+E    +  where True = VisualScorecard(provenance=ProvenanceRecord(commit_sha='not-a-sha', timestamp='not-a-date', hardware_info='synthetic',...er=0.9, ci_upper=1.0)}, average_visual_relevance=0.2, signoff_owner='unsigned owner', signoff_editor='unsigned editor').is_release_eligible
+______ test_visual_descriptions_are_not_release_authority[market leader] ______
+tests\test_acceptance_authority.py:239: in test_visual_descriptions_are_not_release_authority
+    assert report.is_release_eligible is False
+E   AssertionError: assert True is False
+E    +  where True = VisualScorecard(provenance=ProvenanceRecord(commit_sha='not-a-sha', timestamp='not-a-date', hardware_info='synthetic',...er=0.9, ci_upper=1.0)}, average_visual_relevance=0.2, signoff_owner='unsigned owner', signoff_editor='unsigned editor').is_release_eligible
+________ test_visual_descriptions_are_not_release_authority[superior] _________
+tests\test_acceptance_authority.py:239: in test_visual_descriptions_are_not_release_authority
+    assert report.is_release_eligible is False
+E   AssertionError: assert True is False
+E    +  where True = VisualScorecard(provenance=ProvenanceRecord(commit_sha='not-a-sha', timestamp='not-a-date', hardware_info='synthetic',...er=0.9, ci_upper=1.0)}, average_visual_relevance=0.2, signoff_owner='unsigned owner', signoff_editor='unsigned editor').is_release_eligible
+___________ test_visual_descriptions_are_not_release_authority[#1] ____________
+tests\test_acceptance_authority.py:239: in test_visual_descriptions_are_not_release_authority
+    assert report.is_release_eligible is False
+E   AssertionError: assert True is False
+E    +  where True = VisualScorecard(provenance=ProvenanceRecord(commit_sha='not-a-sha', timestamp='not-a-date', hardware_info='synthetic',...er=0.9, ci_upper=1.0)}, average_visual_relevance=0.2, signoff_owner='unsigned owner', signoff_editor='unsigned editor').is_release_eligible
+_________ test_visual_descriptions_are_not_release_authority[9.5/10] __________
+tests\test_acceptance_authority.py:239: in test_visual_descriptions_are_not_release_authority
+    assert report.is_release_eligible is False
+E   AssertionError: assert True is False
+E    +  where True = VisualScorecard(provenance=ProvenanceRecord(commit_sha='not-a-sha', timestamp='not-a-date', hardware_info='synthetic',...er=0.9, ci_upper=1.0)}, average_visual_relevance=0.2, signoff_owner='unsigned owner', signoff_editor='unsigned editor').is_release_eligible
+_______________ test_visual_report_labels_unverified_inference ________________
+tests\test_acceptance_authority.py:249: in test_visual_report_labels_unverified_inference
+    assert report.to_dict()["evidence_status"] == "descriptive-unverified"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'evidence_status'
+=========================== short test summary info ===========================
+FAILED tests/test_acceptance_authority.py::test_scoped_claims_cannot_authorize_acceptance[0]
+FAILED tests/test_acceptance_authority.py::test_scoped_claims_cannot_authorize_acceptance[160]
+FAILED tests/test_acceptance_authority.py::test_scoped_claims_cannot_authorize_acceptance[190]
+FAILED tests/test_acceptance_authority.py::test_scoped_claims_cannot_authorize_acceptance[200]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[30-0]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[30-160]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[30-190]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[30-200]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[300-0]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[300-160]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[300-190]
+FAILED tests/test_acceptance_authority.py::test_sustained_claims_cannot_authorize_rating[300-200]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[1-gate_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[1-human_review_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[1-ci_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[true-gate_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[true-human_review_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[true-ci_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[None-gate_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[None-human_review_verified]
+FAILED tests/test_acceptance_authority.py::test_scoped_claim_input_validation[None-ci_verified]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[1-fresh_holdout_verified]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[1-kurdish_editor_signoff]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[1-owner_signoff]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[1-automatic_rating_claimed]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[true-fresh_holdout_verified]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[true-kurdish_editor_signoff]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[true-owner_signoff]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[true-automatic_rating_claimed]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[None-fresh_holdout_verified]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[None-kurdish_editor_signoff]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[None-owner_signoff]
+FAILED tests/test_acceptance_authority.py::test_sustained_claim_input_validation[None-automatic_rating_claimed]
+FAILED tests/test_acceptance_authority.py::test_use_window_claim_requires_nonnegative_integer[-1]
+FAILED tests/test_acceptance_authority.py::test_use_window_claim_requires_nonnegative_integer[True]
+FAILED tests/test_acceptance_authority.py::test_use_window_claim_requires_nonnegative_integer[30.0]
+FAILED tests/test_acceptance_authority.py::test_use_window_claim_requires_nonnegative_integer[30]
+FAILED tests/test_acceptance_authority.py::test_invalid_commit_claim_is_not_verified[123]
+FAILED tests/test_acceptance_authority.py::test_invalid_commit_claim_is_not_verified[abcdef0]
+FAILED tests/test_acceptance_authority.py::test_invalid_commit_claim_is_not_verified[gggggggggggggggggggggggggggggggggggggggg]
+FAILED tests/test_acceptance_authority.py::test_acceptance_floor_cannot_be_lowered[0]
+FAILED tests/test_acceptance_authority.py::test_acceptance_floor_cannot_be_lowered[199]
+FAILED tests/test_acceptance_authority.py::test_acceptance_floor_cannot_be_lowered[True]
+FAILED tests/test_acceptance_authority.py::test_acceptance_floor_cannot_be_lowered[200.0]
+FAILED tests/test_acceptance_authority.py::test_acceptance_floor_cannot_be_lowered[200]
+FAILED tests/test_acceptance_authority.py::test_sustained_use_floor_cannot_be_lowered[0]
+FAILED tests/test_acceptance_authority.py::test_sustained_use_floor_cannot_be_lowered[29]
+FAILED tests/test_acceptance_authority.py::test_sustained_use_floor_cannot_be_lowered[True]
+FAILED tests/test_acceptance_authority.py::test_sustained_use_floor_cannot_be_lowered[30.0]
+FAILED tests/test_acceptance_authority.py::test_sustained_use_floor_cannot_be_lowered[30]
+FAILED tests/test_acceptance_authority.py::test_report_construction_cannot_forge_authority
+FAILED tests/test_acceptance_authority.py::test_report_assertions_do_not_trust_status_fields
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[total_proposed_clips-True]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[accepted_count--1]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[refusal_count-1]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[first_pass_publishable_rate-0.5]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[refusal_rate-nan]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[margin_of_error-inf]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[episodes_evaluated-0]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[episodes_with_no_clips-21]
+FAILED tests/test_acceptance_authority.py::test_scorecard_direct_construction_validates_counts[episodes_with_no_clips-20]
+FAILED tests/test_acceptance_authority.py::test_aggregate_uncertainty_is_reference_only
+FAILED tests/test_acceptance_authority.py::test_visual_descriptions_are_not_release_authority[10/10]
+FAILED tests/test_acceptance_authority.py::test_visual_descriptions_are_not_release_authority[market leader]
+FAILED tests/test_acceptance_authority.py::test_visual_descriptions_are_not_release_authority[superior]
+FAILED tests/test_acceptance_authority.py::test_visual_descriptions_are_not_release_authority[#1]
+FAILED tests/test_acceptance_authority.py::test_visual_descriptions_are_not_release_authority[9.5/10]
+FAILED tests/test_acceptance_authority.py::test_visual_report_labels_unverified_inference

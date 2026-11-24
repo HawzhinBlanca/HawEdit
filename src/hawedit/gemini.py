@@ -1,4 +1,4 @@
-"""The real §3 Stage 4 judge: `gemini-2.5-pro` behind the `EditorialJudge` interface.
+"""The real §3 Stage 4 judge (`KURDISH_EDITORIAL_JUDGE`) behind the `EditorialJudge` interface.
 
     All routing goes through the `KURDISH_EDITORIAL_JUDGE` interface. Swapping providers
     must be a config change, never a refactor.
@@ -70,6 +70,7 @@ __all__ = [
     "VertexGeminiJudge",
     "adc_access_token",
     "count_tokens",
+    "extract_response_text",
 ]
 
 API_ROOT: Final = "https://generativelanguage.googleapis.com/v1beta"
@@ -263,7 +264,9 @@ Judge it on:
     کە دەستبەجێ بینەر رادەگرێت (high-voltage provocation, startling claim, scroll-stopping hook).
 - hook_type: the category of opening hook — one of question, claim, contrast,
   story_open, confession
-- self_contained: whether it makes sense with no surrounding context
+- self_contained: whether it makes sense with no surrounding context — mark false if the first
+  3 seconds open on an unresolved pronoun or subject-less reference whose referent was only named
+  earlier in the episode, or if the ending drifts into a second unfinished tangent
 - payoff_at_ms: the millisecond position of the payoff. MUST be between {in_ms} and {out_ms}.
 - payoff_strength: how strongly and satisfyingly the clip resolves or delivers on its hook (0..1)
 - ends_on_a_beat: true if the ending lands cleanly on an emphatic beat or pause;
@@ -300,7 +303,11 @@ def _bounded_response_text(stream: Any) -> str:
 
 
 def _https(
-    url: str, body: bytes | None = None, headers: Mapping[str, str] | None = None
+    url: str,
+    body: bytes | None = None,
+    headers: Mapping[str, str] | None = None,
+    *,
+    timeout_s: float = 300.0,
 ) -> tuple[int, str]:
     request_headers = dict(headers or {})
     if body:
@@ -312,12 +319,23 @@ def _https(
         method="POST" if body else "GET",
     )
     try:
-        with open_without_redirects(request, timeout=120) as response:
+        with open_without_redirects(request, timeout=timeout_s) as response:
             return response.status, _bounded_response_text(response)
     except urllib.error.HTTPError as exc:
         return exc.code, _bounded_response_text(exc)
     except OSError as exc:
         return 0, str(exc)
+
+
+def extract_response_text(body: str) -> str:
+    """Extract the non-thought text payload from a Gemini generateContent response."""
+    parts = json.loads(body)["candidates"][0]["content"]["parts"]
+    for part in parts:
+        if isinstance(part, dict) and not part.get("thought"):
+            text = part.get("text")
+            if isinstance(text, str):
+                return text
+    return str(parts[0]["text"])
 
 
 def _api_error(status: int, body: str) -> str:
@@ -592,7 +610,7 @@ class GeminiJudge:
 
     def _to_verdict(self, body: str, request: JudgeRequest) -> JudgeVerdict:
         try:
-            text = json.loads(body)["candidates"][0]["content"]["parts"][0]["text"]
+            text = extract_response_text(body)
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise JudgeUnusable(f"no content in the judge's response: {exc}") from exc
         try:

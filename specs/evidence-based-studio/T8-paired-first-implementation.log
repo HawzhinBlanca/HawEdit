@@ -1,0 +1,20 @@
+..............................F...........                               [100%]
+================================== FAILURES ===================================
+______________ test_comparison_wilson_uses_requested_confidence _______________
+
+    def test_comparison_wilson_uses_requested_confidence() -> None:
+        low90, high90 = kit.wilson_score_interval(0.5, 100, 0.90)
+        low95, high95 = kit.wilson_score_interval(0.5, 100, 0.95)
+        low99, high99 = kit.wilson_score_interval(0.5, 100, 0.99)
+        assert low99 < low95 < low90 < 0.5 < high90 < high95 < high99
+        assert low90 == pytest.approx(0.4188478, abs=0.000001)
+>       assert low99 == pytest.approx(0.3752668, abs=0.000001)
+E       assert 0.37527962504483986 == 0.3752668 � 1.0e-06
+E         
+E         comparison failed
+E         Obtained: 0.37527962504483986
+E         Expected: 0.3752668 � 1.0e-06
+
+tests\test_comparison_contract.py:154: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_comparison_contract.py::test_comparison_wilson_uses_requested_confidence

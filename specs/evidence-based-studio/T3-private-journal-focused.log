@@ -1,0 +1,144 @@
+...................F..........................................F......... [100%]
+================================== FAILURES ===================================
+____________ test_studio_private_nonportable_names_refused[name.] _____________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7030/test_studio_private_nonportabl4')
+name = 'name.'
+
+    @pytest.mark.parametrize("name", ["CON.db", "NUL", "LPT1.db", "name:stream", "name.", "x" * 129])
+    def test_studio_private_nonportable_names_refused(tmp_path: Path, name: str) -> None:
+        root = tmp_path / "must-not-be-created"
+>       with pytest.raises(StudioStorageError, match="filename"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_private.py:156: Failed
+________ test_studio_billing_concurrent_jobs_cannot_oversubscribe_pool ________
+
+self = <hawedit.studio_private.PrivateSqlitePath object at 0x000001E0A13E2A20>
+
+    def verify(self) -> None:
+        """Fence namespace, access, main-file identity and every existing SQLite sidecar."""
+        try:
+            _directories(self.root)
+            if _identity(_private(self.root, directory=True)) != self._root_identity:
+                raise StudioStorageError("Studio private journal root identity changed")
+            if _identity(_private(self.path, directory=False)) != self._file_identity:
+                raise StudioStorageError("Studio private journal database identity changed")
+            for suffix in _SIDECARS:
+                sidecar = self.path.with_name(self.path.name + suffix)
+                try:
+                    sidecar.lstat()
+                except FileNotFoundError:
+                    continue
+>               _private(sidecar, directory=False)
+
+src\hawedit\studio_private.py:123: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\hawedit\studio_private.py:57: in _private
+    after = _plain(path, directory=directory)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\studio_private.py:36: in _plain
+    info = path.lstat()
+           ^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\pathlib.py:847: in lstat
+    return self.stat(follow_symlinks=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7030/test_studio_billing_concurrent0/private-billing/billing.sqlite3-wal')
+follow_symlinks = False
+
+    def stat(self, *, follow_symlinks=True):
+        """
+        Return the result of the stat() system call on this path, like
+        os.stat() does.
+        """
+>       return os.stat(self, follow_symlinks=follow_symlinks)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [WinError 2] The system cannot find the file specified: 'C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7030\\test_studio_billing_concurrent0\\private-billing\\billing.sqlite3-wal'
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\pathlib.py:840: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7030/test_studio_billing_concurrent0')
+api = <test_studio_billing.LocalProtocol object at 0x000001E0A13E31D0>
+
+    def test_studio_billing_concurrent_jobs_cannot_oversubscribe_pool(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        p = replace(policy(), pool_microusd=328973)
+        guards = [guard(tmp_path, api, p, "studio-" + char * 64) for char in ("a", "c")]
+        barrier = threading.Barrier(2)
+    
+        def run(index: int) -> str:
+            barrier.wait(timeout=5)
+            try:
+                guards[index](BASE + ":generateContent", payload(str(index)), {})
+                return "confirmed"
+            except ExternalReconciliationError as exc:
+                assert "budget" in str(exc)
+                return "refused"
+    
+        with ThreadPoolExecutor(max_workers=2) as executor:
+>           results = list(executor.map(run, (0, 1)))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_studio_billing.py:659: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py:619: in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py:317: in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_studio_billing.py:652: in run
+    guards[index](BASE + ":generateContent", payload(str(index)), {})
+src\hawedit\studio_billing.py:353: in __call__
+    return self._call(url, payload, headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\studio_billing.py:450: in _call
+    with self._connection() as db:
+         ^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+src\hawedit\studio_billing.py:235: in _connection
+    self._storage.verify()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <hawedit.studio_private.PrivateSqlitePath object at 0x000001E0A13E2A20>
+
+    def verify(self) -> None:
+        """Fence namespace, access, main-file identity and every existing SQLite sidecar."""
+        try:
+            _directories(self.root)
+            if _identity(_private(self.root, directory=True)) != self._root_identity:
+                raise StudioStorageError("Studio private journal root identity changed")
+            if _identity(_private(self.path, directory=False)) != self._file_identity:
+                raise StudioStorageError("Studio private journal database identity changed")
+            for suffix in _SIDECARS:
+                sidecar = self.path.with_name(self.path.name + suffix)
+                try:
+                    sidecar.lstat()
+                except FileNotFoundError:
+                    continue
+                _private(sidecar, directory=False)
+        except (OSError, WindowsSecurityError, ValueError) as exc:
+>           raise StudioStorageError("Studio private journal storage is unavailable or nonprivate") from exc
+E           hawedit.studio_submissions.StudioStorageError: Studio private journal storage is unavailable or nonprivate
+
+src\hawedit\studio_private.py:125: StudioStorageError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_private.py::test_studio_private_nonportable_names_refused[name.]
+FAILED tests/test_studio_billing.py::test_studio_billing_concurrent_jobs_cannot_oversubscribe_pool
+2 failed, 70 passed in 42.59s

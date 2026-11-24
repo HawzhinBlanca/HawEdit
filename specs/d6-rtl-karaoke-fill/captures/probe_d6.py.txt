@@ -1,0 +1,461 @@
+# Probe D6 (read-only against repo): baseline \kf LTR sweep inside Sorani words vs
+# Candidate 1 (animated \clip RTL sweep) vs Candidate 2 (per-word discrete switch).
+from __future__ import annotations
+
+import hashlib
+import os
+import platform
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from hawedit.captions import (
+    ASS_ENCODING_AUTO,
+    RTL_MARK,
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
+    CaptionStyle,
+    build_ass,
+    find_ffmpeg,
+    subtitle_filter,
+    verify_caption_integrity,
+)
+from hawedit.sentences import Sentence
+from hawedit.transcripts import Word
+
+OUT = Path(sys.argv[1])
+OUT.mkdir(parents=True, exist_ok=True)
+FONTS = Path("assets/fonts").resolve()
+FF = find_ffmpeg()
+assert FF is not None, "ffmpeg not found"
+
+
+def make_sentence(items: list[tuple[str, int, int]]) -> Sentence:
+    return Sentence(
+        words=tuple(Word(w=w, start_ms=s, end_ms=e, conf=0.95) for w, s, e in items),
+        complete=True,
+    )
+
+
+GOLDEN_SENT = make_sentence(
+    [
+        ("ڕۆژنامەوانی", 0, 600),
+        ("کوردی", 600, 1000),
+        ("لە", 1000, 1200),
+        ("هەولێر.", 1200, 1800),
+    ]
+)
+
+MIXED_SENT = make_sentence(
+    [
+        ("OpusClip", 0, 600),
+        ("زۆر", 600, 1000),
+        ("باشە.", 1000, 1600),
+    ]
+)
+
+
+def ass_ts(ms: int) -> str:
+    cs = round(ms / 10)
+    h, rem = divmod(cs, 360_000)
+    m, rem = divmod(rem, 6_000)
+    s, cs = divmod(rem, 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def render_png(ass_path: Path, png_path: Path, t_s: float) -> Path:
+    subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:d=3",
+            "-vf",
+            subtitle_filter(ass_path, FONTS),
+            "-ss",
+            f"{t_s:.3f}",
+            "-frames:v",
+            "1",
+            "-y",
+            str(png_path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    return png_path
+
+
+def render_raw_rgb(ass_path: Path, t_s: float = 0.0) -> np.ndarray:
+    res = subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:d=2",
+            "-vf",
+            subtitle_filter(ass_path, FONTS),
+            "-ss",
+            f"{t_s:.3f}",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    return np.frombuffer(res.stdout, dtype=np.uint8).reshape((1920, 1080, 3))
+
+
+def probe_word_boxes_single_pass(
+    words: Sequence[Word] if False else tuple[Word, ...],
+    *,
+    font_name: str = "Noto Naskh Arabic",
+    font_size: int = VIRAL_FONT_SIZE,
+    accent_idx: int | None = None,
+) -> tuple[list[tuple[int, int, int, int]], float, int]:
+    """Measure exact pixel bounding box (x0, y0, x1, y1) of each word in ONE ffmpeg call.
+
+    Assigns a distinct pure BGR color to each word (with bord=0, shad=0) and compares
+    rendered positions against a plain tag-free mask to verify zero glyph shift.
+    """
+    t0 = time.perf_counter()
+    # Distinct bright BGR colors far from each other and from black
+    palette_bgr = [
+        (0, 0, 255),
+        (0, 255, 0),
+        (255, 0, 0),
+        (0, 255, 255),
+        (255, 0, 255),
+        (255, 255, 0),
+        (128, 255, 0),
+        (255, 128, 0),
+    ]
+    parts = []
+    plain_parts = []
+    for i, w in enumerate(words):
+        b, g, r = palette_bgr[i % len(palette_bgr)]
+        ass_col = f"&H{b:02X}{g:02X}{r:02X}&"
+        txt = w.w
+        if i == accent_idx:
+            txt_mod = f"{{\\fscx118\\fscy118}}{txt}{{\\fscx100\\fscy100}}"
+        else:
+            txt_mod = txt
+        parts.append(f"{{\\1c{ass_col}}}{txt_mod}")
+        plain_parts.append(txt_mod)
+
+    style_line = VIRAL_THEME.style_row("KurdishProbe", font_name, font_size)
+    # Force bord=0, shad=0 inside dialogue for crisp fill-only mask
+    header = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n"
+        "ScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"{style_line}\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+    color_ass = OUT / "_probe_color.ass"
+    plain_ass = OUT / "_probe_plain.ass"
+    color_ass.write_text(
+        header + f"Dialogue: 0,0:00:00.00,0:00:01.00,KurdishProbe,,0,0,0,,{RTL_MARK}{{\\bord0\\shad0}}" + " ".join(parts) + "\n",
+        encoding="utf-8",
+    )
+    plain_ass.write_text(
+        header + f"Dialogue: 0,0:00:00.00,0:00:01.00,KurdishProbe,,0,0,0,,{RTL_MARK}{{\\bord0\\shad0}}" + " ".join(plain_parts) + "\n",
+        encoding="utf-8",
+    )
+
+    rgb_col = render_raw_rgb(color_ass, 0.5)
+    rgb_plain = render_raw_rgb(plain_ass, 0.5)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    # Check whether inserting {\1c...} between words shifts ANY ink pixel vs plain!
+    mask_col = np.max(rgb_col, axis=2) > 40
+    mask_plain = np.max(rgb_plain, axis=2) > 40
+    shift_pixels = int(np.sum(mask_col ^ mask_plain))
+
+    boxes: list[tuple[int, int, int, int]] = []
+    for i in range(len(words)):
+        b, g, r = palette_bgr[i % len(palette_bgr)]
+        # Nearest-color classification among active foreground pixels (handles antialiasing)
+        fg = np.max(rgb_col, axis=2) > 50
+        # Euclidean distance in RGB to target color (r, g, b)
+        target = np.array([r, g, b], dtype=np.float32)
+        dist_self = np.linalg.norm(rgb_col.astype(np.float32) - target, axis=2)
+        is_word = fg & (dist_self < 120.0)
+        ys, xs = np.where(is_word)
+        if len(xs) == 0:
+            boxes.append((0, 0, 0, 0))
+        else:
+            boxes.append((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+    return boxes, elapsed_ms, shift_pixels
+
+
+def is_rtl_word(w: str) -> bool:
+    for ch in w:
+        cp = ord(ch)
+        if 0x0600 <= cp <= 0x06FF or 0x0750 <= cp <= 0x077F or 0x0590 <= cp <= 0x05FF:
+            return True
+    return False
+
+
+def build_clip_sweep_ass(
+    sent: Sentence,
+    boxes: list[tuple[int, int, int, int]],
+    *,
+    font_name: str = "Noto Naskh Arabic",
+    layer1_bord0: bool = True,
+    accent_idx: int | None = None,
+) -> str:
+    """Two-layer animated \clip ASS: Layer 0 unspoken white, Layer 1 gold sweeping RTL per word."""
+    unspoken_style = VIRAL_THEME.style_row(
+        "Kurdish",
+        font_name,
+        VIRAL_FONT_SIZE,
+        primary=VIRAL_THEME.secondary,
+        secondary=VIRAL_THEME.secondary,
+    )
+    if layer1_bord0:
+        spoken_theme = VIRAL_THEME
+        spoken_style = (
+            f"Style: KurdishHighlight,{font_name},{VIRAL_FONT_SIZE},"
+            f"{spoken_theme.primary},{spoken_theme.primary},&H00000000,&H00000000,"
+            f"{int(spoken_theme.bold)},0,0,0,100,100,0,0,1,0,0,{spoken_theme.alignment},"
+            f"{spoken_theme.margin_l},{spoken_theme.margin_r},{spoken_theme.margin_v},{ASS_ENCODING_AUTO}"
+        )
+    else:
+        spoken_style = VIRAL_THEME.style_row(
+            "KurdishHighlight",
+            font_name,
+            VIRAL_FONT_SIZE,
+            primary=VIRAL_THEME.primary,
+            secondary=VIRAL_THEME.primary,
+        )
+
+    line_parts = []
+    for i, w in enumerate(sent.words):
+        if i == accent_idx:
+            line_parts.append(f"{{\\fscx118\\fscy118}}{w.w}{{\\fscx100\\fscy100}}")
+        else:
+            line_parts.append(w.w)
+    full_line = RTL_MARK + " ".join(line_parts)
+
+    ev_start = sent.start_ms
+    ev_end = sent.end_ms + 200
+    events = [
+        f"Dialogue: 0,{ass_ts(ev_start)},{ass_ts(ev_end)},Kurdish,,0,0,0,,{full_line}"
+    ]
+
+    pad_x = 2 if layer1_bord0 else 6
+    pad_y = 6 if layer1_bord0 else 10
+    for i, (w, (x0, y0, x1, y1)) in enumerate(zip(sent.words, boxes)):
+        dur = max(10, w.end_ms - w.start_ms)
+        xl = max(0, x0 - pad_x)
+        xr = min(1080, x1 + pad_x)
+        yt = max(0, y0 - pad_y)
+        yb = min(1920, y1 + pad_y)
+        if is_rtl_word(w.w):
+            # Sweep RIGHT -> LEFT
+            clip_tag = f"\\clip({xr},{yt},{xr},{yb})\\t(0,{dur},\\clip({xl},{yt},{xr},{yb}))"
+        else:
+            # Sweep LEFT -> RIGHT inside LTR Latin word
+            clip_tag = f"\\clip({xl},{yt},{xl},{yb})\\t(0,{dur},\\clip({xl},{yt},{xr},{yb}))"
+        events.append(
+            f"Dialogue: 1,{ass_ts(w.start_ms)},{ass_ts(ev_end)},KurdishHighlight,,0,0,0,,{{{clip_tag}}}{full_line}"
+        )
+
+    return (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n"
+        "ScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"{unspoken_style}\n{spoken_style}\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        + "\n".join(events)
+        + "\n"
+    )
+
+
+def build_per_word_inline_ass(sent: Sentence) -> str:
+    """Candidate 2: single Dialogue event with timed inline \\1c flip per word (no \\kf)."""
+    style_row = VIRAL_THEME.style_row(
+        "Kurdish",
+        "Noto Naskh Arabic",
+        VIRAL_FONT_SIZE,
+        primary=VIRAL_THEME.secondary,
+        secondary=VIRAL_THEME.secondary,
+    )
+    ev_end = sent.end_ms + 200
+    parts = []
+    for w in sent.words:
+        t_ms = w.start_ms
+        parts.append(f"{{\\t({t_ms},{t_ms + 1},\\1c{VIRAL_THEME.primary}&)}}{w.w}")
+    text = RTL_MARK + " ".join(parts)
+    return (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n"
+        "ScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"{style_row}\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        f"Dialogue: 0,{ass_ts(0)},{ass_ts(ev_end)},Kurdish,,0,0,0,,{text}\n"
+    )
+
+
+def analyze_word_sweep(png: Path, box: tuple[int, int, int, int]) -> dict[str, float | int]:
+    img = cv2.imread(str(png))
+    assert img is not None
+    x0, y0, x1, y1 = box
+    crop = img[max(0, y0 - 8) : min(1920, y1 + 8), max(0, x0 - 4) : min(1080, x1 + 4)]
+    b, g, r = (crop[..., c].astype(int) for c in range(3))
+    gold = (r > 180) & (g > 150) & (b < 90)
+    white = (r > 200) & (g > 200) & (b > 200)
+    gx = np.where(gold)[1] + max(0, x0 - 4)
+    wx = np.where(white)[1] + max(0, x0 - 4)
+    return {
+        "gold_px": int(gold.sum()),
+        "white_px": int(white.sum()),
+        "gold_mean_x": round(float(gx.mean()), 1) if len(gx) else -1.0,
+        "white_mean_x": round(float(wx.mean()), 1) if len(wx) else -1.0,
+        "gold_range": (int(gx.min()), int(gx.max())) if len(gx) else (-1, -1),
+        "white_range": (int(wx.min()), int(wx.max())) if len(wx) else (-1, -1),
+    }
+
+
+def make_crop_strip(frames: list[tuple[str, Path]], out_png: Path, y_slice=(1440, 1620), x_slice=(100, 980)) -> None:
+    tiles = []
+    for label, p in frames:
+        im = cv2.imread(str(p))
+        crop = im[y_slice[0] : y_slice[1], x_slice[0] : x_slice[1]].copy()
+        cv2.putText(crop, label, (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (180, 255, 180), 2)
+        cv2.rectangle(crop, (0, 0), (crop.shape[1] - 1, crop.shape[0] - 1), (90, 90, 90), 2)
+        tiles.append(crop)
+    grid = cv2.vconcat(tiles)
+    cv2.imwrite(str(out_png), grid)
+
+
+# 1. Measure word boxes on GOLDEN_SENT (no accent, and with accent on word 0)
+boxes_no_acc, probe_ms, shift_px = probe_word_boxes_single_pass(GOLDEN_SENT.words, accent_idx=None)
+boxes_acc, _, _ = probe_word_boxes_single_pass(GOLDEN_SENT.words, accent_idx=0)
+boxes_mixed, _, shift_mixed = probe_word_boxes_single_pass(MIXED_SENT.words, accent_idx=None)
+
+print("boxes_no_acc:", boxes_no_acc, f"probe_ms={probe_ms:.1f}", f"shift_px={shift_px}")
+print("boxes_acc:", boxes_acc)
+print("boxes_mixed:", boxes_mixed, f"shift_mixed={shift_mixed}")
+
+# 2. Render baseline WORD_HIGHLIGHT (\kf)
+base_ass_text = build_ass(
+    (GOLDEN_SENT,),
+    style=CaptionStyle.WORD_HIGHLIGHT,
+    theme=VIRAL_THEME,
+    font_size=VIRAL_FONT_SIZE,
+    clip_in_ms=0,
+    clip_duration_ms=2000,
+)
+base_ass = OUT / "baseline_kf.ass"
+base_ass.write_text(base_ass_text, encoding="utf-8")
+
+# 3. Render Candidate 1a (\clip bord0) & 1b (\clip with outline) & Candidate 2 (per-word inline)
+clip_b0_text = build_clip_sweep_ass(GOLDEN_SENT, boxes_acc, layer1_bord0=True, accent_idx=0)
+clip_b0_ass = OUT / "candidate_clip_bord0.ass"
+clip_b0_ass.write_text(clip_b0_text, encoding="utf-8")
+
+clip_b4_text = build_clip_sweep_ass(GOLDEN_SENT, boxes_acc, layer1_bord0=False, accent_idx=0)
+clip_b4_ass = OUT / "candidate_clip_bord4.ass"
+clip_b4_ass.write_text(clip_b4_text, encoding="utf-8")
+
+inline_text = build_per_word_inline_ass(GOLDEN_SENT)
+inline_ass = OUT / "candidate_per_word_inline.ass"
+inline_ass.write_text(inline_text, encoding="utf-8")
+
+# Verify caption integrity checks pass on clip ASS!
+verify_caption_integrity(
+    clip_b0_text,
+    expected_text=[w.w for w in GOLDEN_SENT.words],
+    fonts_dir=FONTS,
+)
+print("verify_caption_integrity(clip_b0_text): PASS")
+
+times = [0.15, 0.30, 0.45, 0.80, 1.50]
+variants = [
+    ("baseline_kf", base_ass, boxes_acc[0]),
+    ("clip_bord0", clip_b0_ass, boxes_acc[0]),
+    ("clip_bord4", clip_b4_ass, boxes_acc[0]),
+    ("per_word_inline", inline_ass, boxes_no_acc[0]),
+]
+
+for vname, ass_p, w0_box in variants:
+    tiles = []
+    print(f"\n=== {vname} (word0 box={w0_box}) ===")
+    for t in times:
+        png = render_png(ass_p, OUT / f"{vname}_t{int(t*1000):04d}.png", t)
+        box = w0_box if t < 0.6 else (boxes_acc[1] if t < 1.0 else boxes_acc[3])
+        if vname == "per_word_inline" and t >= 0.6:
+            box = boxes_no_acc[1] if t < 1.0 else boxes_no_acc[3]
+        stats = analyze_word_sweep(png, box)
+        print(f"  t={t:.2f}s: {stats}")
+        tiles.append((f"{vname} t={t:.2f}s", png))
+    make_crop_strip(tiles, OUT / f"strip_{vname}.png")
+
+# 4. Also test mixed-script RTL+LTR clip sweep on MIXED_SENT ("OpusClip زۆر باشە.")
+mixed_clip_text = build_clip_sweep_ass(MIXED_SENT, boxes_mixed, layer1_bord0=True, accent_idx=None)
+mixed_clip_ass = OUT / "mixed_clip_bord0.ass"
+mixed_clip_ass.write_text(mixed_clip_text, encoding="utf-8")
+mixed_tiles = []
+print("\n=== mixed_clip_bord0 ===")
+for t, b in [(0.15, boxes_mixed[0]), (0.30, boxes_mixed[0]), (0.45, boxes_mixed[0]), (0.80, boxes_mixed[1]), (1.30, boxes_mixed[2])]:
+    p = render_png(mixed_clip_ass, OUT / f"mixed_clip_t{int(t*1000):04d}.png", t)
+    print(f"  t={t:.2f}s: {analyze_word_sweep(p, b)}")
+    mixed_tiles.append((f"mixed clip t={t:.2f}s", p))
+make_crop_strip(mixed_tiles, OUT / "strip_mixed_clip.png")
+
+# 5. Compare pixel fidelity: does Layer 0 + Layer 1 (\bord0) at t=0.0 match Layer 0 alone,
+#    and at t=1.9s (all gold) match a single-layer all-gold render?
+full_gold_ass = OUT / "_ref_all_gold.ass"
+full_gold_ass.write_text(
+    "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n"
+    "ScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n\n"
+    "[V4+ Styles]\n"
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+    "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+    "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+    + VIRAL_THEME.style_row("Kurdish", "Noto Naskh Arabic", VIRAL_FONT_SIZE)
+    + "\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    + f"Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,{RTL_MARK}{{\\fscx118\\fscy118}}ڕۆژنامەوانی{{\\fscx100\\fscy100}} کوردی لە هەولێر.\n",
+    encoding="utf-8",
+)
+ref_gold_rgb = render_raw_rgb(full_gold_ass, 1.9)
+cand_b0_end_rgb = render_raw_rgb(clip_b0_ass, 1.9)
+cand_b4_end_rgb = render_raw_rgb(clip_b4_ass, 1.9)
+diff_b0 = np.abs(ref_gold_rgb.astype(int) - cand_b0_end_rgb.astype(int))
+diff_b4 = np.abs(ref_gold_rgb.astype(int) - cand_b4_end_rgb.astype(int))
+print(f"\nOutline check vs single-layer gold at t=1.9s:")
+print(f"  bord0 max_diff={diff_b0.max()}, pixels_diff>5={int((diff_b0.max(axis=2)>5).sum())}")
+print(f"  bord4 max_diff={diff_b4.max()}, pixels_diff>5={int((diff_b4.max(axis=2)>5).sum())}")

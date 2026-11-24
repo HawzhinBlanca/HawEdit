@@ -1,0 +1,27 @@
+{
+  "status": "unaccepted-dirty-checkout-engineering-diagnostic",
+  "baseline_sha": "9bec30986dded0a77b3d1299c20b29a03de1520d",
+  "source_package_sha256": "27c7edfab83d569a8622b339cf2b8a546382517fa247d84fa5270568f1831c70",
+  "command": ".venv/Scripts/python.exe -m pytest tests/test_candidate_publication.py tests/test_episode.py tests/test_private_review_bundle.py tests/test_caption_ink_contrast.py --junitxml=specs/evidence-based-studio/SD-B-final-mechanics.xml -q",
+  "total": 35,
+  "failed": [],
+  "errors": [],
+  "skipped": [],
+  "elapsed_seconds": 215.827,
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "packages": {
+    "pytest": "9.1.1",
+    "ruff": "0.9.6",
+    "mypy": "1.15.0",
+    "dbos": "2.29.0"
+  },
+  "reports": {
+    "SD-B-final-mechanics.xml": "71fe26f2810a9314764cbfeaafa189b067aeef167e4278c6cc7bb50fd5e65cf1",
+    "SD-B-final-mechanics.log": "f784d91362c0bfcb642f7917353fa043b3ad1079a3c7f7c342048066ba34c5f1",
+    "SD-B-fast-final.log": "be7f732c0324b40ede47d439eb3949c212e269760eab2be77d622751761df872"
+  },
+  "acceptance": false,
+  "production_trust_enrolled": false,
+  "paid_provider_calls": false
+}

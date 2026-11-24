@@ -28,6 +28,15 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, Protocol
 
+from hawedit.atomic_fs import (
+    file_identity as _identity,
+)
+from hawedit.atomic_fs import (
+    is_reparse_point as _is_reparse,
+)
+from hawedit.atomic_fs import (
+    read_bound_file as _shared_read_bound_file,
+)
 from hawedit.atomic_fs import rename_directory_noreplace
 from hawedit.cli import machine_readable_stdout, program_name, use_utf8_streams
 from hawedit.gemini import Governance, VertexGeminiJudge
@@ -186,62 +195,8 @@ def _canonical_json(document: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def _is_reparse(info: os.stat_result) -> bool:
-    attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    return bool(getattr(info, "st_file_attributes", 0) & attribute)
-
-
-def _identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_nlink)
-
-
 def _read_bound_file(path: Path, label: str, maximum: int | None) -> bytes:
-    try:
-        before_path = os.lstat(path)
-    except OSError as exc:
-        raise VertexAcceptanceError(f"cannot inspect {label} {path}: {exc}") from exc
-    if stat.S_ISLNK(before_path.st_mode) or _is_reparse(before_path):
-        raise VertexAcceptanceError(f"{label} must not be a symlink or reparse point: {path}")
-    if not stat.S_ISREG(before_path.st_mode):
-        raise VertexAcceptanceError(f"{label} must be a regular file: {path}")
-    if before_path.st_nlink != 1:
-        raise VertexAcceptanceError(f"{label} must not be a hardlink: {path}")
-    if maximum is not None and before_path.st_size > maximum:
-        raise VertexAcceptanceError(f"{label} exceeds its {maximum}-byte limit: {path}")
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise VertexAcceptanceError(f"cannot open {label} {path}: {exc}") from exc
-    try:
-        before_fd = os.fstat(descriptor)
-        if _identity(before_fd) != _identity(before_path):
-            raise VertexAcceptanceError(f"{label} changed while opening: {path}")
-        chunks: list[bytes] = []
-        total = 0
-        while chunk := os.read(descriptor, 1024 * 1024):
-            total += len(chunk)
-            if maximum is not None and total > maximum:
-                raise VertexAcceptanceError(f"{label} exceeds its byte limit: {path}")
-            chunks.append(chunk)
-        after_fd = os.fstat(descriptor)
-        if (
-            _identity(after_fd) != _identity(before_fd)
-            or after_fd.st_ctime_ns != before_fd.st_ctime_ns
-        ):
-            raise VertexAcceptanceError(f"{label} changed while being read: {path}")
-    finally:
-        os.close(descriptor)
-    try:
-        after_path = os.lstat(path)
-    except OSError as exc:
-        raise VertexAcceptanceError(f"cannot re-inspect {label} {path}: {exc}") from exc
-    if (
-        _identity(after_path) != _identity(before_path)
-        or after_path.st_ctime_ns != before_path.st_ctime_ns
-    ):
-        raise VertexAcceptanceError(f"{label} path changed while being read: {path}")
-    return b"".join(chunks)
+    return _shared_read_bound_file(path, label, max_bytes=maximum, error_cls=VertexAcceptanceError)
 
 
 def _stable_digest(path: Path, label: str) -> str:

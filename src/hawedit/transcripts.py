@@ -48,7 +48,7 @@ from typing import Any, BinaryIO, Final
 
 from hawedit.alignment import CTC_VITERBI, assert_ctc_viterbi
 from hawedit.normalize import normalize_sorani
-from hawedit.registry import resolve_role
+from hawedit.registry import ModelNotInRegistry, resolve_role
 
 __all__ = [
     "MIN_KURDISH_LETTER_SHARE",
@@ -60,6 +60,7 @@ __all__ = [
     "RawTranscriptTampered",
     "RejectedValidatorCorrection",
     "SegmentConfidence",
+    "SegmentOrigin",
     "StaleNormalizedTranscript",
     "TranscriptStore",
     "UnalignedSpeech",
@@ -516,9 +517,18 @@ class SegmentConfidence:
     # compatibility with artifacts produced before the CTC hypothesis was persisted.
     llm_text: str = ""
     ctc_text: str = ""
+    # D-332: "beam5_retry" when greedy looped and one beam-5 decode replaced it, with why.
+    # Greedy segments omit both keys from JSON, so their artifact bytes are unchanged.
+    decode_mode: str = "greedy"
+    retry_reason: str | None = None
 
     def __post_init__(self) -> None:
         _assert_media_clock_span(self.start_ms, self.end_ms, label="segment confidence")
+        if (self.decode_mode, self.retry_reason is None) not in (
+            ("greedy", True),
+            ("beam5_retry", False),
+        ) or (self.retry_reason is not None and not isinstance(self.retry_reason, str)):
+            raise ValueError("segment decode_mode must be greedy, or beam5_retry with a reason")
         if self.end_ms <= self.start_ms:
             raise ValueError(
                 f"segment confidence spans {self.start_ms}..{self.end_ms} ms, which has no length"
@@ -526,6 +536,138 @@ class SegmentConfidence:
         if not isinstance(self.llm_text, str) or not isinstance(self.ctc_text, str):
             raise ValueError("segment hypotheses must be strings")
         _assert_log_probability(self.mean_logprob, label="segment mean_logprob")
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentOrigin:
+    """Actual routing inputs and selected content, not human-verified speech."""
+
+    draft: SegmentConfidence
+    selected: SegmentConfidence
+    selected_words: tuple[Word, ...]
+    escalated: bool
+    route_reason: str
+    outcome: str
+    validator: str | None = None
+    validator_text: str | None = None
+    rejection_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.draft, SegmentConfidence) or not isinstance(
+            self.selected, SegmentConfidence
+        ):
+            raise ValueError("segment origin requires draft and selected confidence")
+        if (self.draft.start_ms, self.draft.end_ms) != (
+            self.selected.start_ms,
+            self.selected.end_ms,
+        ):
+            raise ValueError("segment origin clock binding differs")
+        if not self.draft.llm_text.strip() or not self.selected.llm_text.strip():
+            raise ValueError("segment origin hypotheses must include speech text")
+        if type(self.escalated) is not bool:
+            raise ValueError("segment origin escalation must be a boolean")
+        _assert_reportable_reason(self.route_reason, label="segment origin routing")
+        if not isinstance(self.selected_words, tuple) or not self.selected_words:
+            raise ValueError("segment origin requires immutable selected words")
+        for word in self.selected_words:
+            if (
+                not isinstance(word, Word)
+                or word.start_ms < self.selected.start_ms
+                or word.end_ms > self.selected.end_ms + 100
+            ):
+                raise ValueError("segment origin words differ from the selected clock")
+        if not isinstance(self.outcome, str):
+            raise ValueError("segment origin outcome must be text")
+        if self.outcome in {"not-routed", "validator-disabled"}:
+            if (
+                self.escalated
+                or self.draft != self.selected
+                or self.validator is not None
+                or self.validator_text is not None
+                or self.rejection_reason is not None
+            ):
+                raise ValueError("non-routed segment origin claims validator content")
+            return
+        if not self.escalated or self.outcome not in {
+            "validator-selected",
+            "validator-transcription-refused",
+            "validator-alignment-refused",
+        }:
+            raise ValueError("segment origin outcome contradicts escalation")
+        if not isinstance(self.validator, str):
+            raise ValueError("routed segment origin requires its actual validator")
+        try:
+            resolve_role(self.validator, frozenset({"asr_validator"}), "the ASR validator")
+        except ModelNotInRegistry as exc:
+            raise ValueError("segment origin validator is not registered") from exc
+        if self.outcome == "validator-selected":
+            if not isinstance(self.validator_text, str) or self.rejection_reason is not None:
+                raise ValueError(
+                    "selected validator origin needs an actual response, not rejection"
+                )
+        else:
+            if self.draft != self.selected:
+                raise ValueError("refused validator origin must retain the draft")
+            _assert_reportable_reason(self.rejection_reason, label="segment origin rejection")
+            if self.outcome == "validator-transcription-refused":
+                if self.validator_text is not None:
+                    raise ValueError("failed transcription cannot claim a validator response")
+            elif not isinstance(self.validator_text, str):
+                raise ValueError("failed alignment requires the actual validator response")
+
+    @staticmethod
+    def from_object(value: object) -> SegmentOrigin:
+        data = _json_object_fields(
+            value,
+            field="segment origin",
+            required=frozenset(
+                {
+                    "draft",
+                    "selected",
+                    "selected_words",
+                    "escalated",
+                    "route_reason",
+                    "outcome",
+                    "validator",
+                    "validator_text",
+                    "rejection_reason",
+                }
+            ),
+        )
+        confidences = {
+            key: SegmentConfidence(
+                **_json_object_fields(
+                    data[key],
+                    field=f"segment origin {key}",
+                    required=frozenset(
+                        {"start_ms", "end_ms", "mean_logprob", "llm_text", "ctc_text"}
+                    ),
+                    optional=frozenset({"decode_mode", "retry_reason"}),
+                )
+            )
+            for key in ("draft", "selected")
+        }
+        words = _json_object_array(data["selected_words"], field="segment origin selected words")
+        return SegmentOrigin(
+            draft=confidences["draft"],
+            selected=confidences["selected"],
+            selected_words=tuple(
+                Word(
+                    **_json_object_fields(
+                        word,
+                        field=f"segment origin word {index}",
+                        required=frozenset({"w", "start_ms", "end_ms", "conf"}),
+                    )
+                )
+                for index, word in enumerate(words)
+            ),
+            escalated=data["escalated"],
+            route_reason=data["route_reason"],
+            outcome=data["outcome"],
+            validator=data["validator"],
+            validator_text=data["validator_text"],
+            rejection_reason=data["rejection_reason"],
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +739,8 @@ class RawTranscript:
     # Hard segments whose canonical timed words were retained because a validator correction
     # could not itself be aligned. These are not transcript gaps: speech remains represented.
     rejected_validator_corrections: tuple[RejectedValidatorCorrection, ...] = ()
+    # None means historical/aborted origins are unknown; never infer from validated_by.
+    segment_origins: tuple[SegmentOrigin, ...] | None = None
 
     def __post_init__(self) -> None:
         validate_media_id(self.media_id)
@@ -665,8 +809,88 @@ class RawTranscript:
             text_cursor = surface_at + len(matched_surface)
             previous = word
 
+        if self.segment_origins is not None:
+            self._validate_origins()
+
+    def _validate_origins(self) -> None:
+        from hawedit.escalation import SegmentScore, select_for_validation
+
+        origins = self.segment_origins
+        if not isinstance(origins, tuple) or not origins:
+            raise ValueError("present segment origins must be a nonempty immutable tuple")
+        previous_end = -1
+        for origin in origins:
+            if not isinstance(origin, SegmentOrigin) or origin.draft.start_ms < previous_end:
+                raise ValueError("segment origins must be distinct and chronological")
+            previous_end = origin.draft.end_ms
+        if (
+            "\n".join(origin.selected.llm_text for origin in origins) != self.text_ckb
+            or tuple(word for origin in origins for word in origin.selected_words) != self.words
+            or tuple(origin.selected for origin in origins) != self.segment_confidence
+        ):
+            raise ValueError("segment origin selected content differs from canonical transcript")
+        scores = tuple(
+            SegmentScore(
+                segment_id=f"{origin.draft.start_ms}-{origin.draft.end_ms}",
+                mean_logprob=origin.draft.mean_logprob,
+                llm_text=origin.draft.llm_text,
+                ctc_text=origin.draft.ctc_text,
+                duration_s=(origin.draft.end_ms - origin.draft.start_ms) / 1000.0,
+            )
+            for origin in origins
+        )
+        disabled_flags = [origin.outcome == "validator-disabled" for origin in origins]
+        if any(disabled_flags) and not all(disabled_flags):
+            raise ValueError(
+                "segment origins cannot mix validator-disabled and active validation outcomes"
+            )
+        validator_disabled = all(disabled_flags)
+        for origin, decision in zip(origins, select_for_validation(scores), strict=True):
+            if validator_disabled:
+                if origin.escalated or origin.route_reason != decision.reason:
+                    raise ValueError(
+                        "validator-disabled segment origin differs from batch counterfactual policy"
+                    )
+            elif origin.escalated != decision.escalate or origin.route_reason != decision.reason:
+                raise ValueError("segment origin routing differs from original batch policy")
+        accepted = {
+            origin.validator
+            for origin in origins
+            if origin.outcome == "validator-selected" and origin.validator is not None
+        }
+        if len(accepted) > 1 or self.asr.validated_by != next(iter(accepted), None):
+            raise ValueError("segment origin validator differs from canonical provenance")
+        if self.asr.mean_logprob != sum(origin.selected.mean_logprob for origin in origins) / len(
+            origins
+        ):
+            raise ValueError(
+                "segment origin aggregate confidence differs from canonical provenance"
+            )
+        rejected = tuple(
+            RejectedValidatorCorrection(
+                origin.draft.start_ms,
+                origin.draft.end_ms,
+                origin.validator,
+                origin.rejection_reason,
+            )
+            for origin in origins
+            if origin.validator is not None and origin.rejection_reason is not None
+        )
+        if rejected != self.rejected_validator_corrections:
+            raise ValueError("segment origin refusals differ from canonical rejection records")
+
     def to_json(self) -> str:
-        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
+        data = asdict(self)
+        scored = list(data["segment_confidence"])
+        if self.segment_origins is None:
+            del data["segment_origins"]
+        else:
+            scored += [o[key] for o in data["segment_origins"] for key in ("draft", "selected")]
+        for item in scored:
+            # D-332: greedy segments omit decode provenance, so their bytes are unchanged.
+            if item["decode_mode"] == "greedy":
+                del item["decode_mode"], item["retry_reason"]
+        return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
 
     def sha256(self) -> str:
         return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
@@ -683,6 +907,7 @@ class RawTranscript:
                     "unaligned",
                     "segment_confidence",
                     "rejected_validator_corrections",
+                    "segment_origins",
                 }
             ),
         )
@@ -716,6 +941,12 @@ class RawTranscript:
             ),
             asr=AsrProvenance(**asr_object),
             media_sha256=data.get("media_sha256"),
+            segment_origins=tuple(
+                SegmentOrigin.from_object(item)
+                for item in _json_object_array(data["segment_origins"], field="segment_origins")
+            )
+            if "segment_origins" in data
+            else None,
             # `.get`: transcripts written before D-103 have no such key, and refusing to read
             # them would make an old canonical artifact unreadable to satisfy a new field.
             unaligned=tuple(
@@ -734,7 +965,7 @@ class RawTranscript:
                         item,
                         field=f"segment_confidence[{index}]",
                         required=frozenset({"start_ms", "end_ms", "mean_logprob"}),
-                        optional=frozenset({"llm_text", "ctc_text"}),
+                        optional=frozenset({"llm_text", "ctc_text", "decode_mode", "retry_reason"}),
                     )
                 )
                 for index, item in enumerate(confidence_objects)
@@ -961,7 +1192,13 @@ class TranscriptStore:
         return self.root / f"{self._safe(media_id)}.transcript.raw.provenance.json"
 
     def reusable_raw(
-        self, media_id: str, audio_sha256: str, producer: str, media_sha256: str
+        self,
+        media_id: str,
+        audio_sha256: str,
+        producer: str,
+        media_sha256: str,
+        *,
+        admission_policy: str | None = None,
     ) -> RawTranscript | None:
         """The stored canonical transcript, if this exact audio and producer made it.
 
@@ -986,12 +1223,32 @@ class TranscriptStore:
         """
         path = self.raw_path(media_id)
         provenance = self._audio_provenance_path(media_id)
+        admission_error = RawTranscriptImmutable(
+            f"{path} lacks matching canonical admission provenance; "
+            "use a new work directory or media_id. Historical transcript bytes are preserved."
+        )
+        if admission_policy is not None and (
+            not isinstance(admission_policy, str) or not admission_policy.strip()
+        ):
+            raise ValueError("admission policy must be a nonempty string")
         if not path.is_file() or not provenance.is_file():
+            if admission_policy is not None and (
+                path.exists() or provenance.exists() or self._digest_path(media_id).exists()
+            ):
+                raise admission_error
             return None
         try:
             recorded = json.loads(provenance.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            recorded = None
+        if admission_policy is not None and (
+            not self._digest_path(media_id).is_file()
+            or not isinstance(recorded, dict)
+            or recorded.get("admission_policy") != admission_policy
+            or recorded.get("audio_sha256") != audio_sha256
+            or recorded.get("producer") != producer
+        ):
+            raise admission_error
         if not isinstance(recorded, dict):
             return None
         if recorded.get("audio_sha256") != audio_sha256 or recorded.get("producer") != producer:
@@ -1010,6 +1267,8 @@ class TranscriptStore:
         raw: RawTranscript,
         audio_sha256: str | None = None,
         producer: str | None = None,
+        *,
+        admission_policy: str | None = None,
     ) -> Path:
         """Publish the canonical transcript once.
 
@@ -1018,6 +1277,11 @@ class TranscriptStore:
         written inside the same lock that publishes the raw, so a killed publish cannot leave a
         reuse record pointing at a transcript that never appeared. D-136.
         """
+        if admission_policy is not None:
+            if not isinstance(admission_policy, str) or not admission_policy.strip():
+                raise ValueError("admission policy must be a nonempty string")
+            if audio_sha256 is None or producer is None:
+                raise ValueError("admission policy requires audio and producer provenance")
         self._assert_root_identity()
         lock = self.root / f".{self._safe(raw.media_id)}.transcript.raw.lock"
         with _exclusive_file_lock(lock):
@@ -1026,7 +1290,11 @@ class TranscriptStore:
             if audio_sha256 is not None and producer is not None:
                 self._audio_provenance_path(raw.media_id).write_text(
                     json.dumps(
-                        {"audio_sha256": audio_sha256, "producer": producer},
+                        {
+                            "audio_sha256": audio_sha256,
+                            "producer": producer,
+                            **({"admission_policy": admission_policy} if admission_policy else {}),
+                        },
                         indent=2,
                     )
                     + "\n",

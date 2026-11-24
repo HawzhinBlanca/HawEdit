@@ -1,0 +1,223 @@
+.....................................................FFF.....F           [100%]
+================================== FAILURES ===================================
+_________ test_studio_json_depth_refusal_is_contextual[/api/uploads] __________
+
+path = '/api/uploads'
+
+    @pytest.mark.parametrize("path", ["/api/uploads", "/api/repurpose", "/api/edit_caption"])
+    def test_studio_json_depth_refusal_is_contextual(path: str) -> None:
+        payload = b'{"nested":' + b"[" * 16384 + b"0" + b"]" * 16384 + b"}"
+        with pytest.raises(RecursionError):
+            json.loads(payload)
+>       status, _, body = _handle_request(
+            f"POST {path} HTTP/1.1\r\nHost: localhost:8080\r\n".encode()
+            + b"Content-Type: application/json\r\nContent-Length: "
+            + str(len(payload)).encode() + b"\r\n\r\n" + payload
+        )
+
+tests\test_studio_history.py:469: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_web.py:32: in _handle_request
+    _ = HawEditWebHandler(
+..\..\AppData\Local\Programs\Python\Python312\Lib\socketserver.py:766: in __init__
+    self.handle()
+..\..\AppData\Local\Programs\Python\Python312\Lib\http\server.py:436: in handle
+    self.handle_one_request()
+..\..\AppData\Local\Programs\Python\Python312\Lib\http\server.py:424: in handle_one_request
+    method()
+src\hawedit\web.py:1317: in do_POST
+    payload = self._read_json()
+              ^^^^^^^^^^^^^^^^^
+src\hawedit\web.py:1272: in _read_json
+    payload = json.loads(raw.decode("utf-8"), object_pairs_hook=self._unique_json_fields)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py:359: in loads
+    return cls(**kw).decode(s)
+           ^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:338: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x000001A6B8D6ABD0>
+s = '{"nested":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[...]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}'
+idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+>           obj, end = self.scan_once(s, idx)
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E           RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:354: RecursionError
+________ test_studio_json_depth_refusal_is_contextual[/api/repurpose] _________
+
+path = '/api/repurpose'
+
+    @pytest.mark.parametrize("path", ["/api/uploads", "/api/repurpose", "/api/edit_caption"])
+    def test_studio_json_depth_refusal_is_contextual(path: str) -> None:
+        payload = b'{"nested":' + b"[" * 16384 + b"0" + b"]" * 16384 + b"}"
+        with pytest.raises(RecursionError):
+            json.loads(payload)
+>       status, _, body = _handle_request(
+            f"POST {path} HTTP/1.1\r\nHost: localhost:8080\r\n".encode()
+            + b"Content-Type: application/json\r\nContent-Length: "
+            + str(len(payload)).encode() + b"\r\n\r\n" + payload
+        )
+
+tests\test_studio_history.py:469: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_web.py:32: in _handle_request
+    _ = HawEditWebHandler(
+..\..\AppData\Local\Programs\Python\Python312\Lib\socketserver.py:766: in __init__
+    self.handle()
+..\..\AppData\Local\Programs\Python\Python312\Lib\http\server.py:436: in handle
+    self.handle_one_request()
+..\..\AppData\Local\Programs\Python\Python312\Lib\http\server.py:424: in handle_one_request
+    method()
+src\hawedit\web.py:1333: in do_POST
+    request = GenerationRequest.from_payload(self._read_json())
+                                             ^^^^^^^^^^^^^^^^^
+src\hawedit\web.py:1272: in _read_json
+    payload = json.loads(raw.decode("utf-8"), object_pairs_hook=self._unique_json_fields)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py:359: in loads
+    return cls(**kw).decode(s)
+           ^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:338: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x000001A6B7DA6300>
+s = '{"nested":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[...]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}'
+idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+>           obj, end = self.scan_once(s, idx)
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E           RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:354: RecursionError
+_______ test_studio_json_depth_refusal_is_contextual[/api/edit_caption] _______
+
+path = '/api/edit_caption'
+
+    @pytest.mark.parametrize("path", ["/api/uploads", "/api/repurpose", "/api/edit_caption"])
+    def test_studio_json_depth_refusal_is_contextual(path: str) -> None:
+        payload = b'{"nested":' + b"[" * 16384 + b"0" + b"]" * 16384 + b"}"
+        with pytest.raises(RecursionError):
+            json.loads(payload)
+>       status, _, body = _handle_request(
+            f"POST {path} HTTP/1.1\r\nHost: localhost:8080\r\n".encode()
+            + b"Content-Type: application/json\r\nContent-Length: "
+            + str(len(payload)).encode() + b"\r\n\r\n" + payload
+        )
+
+tests\test_studio_history.py:469: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_web.py:32: in _handle_request
+    _ = HawEditWebHandler(
+..\..\AppData\Local\Programs\Python\Python312\Lib\socketserver.py:766: in __init__
+    self.handle()
+..\..\AppData\Local\Programs\Python\Python312\Lib\http\server.py:436: in handle
+    self.handle_one_request()
+..\..\AppData\Local\Programs\Python\Python312\Lib\http\server.py:424: in handle_one_request
+    method()
+src\hawedit\web.py:1355: in do_POST
+    payload = self._read_json()
+              ^^^^^^^^^^^^^^^^^
+src\hawedit\web.py:1272: in _read_json
+    payload = json.loads(raw.decode("utf-8"), object_pairs_hook=self._unique_json_fields)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py:359: in loads
+    return cls(**kw).decode(s)
+           ^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:338: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x000001A6B85B42F0>
+C:\Users\Wareen\Desktop\HawEdit\.venv\Lib\site-packages\_pytest\threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-5 (serve_forever)
+
+Traceback (most recent call last):
+  File "C:\Users\Wareen\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\Wareen\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\Wareen\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 235, in serve_forever
+    ready = selector.select(poll_interval)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Local\Programs\Python\Python312\Lib\selectors.py", line 323, in select
+    r, w, _ = self._select(self._readers, self._writers, [], timeout)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Wareen\AppData\Local\Programs\Python\Python312\Lib\selectors.py", line 314, in _select
+    r, w, x = select.select(r, w, w, timeout)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [WinError 10038] An operation was attempted on something that is not a socket
+
+Enable tracemalloc to get traceback where the object was allocated.
+See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+  warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+s = '{"nested":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[...]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}'
+idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+>           obj, end = self.scan_once(s, idx)
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E           RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py:354: RecursionError
+_____________ test_studio_history_native_http_refresh_and_origin ______________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7016/test_studio_history_native_htt0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001A6B8549F10>
+
+    def test_studio_history_native_http_refresh_and_origin(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hawedit.web as web
+    
+        root = tmp_path / "jobs"
+        record = stored_job(root)
+        monkeypatch.setattr(web, "JOB_MANAGER", JobManager(root))
+        with web.ThreadingTCPServer(("127.0.0.1", 0), web.HawEditWebHandler) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+>           connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+                         ^^^^^^^^^^^
+E           AttributeError: 'function' object has no attribute 'client'
+
+tests\test_studio_history.py:503: AttributeError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_history.py::test_studio_json_depth_refusal_is_contextual[/api/uploads]
+FAILED tests/test_studio_history.py::test_studio_json_depth_refusal_is_contextual[/api/repurpose]
+FAILED tests/test_studio_history.py::test_studio_json_depth_refusal_is_contextual[/api/edit_caption]
+FAILED tests/test_studio_history.py::test_studio_history_native_http_refresh_and_origin
