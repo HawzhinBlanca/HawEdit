@@ -17458,3 +17458,18 @@ D-393 fixture addendum: stricter speaker_face presence exposed positive camera c
 The recovered V11.2 compiler remains the source of rendered media. Selection uses overlapping transcript windows with word indices mapped back to the episode. A failed local video check can promote a reserve candidate. Both subtitle deliveries use timed Kurdish display chunks. The private team service snapshots the accepted social ZIP and keys decisions to its SHA-256. Direct Instagram posting requires an explicit operator command and records the Meta container and media receipt. TikTok uses the downloadable package.
 
 The optional yt-dlp executable and Chatterbox worker live outside the locked host interpreter. The MIT-licensed ResembleAI/chatterbox weights used on this host are revision 5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18. The local voice worker preserves the upstream watermark. Cloned-voice inputs require human-confirmed consent scoped to the reference recording, episode render, target language and expiry. See specs/sorani-team-studio/operator.md.
+
+## D-394 — WSL ASR VEX re-pin after Sorani Studio recovery and hardening (2026-11-24)
+
+Owner approved updating `security/wsl-asr-vex.json` and `tests/test_vex.py` (`REVIEWED_VEX_SOURCE`) on 2026-11-24 (continuing BLOCKED.md #24 / D-333):
+- `reviewed`: `2026-10-15` → `2026-11-24`; `expires`: `2026-11-14` → `2026-12-24`.
+- `applicability.source_sha256`: `aa0ff96ac6eabddd365add97f50e1994d54812976efa998e5230ecaf84a94d35` → `d9383634a39f20e4292f73fbc4ad09a6536c570c2cf768c934ea177654ae6444` (commit `e65994019cc137d8a7e033b311c534d275832ee6`).
+- Control audit (`git diff --name-only 95bd60e..e659940 -- src/hawedit/`): all 18 changed files are inside `studio_history.py`, `studio_ui.py`, `studio_youtube.py`, `web.py`, and `v8/*.py`. Zero WSL ASR worker, lock, loader, or asset-verification files changed, and `tests/test_vex.py` confirms `save_pretrained` and `custom_generate` remain absent from `src/hawedit/`.
+- Scope boundary: this re-pin records the source-control audit; live `pip-audit` against a provisioned WSL2 runtime remains an independent runtime gate (`hawedit-wsl-vex`).
+
+## D-395 — Archive 18 recovered Nov 18–22 historical evidence reports (2026-11-24)
+
+Owner approved archiving the 18 historical measurement reports recovered from the Nov 22 worktree (`752979b`) whose original Nov 18–22 commit objects no longer exist in git history:
+- Moved byte-for-byte into `evidence/recovered-nov22/`: `a2-1440p-transcode-2026-11-19.md`, `a2-pipeline-refusal-2026-11-18.md`, `a5-live-judge-smoke-2026-11-19.md`, `asr-profile-2026-11-18.md`, `audit-seven-fixes-20261122.md`, `b2-clip-scoped-asr-2026-11-19.md`, `cinema-intelligence-v4-2026-11-21.md`, `cinema-masterwork-v6-2026-11-21.md`, `cinema-playback-polish-v3-2026-11-21.md`, `content-aware-10-of-10-2026-11-20.md`, `d6-d7-picture-baseline-2026-11-18.md`, `human-editor-director-v5-2026-11-21.md`, `human-grade-director-v2-2026-11-21.md`, `phase-a-ten-reels-2026-11-19.md`, `teaser-gold-timestamps.md`, `v7-masterpiece-2026-11-21.md`, `v8-lean-director-2026-11-22.md`, `v9-client-production-ready-2026-11-22.md`.
+- `evidence/4k-vp9-decode-and-stage0-2026-11-18.md` was freshly re-measured on `HawaPC01` at `e65994019cc137d8a7e033b311c534d275832ee6` and stays in `evidence/`.
+- Zero assertions in `tests/test_claims.py` were changed: every active `evidence/*.md` file continues to strictly validate that its cited commit exists in git history, while the 18 archived reports remain preserved without forging new commit SHAs onto historical measurements.

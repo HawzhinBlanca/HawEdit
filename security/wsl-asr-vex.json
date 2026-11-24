@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "product": "hawedit-wsl-asr",
-  "reviewed": "2026-10-15",
-  "expires": "2026-11-14",
+  "reviewed": "2026-11-24",
+  "expires": "2026-12-24",
   "applicability": {
     "python": "3.12",
-    "source_sha256": "aa0ff96ac6eabddd365add97f50e1994d54812976efa998e5230ecaf84a94d35",
+    "source_sha256": "d9383634a39f20e4292f73fbc4ad09a6536c570c2cf768c934ea177654ae6444",
     "packages": {
       "accelerate": "1.12.0",
       "omnilingual-asr": "0.2.0",
