@@ -2098,9 +2098,9 @@ class OfflineRestrainedDirector:
                 if len(text) > 14:
                     issues.append(f"subtitle_readability: 3-word beat `{text}` exceeds 14 chars")
 
-        # Check 5: Viral hook strength.
+        # Check 5: Viral hook strength (empty title is allowed when no source clause qualifies).
         hook_words = [tok for tok in script.hook_title_ckb.split() if tok.strip(_PUNCT_STRIP)]
-        if len(hook_words) < 2:
+        if 0 < len(hook_words) < 2:
             issues.append("viral_hook_strength: hook_title_ckb is too short (< 2 words)")
             fallback_tokens = [
                 w.w.strip(_PUNCT_STRIP) for w in repaired_words[:5] if w.w.strip(_PUNCT_STRIP)

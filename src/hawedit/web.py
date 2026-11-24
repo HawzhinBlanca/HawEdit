@@ -1099,6 +1099,80 @@ class JobManager:
                     self._save_job(self._jobs[job_id])
                     self._prune_completed_locked()
 
+    def _v8_asr_cache_dir(self) -> Path:
+        return self._jobs_dir.parent / "v8-asr-cache"
+
+    def _verified_job_file(self, candidate: Path, expected_sha256: str) -> Path | None:
+        jobs_root = self._jobs_dir.resolve()
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            return None
+        if (
+            candidate.is_symlink()
+            or not resolved.is_relative_to(jobs_root)
+            or not resolved.is_file()
+        ):
+            return None
+        return resolved if _sha256_file(resolved) == expected_sha256 else None
+
+    def _load_cached_v8_asr(self, source_sha256: str) -> tuple[Path, Path | None] | None:
+        if not re.fullmatch(r"[a-f0-9]{64}", source_sha256):
+            return None
+        entry = self._v8_asr_cache_dir() / f"{source_sha256}.json"
+        if not entry.is_file() or entry.is_symlink():
+            return None
+        try:
+            doc = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            return None
+        if not isinstance(doc, dict) or doc.get("source_sha256") != source_sha256:
+            return None
+        t_rel = doc.get("transcript_rel")
+        t_sha = doc.get("transcript_sha256")
+        if not isinstance(t_rel, str) or not isinstance(t_sha, str):
+            return None
+        transcript = self._verified_job_file(self._jobs_dir / t_rel, t_sha)
+        if transcript is None:
+            return None
+        audio: Path | None = None
+        a_rel = doc.get("audio_rel")
+        a_sha = doc.get("audio_sha256")
+        if isinstance(a_rel, str) and isinstance(a_sha, str):
+            audio = self._verified_job_file(self._jobs_dir / a_rel, a_sha)
+        return transcript, audio
+
+    def _store_cached_v8_asr(
+        self, source_sha256: str, transcript_path: Path, audio_wav_path: Path | None
+    ) -> None:
+        jobs_root = self._jobs_dir.resolve()
+        try:
+            t_res = transcript_path.resolve(strict=True)
+        except OSError:
+            return
+        if (
+            transcript_path.is_symlink()
+            or not t_res.is_relative_to(jobs_root)
+            or not t_res.is_file()
+        ):
+            return
+        payload: dict[str, str] = {
+            "source_sha256": source_sha256,
+            "transcript_rel": t_res.relative_to(jobs_root).as_posix(),
+            "transcript_sha256": _sha256_file(t_res),
+        }
+        if audio_wav_path is not None and not audio_wav_path.is_symlink():
+            try:
+                a_res = audio_wav_path.resolve(strict=True)
+                if a_res.is_relative_to(jobs_root) and a_res.is_file():
+                    payload["audio_rel"] = a_res.relative_to(jobs_root).as_posix()
+                    payload["audio_sha256"] = _sha256_file(a_res)
+            except OSError:
+                pass
+        cache_dir = self._v8_asr_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(cache_dir / f"{source_sha256}.json", json.dumps(payload, indent=2) + "\n")
+
     def _run_v8_episode_job(
         self,
         job_id: str,
@@ -1151,11 +1225,15 @@ class JobManager:
             ep_config = _build_v8_episode_config(v8_config_cls, opts)
 
             use_omni_asr = bool(opts.get("use_omni_asr", True))
+            source_sha256 = _sha256_file(source_file) if use_omni_asr else ""
+            cached_asr = self._load_cached_v8_asr(source_sha256) if source_sha256 else None
             compile_kwargs: dict[str, Any] = {
-                "transcript_path": None,
-                "use_omni_asr": use_omni_asr,
+                "transcript_path": cached_asr[0] if cached_asr is not None else None,
+                "use_omni_asr": False if cached_asr is not None else use_omni_asr,
                 "config": ep_config,
             }
+            if cached_asr is not None and cached_asr[1] is not None:
+                compile_kwargs["audio_wav_path"] = cached_asr[1]
             try:
                 sig = inspect.signature(compile_v8_episode)
                 if "on_progress" in sig.parameters:
@@ -1166,6 +1244,15 @@ class JobManager:
                 pass
 
             ep_result = compile_v8_episode(source_file, v8_out_dir, **compile_kwargs)
+            if source_sha256 and cached_asr is None:
+                raw_transcript = getattr(ep_result, "transcript_path", None)
+                stage0_audio = v8_out_dir / ".work" / "stage0" / "audio.wav"
+                if isinstance(raw_transcript, Path):
+                    self._store_cached_v8_asr(
+                        source_sha256,
+                        raw_transcript,
+                        stage0_audio if stage0_audio.is_file() else None,
+                    )
 
             review_rel = _job_relative_parts(
                 job_work_dir, getattr(ep_result, "review_html_path", None)

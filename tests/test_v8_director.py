@@ -854,6 +854,20 @@ def test_offline_critique_catches_all_defects_and_returns_patch(tmp_path: Path) 
     assert len(patched.word_repairs) == 1
     assert patched.word_repairs[0].repaired == "ئەزانی"
 
+    # An intentionally omitted empty hook title (when no bounded source clause qualifies)
+    # must pass critique rather than looping against _source_quote_hook.
+    omitted_hook = DirectorScript(
+        clip_id="omitted-hook",
+        hook_title_ckb="",
+        word_repairs=(patched.word_repairs[0],),
+        cuts=(),
+        camera_moves=(),
+        caption_beats=(CaptionBeat(word_indices=(0, 1)), CaptionBeat(word_indices=(2, 3))),
+    )
+    omitted_verdict = director.critique_clip(rendered_mp4=preview, script=omitted_hook, words=words)
+    assert omitted_verdict.approved is True
+    assert not any("viral_hook_strength" in issue for issue in omitted_verdict.issues)
+
 
 def test_offline_director_respects_source_shot_cuts_and_never_stacks_punch_cut(
     tmp_path: Path,

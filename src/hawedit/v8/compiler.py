@@ -2719,13 +2719,23 @@ def compile_v8_clip(
                 for idx, (orig, rep) in enumerate(zip(effective_words, repaired_ortho, strict=True))
                 if orig.w != rep.w and idx not in existing_idxs
             ]
-            if extra_repairs:
+            repaired_hook = script.hook_title_ckb
+            if repaired_hook and repaired_hook.strip():
+                hook_words = tuple(
+                    Word(w=tok, start_ms=i * 100, end_ms=(i + 1) * 100, conf=1.0)
+                    for i, tok in enumerate(repaired_hook.split())
+                )
+                hook_sents, _ = repair_kurdish_asr_orthography(
+                    [Sentence(words=hook_words, complete=True)]
+                )
+                repaired_hook = " ".join(w.w for w in hook_sents[0].words)
+            if extra_repairs or repaired_hook != script.hook_title_ckb:
                 merged_repairs = tuple(
                     sorted((*script.word_repairs, *extra_repairs), key=lambda r: r.word_index)
                 )
                 script = DirectorScript(
                     clip_id=script.clip_id,
-                    hook_title_ckb=script.hook_title_ckb,
+                    hook_title_ckb=repaired_hook,
                     word_repairs=merged_repairs,
                     cuts=script.cuts,
                     camera_moves=script.camera_moves,

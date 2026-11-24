@@ -1215,12 +1215,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         select.onchange = restoreWord;
         restoreWord();
         apply.onclick = () => {
-          if (state.source?.source_id !== id || !field.value.trim()) return;
+          const trimmed = field.value.trim();
+          if (state.source?.source_id !== id || !trimmed) return;
+          if (/\s/.test(trimmed)) {status.textContent = 'تەنها یەک وشە بنووسە'; return;}
           const w = selected();
           const remaining = (read('corrections.' + id) || []).filter(r => r.word_index !== w.index);
-          if (field.value.trim() !== w.original) remaining.push({
+          if (trimmed !== w.original) remaining.push({
             word_index:w.index, original:w.original,
-            repaired:field.value.trim(), reason:'native editor'
+            repaired:trimmed, reason:'native editor'
           });
           if (remaining.length > 32) {status.textContent = 'زۆرترین ٣٢ ڕاستکردنەوە'; return;}
           if (save('corrections.' + id, remaining)) status.textContent = 'پاشەکەوت کرا';
@@ -2077,6 +2079,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             await new Promise(resolve => setTimeout(resolve, 2000));
           }
         } catch (error) {
+          if (error.status === 400) save('youtube', null);
           message('uploadMessage', '');
           message('sourceError', error.message);
         } finally {

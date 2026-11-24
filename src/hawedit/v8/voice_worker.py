@@ -24,8 +24,12 @@ def main(request: Path) -> None:
     torch = importlib.import_module("torch")
     engine = importlib.import_module("chatterbox.mtl_tts").ChatterboxMultilingualTTS
     data = json.loads(request.read_text(encoding="utf-8"))
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cpu":
+    if torch.cuda.is_available():
+        count = torch.cuda.device_count()
+        best = max(range(count), key=lambda i: torch.cuda.mem_get_info(i)[0]) if count > 1 else 0
+        device = f"cuda:{best}" if count > 1 else "cuda"
+    else:
+        device = "cpu"
         torch.set_num_threads(min(8, os.cpu_count() or 1))
     model = engine.from_local(Path(data["weights"]), device)
     for index, phrase in enumerate(data["phrases"]):

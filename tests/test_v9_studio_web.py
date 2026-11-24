@@ -1017,3 +1017,32 @@ def test_studio_local_director_uses_loopback_for_private_jobs(
     monkeypatch.setenv("HAWEDIT_OMNI_URL", "http://localhost:8123/v1")
     config = web._build_v8_episode_config(V8EpisodeConfig, {"director": "local-omni"})
     assert config.omni_url == "http://localhost:8123/v1"
+
+
+def test_v8_asr_cache_reuses_hash_verified_records_and_refuses_tampering(tmp_path: Path) -> None:
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    mgr = web.JobManager(jobs_dir=jobs_dir, create_dir=True)
+    transcript = jobs_dir / "job-1" / "v8" / ".work" / "transcripts" / "ep.transcript.raw.json"
+    audio = jobs_dir / "job-1" / "v8" / ".work" / "stage0" / "audio.wav"
+    transcript.parent.mkdir(parents=True)
+    audio.parent.mkdir(parents=True)
+    transcript.write_text('{"words":[]}', encoding="utf-8")
+    audio.write_bytes(b"RIFFtest")
+
+    src_sha = "a" * 64
+    mgr._store_cached_v8_asr(src_sha, transcript, audio)
+    # Cache lives beside jobs_dir so studio_history never treats it as a broken job directory.
+    assert not (jobs_dir / "v8-asr-cache").exists()
+    loaded = mgr._load_cached_v8_asr(src_sha)
+    assert loaded == (transcript.resolve(), audio.resolve())
+
+    # Tampering with transcript bytes invalidates the cache (zero silent reuse).
+    transcript.write_text('{"words":[{"w":"mutated"}]}', encoding="utf-8")
+    assert mgr._load_cached_v8_asr(src_sha) is None
+
+    # UI guards: stale 400 YouTube URL clears storage; single-token correction blocks whitespace.
+    from hawedit.studio_ui import DASHBOARD_HTML
+
+    assert "if (error.status === 400) save('youtube', null);" in DASHBOARD_HTML
+    assert r"if (/\s/.test(trimmed))" in DASHBOARD_HTML
