@@ -452,7 +452,7 @@ def test_shared_builder_routes_screening_through_explicit_transport(
         )
         assert result.candidates, result.discovery
         assert len(routes) == screening.generated == 1
-        assert "/models/gemini-2.5-flash-lite:generateContent" in routes[0]
+        assert "/models/gemini-4-hydrogen:generateContent" in routes[0]
         assert judging.generated == 6
         assert result.clip is not None and result.clip.editorial is not None
         assert isinstance(result.delivery, StageSkipped)

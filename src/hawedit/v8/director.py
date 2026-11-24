@@ -93,7 +93,7 @@ LocalDirectorModality = Literal["omni", "vision", "text"]
 JumpCutInput = int | tuple[int, int]
 Transport = Callable[[str, bytes | None, Mapping[str, str]], tuple[int, str]]
 
-DEFAULT_GEMINI_DIRECTOR_MODEL: Final[str] = "gemini-2.5-pro"
+DEFAULT_GEMINI_DIRECTOR_MODEL: Final[str] = "gemini-4-neon"
 DEFAULT_GEMINI_TIMEOUT_S: Final[float] = 180.0
 DEFAULT_OMNI_URL: Final[str] = "http://127.0.0.1:1234/v1"
 DEFAULT_OMNI_TIMEOUT_S: Final[float] = 240.0
@@ -203,27 +203,33 @@ DIRECTOR_SYSTEM_PROMPT: Final[str] = (
     "   - Emit `cuts: []` when the input proxy is already silence-trimmed; otherwise every cut "
     "`[start_ms, end_ms]` MUST lie strictly OUTSIDE every word's `[start_ms, end_ms]` (never "
     "slice mid-word).\n\n"
-    "5. HOOK TITLE & EARNED CALLOUTS (`hook_title_ckb`, `visual_interrupts`):\n"
-    "   - Write a punchy 4-7 word Central Kurdish (Sorani, Arabic script) `hook_title_ckb`.\n"
-    "   - Emit 0-2 `visual_interrupts` ONLY when the narrative genuinely benefits from a brief "
-    "on-screen Sorani callout (0 on clips shorter than 28 s).\n\n"
+    "5. HOOK TITLE & EARNED MOTION-GRAPHIC CALLOUTS (`hook_title_ckb`, `visual_interrupts`):\n"
+    "   - Write a punchy 4-6 word Central Kurdish (Sorani, Arabic script — NEVER English) "
+    "`hook_title_ckb` using a curiosity-gap or emotional hook (never raw opening filler).\n"
+    "   - Emit 1-3 `visual_interrupts` on clips >= 28 s (0 on clips < 28 s) spaced >= 9 s apart. "
+    "Whenever the speaker states a vivid number, year, or percentage, format `text_ckb` as an "
+    'animated Stat Card: `"<NUMBER> | <2-4 WORD SORANI LABEL>"` (e.g. `"80% | کۆمەڵگەی کوردی"` '
+    'or `"1969 | گەیشتن بە مانگ"`).\n\n'
     "Respond with ONLY a single valid JSON object matching the exact schema."
 )
 
 CRITIQUE_SYSTEM_PROMPT: Final[str] = (
-    "You are the Watch-Before-Ship Multimodal Quality Critic for HawEdit V8 (D-386).\n"
+    "You are the Watch-Before-Ship Multimodal Quality Critic for HawEdit V10.2 (D-386, D-394).\n"
     "Watch the rendered 480p@2fps preview video and listen to its audio alongside the "
     "compiled DirectorScript JSON and transcript. Audit the reel against ALL FIVE checks:\n"
-    "1. UNNECESSARY CAMERA MOTION: Flag any wobble, drift, unmotivated zoom, > 4 moves per "
-    "60 s, or > 25% moving-camera time.\n"
-    "2. BROKEN KURDISH TEXT: Flag disconnected/reversed RTL Arabic glyphs, missing Sorani "
-    "diacritics, or major surviving English/technical loanword garbles.\n"
-    "3. AWKWARD CUTS: Flag clipped mid-word syllables or long dead air >= 0.6 s.\n"
-    "4. SUBTITLE READABILITY: Flag any 4+ word chunks, text overlapping the speaker's face or "
-    "platform UI margins, glyph ghosting, or poor contrast.\n"
-    "5. VIRAL HOOK STRENGTH: Flag missing/unreadable 0-3 s hook title or severe dead air.\n\n"
+    "1. UNNECESSARY CAMERA MOTION & VISUAL VARIETY (`visual_variety`, `active_speaker_framing`): "
+    "Flag wobble, drift, unmotivated zoom, > 4 moves per 60 s, > 25% moving-camera time, or "
+    "misframed speaker on wide/2-person shots.\n"
+    "2. BROKEN KURDISH TEXT (`kurdish_subtitle_accuracy`): Flag disconnected/reversed RTL Arabic "
+    "glyphs, missing Sorani diacritics, or major surviving English/technical loanword garbles.\n"
+    "3. AWKWARD CUTS & FILLER CLEANLINESS (`filler_cleanliness`): Flag unpruned verbal crutches "
+    "(`یانی`, `ئێ`, `وەڵا`), clipped mid-word syllables, or long dead air >= 0.6 s.\n"
+    "4. SUBTITLE READABILITY: Flag any 4+ word chunks, text/overlays colliding with the speaker's "
+    "face, hands, or platform UI margins, glyph ghosting, or poor contrast.\n"
+    "5. VIRAL HOOK STRENGTH & STORY COMPLETENESS (`story_completeness`): Flag missing/unreadable "
+    "0-3 s hook title, mid-thought cutoffs, or incoherent jumps.\n\n"
     "Return ONLY valid JSON matching the CritiqueVerdict schema:\n"
-    "- `approved`: true if all 4 critical ship-stoppers pass (restrained camera >= 75% locked "
+    "- `approved`: true if all critical ship-stoppers pass (restrained camera >= 75% locked "
     "with zero sway, joined readable Kurdish RTL glyphs with core technical words accurate, "
     "zero clipped mid-word cuts or >= 0.6 s dead air, legible 1-2 word captions with zero face "
     "overlap). Do NOT reject for fixed clip-boundary endings, numeral style ('2' vs 'دوو'), "
@@ -702,6 +708,7 @@ def _format_director_user_prompt(
     duration_ms: int,
     shot_cuts_ms: Sequence[int],
     jump_cuts_ms: Sequence[tuple[int, int]],
+    visual_context: Sequence[str] = (),
 ) -> str:
     word_lines = "\n".join(
         f"[{idx}] {w.start_ms}..{w.end_ms}ms: {w.w}" for idx, w in enumerate(words)
@@ -713,12 +720,21 @@ def _format_director_user_prompt(
         else "none"
     )
     max_moves = max(2, math.ceil(duration_ms / 15_000))
+    vis_block = (
+        "Visual scene intelligence (VideoChat3-4B / TimeLens2-4B / ASD — coordinate camera moves "
+        "& visual_interrupts with these grounded observations):\n"
+        + "\n".join(f"- {ln}" for ln in visual_context)
+        + "\n\n"
+        if visual_context
+        else ""
+    )
     return (
         f"Clip ID: {clip_id}\n"
         f"Clip duration: {duration_ms} ms\n"
         f"Camera move hard cap: at most {max_moves} moves, <= 25% moving time, 0 sway.\n"
         f"Source shot cuts: {shot_str}\n"
         f"Candidate editorial jump-cuts: {jump_str}\n\n"
+        f"{vis_block}"
         f"Word-indexed Central Kurdish (Sorani) ASR transcript ({len(words)} words):\n"
         f"{word_lines}\n"
     )
@@ -863,6 +879,7 @@ class GeminiVideoDirector:
         shot_cuts_ms: Sequence[int] = (),
         jump_cuts_ms: Sequence[JumpCutInput] = (),
         video_proxy: Path | None = None,
+        visual_context: Sequence[str] = (),
     ) -> DirectorScript:
         duration_ms = _validate_clip_inputs(
             clip_id=clip_id,
@@ -877,6 +894,7 @@ class GeminiVideoDirector:
             duration_ms=duration_ms,
             shot_cuts_ms=shot_cuts_ms,
             jump_cuts_ms=normalized_jumps,
+            visual_context=visual_context,
         )
         if video_proxy is not None:
             video_part = self._encode_inline_mp4(video_proxy, label="director proxy")
@@ -1059,6 +1077,8 @@ def _is_input_audio_rejection(status: int, error_body: str) -> bool:
         return False
     low = error_body.lower()
     if "input_audio" in low:
+        return True
+    if "image_url" in low and "text" in low and ("either" in low or "invalid 'content'" in low):
         return True
     return "audio" in low and any(hint in low for hint in _AUDIO_REJECT_HINTS)
 
@@ -1274,6 +1294,7 @@ class LocalOmniDirector:
             payload: dict[str, Any] = {
                 "model": model_id,
                 "temperature": 0.1,
+                "reasoning_effort": "none",
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
@@ -1360,6 +1381,7 @@ class LocalOmniDirector:
         jump_cuts_ms: Sequence[JumpCutInput] = (),
         video_proxy: Path | None = None,
         audio_wav: Path | None = None,
+        visual_context: Sequence[str] = (),
     ) -> DirectorScript:
         duration_ms = _validate_clip_inputs(
             clip_id=clip_id,
@@ -1404,6 +1426,7 @@ class LocalOmniDirector:
             duration_ms=duration_ms,
             shot_cuts_ms=shot_cuts_ms,
             jump_cuts_ms=normalized_jumps,
+            visual_context=visual_context,
         )
         raw_text = self._call_chat_completion(
             system_prompt=DIRECTOR_SYSTEM_PROMPT,
@@ -1639,8 +1662,9 @@ class OfflineRestrainedDirector:
         shot_cuts_ms: Sequence[int] = (),
         jump_cuts_ms: Sequence[JumpCutInput] = (),
         audio_wav: Path | None = None,
+        visual_context: Sequence[str] = (),
     ) -> DirectorScript:
-        _ = source_mp4
+        _ = (source_mp4, visual_context)
         duration_ms = _validate_clip_inputs(
             clip_id=clip_id,
             clip_in_ms=clip_in_ms,
@@ -1861,11 +1885,90 @@ class OfflineRestrainedDirector:
         chosen_power: Sequence[int],
         duration_ms: int,
     ) -> tuple[VisualInterrupt, ...]:
-        if duration_ms < 28_000 or not chosen_power:
+        if duration_ms < 28_000:
             return ()
         interrupts: list[VisualInterrupt] = []
-        for word_idx in sorted(chosen_power):
+
+        # 1. Prioritize animated Stat Cards ("<NUMBER> | <KURDISH LABEL>") whenever a vivid
+        # number, year, or percentage is spoken in the body window.
+        _spoken_pct: dict[str, str] = {
+            "هەشتا": "80%",
+            "هەشتای": "80%",
+            "بیست": "20%",
+            "پازدە": "15%",
+            "دە": "10%",
+            "پەنجا": "50%",
+            "نەوەد": "90%",
+            "سەد": "100%",
+        }
+        for idx, w in enumerate(repaired_words):
             if len(interrupts) >= 2:
+                break
+            if w.start_ms < 4_200 or w.start_ms > duration_ms - 3_500:
+                continue
+            if any(abs(w.start_ms - prev.start_ms) < 9_000 for prev in interrupts):
+                continue
+            tok = w.w.strip(_PUNCT_STRIP)
+            stat_hero: str | None = None
+            label_start = idx + 1
+            if tok == "سەتا" and idx + 1 < len(repaired_words):
+                nxt = repaired_words[idx + 1].w.strip(_PUNCT_STRIP)
+                if nxt in _spoken_pct:
+                    stat_hero = _spoken_pct[nxt]
+                    label_start = idx + 2
+                elif nxt.isdigit():
+                    stat_hero = f"{nxt}%"
+                    label_start = idx + 2
+                    # Coalesce spoken ranges like "سەتا 15 بۆ 20" -> "15-20%"
+                    if (
+                        idx + 3 < len(repaired_words)
+                        and repaired_words[idx + 2].w.strip(_PUNCT_STRIP)
+                        in {"بۆ", "تا", "یان", "و"}
+                        and repaired_words[idx + 3].w.strip(_PUNCT_STRIP).isdigit()
+                    ):
+                        hi_num = repaired_words[idx + 3].w.strip(_PUNCT_STRIP)
+                        stat_hero = f"{nxt}-{hi_num}%"
+                        label_start = idx + 4
+            elif tok.isdigit() and (len(tok) >= 4 or int(tok) >= 10):
+                prev_tok = repaired_words[idx - 1].w.strip(_PUNCT_STRIP) if idx > 0 else ""
+                if prev_tok == "سەتا":
+                    continue  # Already handled at "سەتا"
+                stat_hero = tok
+            if stat_hero is None:
+                continue
+            ctx = [
+                pw.w.strip(_PUNCT_STRIP)
+                for pw in repaired_words[label_start : min(len(repaired_words), label_start + 5)]
+                if len(pw.w.strip(_PUNCT_STRIP)) > 1
+                and not pw.w.strip(_PUNCT_STRIP).isdigit()
+                and pw.w.strip(_PUNCT_STRIP) not in _KURDISH_STOP_WORDS
+            ]
+            if not ctx and idx > 0:
+                ctx = [
+                    pw.w.strip(_PUNCT_STRIP)
+                    for pw in repaired_words[max(0, idx - 3) : idx]
+                    if len(pw.w.strip(_PUNCT_STRIP)) > 1
+                    and not pw.w.strip(_PUNCT_STRIP).isdigit()
+                    and pw.w.strip(_PUNCT_STRIP) not in _KURDISH_STOP_WORDS
+                ]
+            if not ctx:
+                continue
+            label = " ".join(ctx[:3])
+            end_ms = min(duration_ms - 400, w.start_ms + 2_600)
+            if end_ms > w.start_ms + 600:
+                interrupts.append(
+                    VisualInterrupt(
+                        start_ms=w.start_ms,
+                        end_ms=end_ms,
+                        text_ckb=f"{stat_hero} | {label}",
+                        position="top",
+                    )
+                )
+
+        # 2. Fill remaining earned callout slots (up to 3 total on >= 36 s reels, 2 otherwise).
+        cap = 3 if duration_ms >= 36_000 else 2
+        for word_idx in sorted(chosen_power):
+            if len(interrupts) >= cap:
                 break
             w = repaired_words[word_idx]
             if w.start_ms < 4_500 or w.start_ms > duration_ms - 3_500:
@@ -1888,6 +1991,7 @@ class OfflineRestrainedDirector:
                         position="top",
                     )
                 )
+        interrupts.sort(key=lambda item: item.start_ms)
         return tuple(interrupts)
 
     def critique_clip(

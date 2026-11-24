@@ -511,7 +511,7 @@ def test_gemini_story_evaluator_success() -> None:
 
     def mock_transport(req: urllib.request.Request) -> bytes:
         assert req.get_method() == "POST"
-        assert "gemini-2.5-flash-lite" in req.full_url
+        assert "gemini-4-hydrogen" in req.full_url
         return json.dumps(response_payload).encode("utf-8")
 
     evaluator = GeminiStoryEvaluator(api_key="mock-key", transport=mock_transport)

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
+import os
 import re
 import struct
 import subprocess
@@ -24,7 +26,7 @@ from hawedit.caption_polish import repair_kurdish_asr_orthography
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Provenance, Qc
 from hawedit.ingest import probe_duration_ms, probe_stream
-from hawedit.render import Reframe, frame_rate, render_clip, resolve_encoder
+from hawedit.render import BRollItem, Reframe, frame_rate, render_clip, resolve_encoder
 from hawedit.sentences import Sentence, segment_sentences
 from hawedit.silence import (
     KURDISH_FILLER_TOKENS,
@@ -36,6 +38,7 @@ from hawedit.silence import (
 from hawedit.transcripts import AsrProvenance, Word
 from hawedit.v8.asd import (
     ActiveSpeakerError,
+    ActiveSpeakerScore,
     FaceDetectionFrame,
     LockedShotCrop,
     compute_locked_shot_crops,
@@ -44,6 +47,11 @@ from hawedit.v8.asd import (
     locked_crops_to_render_inputs,
     score_active_speakers,
     snap_locked_crops_to_cuts,
+)
+from hawedit.v8.broll import (
+    DEFAULT_BROLL_CACHE_DIR,
+    extract_kurdish_stat_interrupts,
+    resolve_visual_cues_to_broll,
 )
 from hawedit.v8.director import (
     DirectorUnavailable,
@@ -66,6 +74,7 @@ from hawedit.v8.schema import (
     snap_camera_moves_to_cuts,
     validate_director_script,
 )
+from hawedit.v8.story_editor import VisualCue
 from hawedit.v8.styles import ClientStylePreset, get_client_style_preset
 from hawedit.v8.tiktok_subs import (
     VISUAL_INTERRUPT_MIN_START_MS,
@@ -73,6 +82,15 @@ from hawedit.v8.tiktok_subs import (
     build_viral_tiktok_ass,
     chunk_viral_kurdish_words,
     render_tiktok_overlay_video,
+)
+from hawedit.v8.visual_aware import (
+    ShotVisualProfile,
+    analyze_shot_visual_profiles,
+    apply_visual_groundings_to_profiles,
+    choreograph_cut_covers,
+    format_visual_groundings_for_director,
+    protect_visual_gestures_in_cuts,
+    run_local_video_awareness,
 )
 
 __all__ = [
@@ -141,7 +159,41 @@ _DEFAULT_PROGRESS_BAR_COLOR: Final[str] = "#FFD700"
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 _DEFAULT_FONTS_DIR: Final[Path] = _REPO_ROOT / "assets" / "fonts"
 _DEFAULT_YUNET_MODEL: Final[Path] = _REPO_ROOT / "models" / "face_detection_yunet.onnx"
+_YUNET_CANDIDATES: Final[tuple[Path, ...]] = (
+    _REPO_ROOT / "models" / "face_detection_yunet_2023mar.onnx",
+    _DEFAULT_YUNET_MODEL,
+    Path(r"D:\HawEdit-media\models\face_detection_yunet_2023mar.onnx"),
+)
+_ASD_ONNX_CANDIDATES: Final[tuple[Path, ...]] = (
+    _REPO_ROOT / "models" / "lr_asd_talkset.onnx",
+    _REPO_ROOT / "models" / "light_asd_talkset.onnx",
+    Path(r"D:\HawEdit-media\models\lr_asd_talkset.onnx"),
+)
 _MAJOR_JUMP_CUT_MIN_REMOVED_MS: Final[int] = 600
+
+
+def _resolve_default_yunet(explicit: Path | None = None) -> Path | None:
+    if explicit is not None:
+        return explicit
+    env_p = os.environ.get("HAWEDIT_YUNET_ONNX", "").strip()
+    if env_p:
+        return Path(env_p)
+    for cand in _YUNET_CANDIDATES:
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _resolve_default_asd_onnx(explicit: Path | None = None) -> Path | None:
+    if explicit is not None:
+        return explicit
+    env_p = os.environ.get("HAWEDIT_ASD_ONNX", "").strip()
+    if env_p:
+        return Path(env_p)
+    for cand in _ASD_ONNX_CANDIDATES:
+        if cand.is_file():
+            return cand
+    return None
 
 
 class V8CompileError(RuntimeError):
@@ -225,6 +277,12 @@ class V8CompileConfig:
     end_card_subtitle_ckb: str | None = None
     end_card_handle: str | None = None
     keep_overlay: bool = False
+    enable_broll: bool = False
+    broll_dir: Path | None = None
+    broll_cache_dir: Path | None = None
+    enable_banter_split: bool = True
+    music_mood: Literal["none", "curious", "cinematic", "energetic"] = "none"
+    enable_local_vlm: bool = True
 
     def __post_init__(self) -> None:
         if self.director_backend not in _DIRECTOR_BACKENDS:
@@ -709,6 +767,7 @@ class DefaultV8SubtitleRenderer:
         self._height = height
         self._y_center_px = y_center_px
         self._hook_y_top_px = 135.0
+        self._split_screen_windows_ms: tuple[tuple[int, int], ...] = ()
         self._ffmpeg = ffmpeg
         self._style_preset = style_preset
         self._speaker_bio = speaker_bio
@@ -716,6 +775,9 @@ class DefaultV8SubtitleRenderer:
 
     def set_hook_y_top_px(self, hook_y_top_px: float) -> None:
         self._hook_y_top_px = hook_y_top_px
+
+    def set_split_screen_windows(self, windows_ms: Sequence[tuple[int, int]]) -> None:
+        self._split_screen_windows_ms = tuple((int(s), int(e)) for s, e in windows_ms if e > s)
 
     def render_subtitles(
         self,
@@ -778,6 +840,7 @@ class DefaultV8SubtitleRenderer:
                 height=self._height,
                 y_center_px=self._y_center_px,
                 hook_y_top_px=self._hook_y_top_px,
+                split_screen_windows_ms=self._split_screen_windows_ms,
                 visual_interrupts=vis_interrupts,
                 ffmpeg=self._ffmpeg,
                 style_preset=self._style_preset,
@@ -806,17 +869,18 @@ class DefaultV8ActiveSpeakerTracker:
         precomputed_wav: Path | None = None,
         source_dims: tuple[int, int] | None = None,
     ) -> None:
-        self._onnx_model_path = onnx_model_path
-        self._yunet_model_path = (
-            yunet_model_path
-            if yunet_model_path is not None
-            else (_DEFAULT_YUNET_MODEL if _DEFAULT_YUNET_MODEL.is_file() else None)
+        self._onnx_model_path = _resolve_default_asd_onnx(onnx_model_path)
+        self._yunet_model_path = _resolve_default_yunet(yunet_model_path)
+        self._sample_fps = (
+            25.0 if (self._onnx_model_path is not None and sample_fps == 5.0) else sample_fps
         )
-        self._sample_fps = sample_fps
         self._ffmpeg = ffmpeg
         self._precomputed_proxy = precomputed_proxy
         self._precomputed_wav = precomputed_wav
         self._source_dims = source_dims
+        self.last_detections: tuple[FaceDetectionFrame, ...] = ()
+        self.last_scores: tuple[ActiveSpeakerScore, ...] = ()
+        self.last_proxy_dims: tuple[int, int] | None = None
 
     def plan_locked_crops(
         self,
@@ -1025,6 +1089,9 @@ class DefaultV8ActiveSpeakerTracker:
 
             sx = src_w / float(proxy_w)
             sy = src_h / float(proxy_h)
+            self.last_detections = tuple(detections)
+            self.last_scores = tuple(scores)
+            self.last_proxy_dims = (proxy_w, proxy_h)
             return tuple(
                 LockedCropWindow(
                     start_ms=c.start_ms,
@@ -1057,6 +1124,24 @@ class DefaultV8ClipRenderer:
         self._source_height = source_height
         self._silence_plan = silence_plan
         self._assembly_spans = tuple(assembly_spans) if assembly_spans else None
+        self._b_roll: tuple[BRollItem, ...] = ()
+        self._assembly_crossfade_ms: int = 0
+        self._split_screen_windows: tuple[
+            tuple[int, int, tuple[int, int, int, int], tuple[int, int, int, int]], ...
+        ] = ()
+
+    def set_visual_extras(
+        self,
+        *,
+        b_roll: Sequence[BRollItem] = (),
+        assembly_crossfade_ms: int = 0,
+        split_screen_windows: Sequence[
+            tuple[int, int, tuple[int, int, int, int], tuple[int, int, int, int]]
+        ] = (),
+    ) -> None:
+        self._b_roll = tuple(b_roll)
+        self._assembly_crossfade_ms = max(0, int(assembly_crossfade_ms))
+        self._split_screen_windows = tuple(split_screen_windows)
 
     def render_clip_media(
         self,
@@ -1161,6 +1246,27 @@ class DefaultV8ClipRenderer:
             else None
         )
 
+        sfx_events_ms = tuple(sorted({int(t) for t in camera_jump_cuts_ms if t > 0}))
+        pop_events_ms = tuple(
+            sorted(
+                {
+                    *(int(vi.start_ms) for vi in script.visual_interrupts if vi.start_ms > 0),
+                    *(int(bi.start_ms) for bi in self._b_roll if bi.start_ms > 0),
+                }
+            )
+        )
+        riser_events_ms: tuple[int, ...] = ()
+        if self._assembly_spans:
+            co_acc = 0
+            for sp in self._assembly_spans:
+                if sp.role == "cold_open":
+                    co_acc += sp.duration_ms
+                else:
+                    if co_acc > 0:
+                        riser_events_ms = (co_acc,)
+                    break
+        speech_intervals = tuple((int(w.start_ms), int(w.end_ms)) for w in words)
+
         render_clip(
             clip_obj,
             source_mp4,
@@ -1180,9 +1286,17 @@ class DefaultV8ClipRenderer:
             silence_plan=self._silence_plan if self._assembly_spans is None else None,
             for_review=True,
             assembly_spans=self._assembly_spans,
+            assembly_crossfade_ms=self._assembly_crossfade_ms,
+            b_roll=self._b_roll,
+            split_screen_windows=self._split_screen_windows,
             brand_kit=brand_kit,
             per_shot_boxes=tuple(per_shot_boxes),
             cinema_motion=camera_filter or None,
+            cinema_sfx_events_ms=sfx_events_ms,
+            cinema_pop_events_ms=pop_events_ms,
+            cinema_riser_events_ms=riser_events_ms,
+            cinema_music_mood=config.music_mood,
+            cinema_speech_intervals_ms=speech_intervals,
             subtitle_overlay_path=subtitles.overlay_path if subtitles.engine == "skia" else None,
         )
         return output_mp4
@@ -1382,6 +1496,75 @@ def _tighten_internal_word_silences(
     return tuple(out)
 
 
+def _extract_assembled_proxy_and_wav(
+    source_mp4: Path,
+    assembly_spans: Sequence[AssemblySpan],
+    proxy_out_mp4: Path,
+    wav_out: Path,
+    *,
+    ffmpeg: Path,
+    width: int = 640,
+    fps: float = 25.0,
+) -> tuple[Path, Path]:
+    """Extract a spliced tracking proxy + 16 kHz WAV matching exact semantic assembly spans."""
+    from hawedit.assembly import assembled_splice_filter
+
+    splice = assembled_splice_filter(assembly_spans, crossfade_ms=24)
+    fc = f"{splice};[v_concat]fps={fps:g},scale={width}:-2[v_out];[a_concat]aresample=16000[a_out]"
+    dur_s = sum(sp.duration_ms for sp in assembly_spans) / 1000.0
+    proc = subprocess.run(
+        [
+            str(ffmpeg),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_mp4),
+            "-filter_complex",
+            fc,
+            "-map",
+            "[v_out]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "26",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            "-y",
+            str(proxy_out_mp4),
+            "-map",
+            "[a_out]",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            "-vn",
+            "-y",
+            str(wav_out),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=max(90.0, dur_s * 5.0),
+    )
+    if (
+        proc.returncode != 0
+        or not proxy_out_mp4.is_file()
+        or proxy_out_mp4.stat().st_size == 0
+        or not wav_out.is_file()
+        or wav_out.stat().st_size == 0
+    ):
+        raise V8CompileError(
+            f"Failed to extract assembled semantic proxy/WAV: {proc.stderr.strip()[:400]}"
+        )
+    return proxy_out_mp4, wav_out
+
+
 def _prepare_real_timeline(
     *,
     source_mp4: Path,
@@ -1393,6 +1576,8 @@ def _prepare_real_timeline(
     explicit_shot_cuts_ms: Sequence[int],
     explicit_jump_cuts_ms: Sequence[int],
     source_sentences: Sequence[Sentence] | None = None,
+    semantic_assembly_spans: Sequence[AssemblySpan] | None = None,
+    semantic_words: Sequence[Word] | None = None,
 ) -> _PreparedTimeline:
     binary = _resolve_ffmpeg(config.ffmpeg)
     src_w, src_h = _probe_video_dims(source_mp4, ffmpeg=binary)
@@ -1401,6 +1586,67 @@ def _prepare_real_timeline(
     if clip_out_ms > source_ms:
         raise V8CompileError(
             f"Clip span [{clip_in_ms}, {clip_out_ms}] exceeds {source_mp4.name} ({source_ms} ms)"
+        )
+
+    proxy_fps = 25.0 if _resolve_default_asd_onnx(config.asd_onnx_path) is not None else 5.0
+
+    # V10.2 Semantic Multi-Cut fast path: pre-planned non-contiguous spans already have
+    # prosody-snapped boundaries & meaning-verified word pruning.
+    if semantic_assembly_spans:
+        spans_tuple = tuple(semantic_assembly_spans)
+        for sp in spans_tuple:
+            if sp.source_out_ms > source_ms:
+                raise V8CompileError(
+                    f"Semantic span [{sp.source_in_ms}, {sp.source_out_ms}] exceeds {source_ms} ms"
+                )
+        eff_dur_ms = sum(sp.duration_ms for sp in spans_tuple)
+        proxy_mp4, clip_wav = _extract_assembled_proxy_and_wav(
+            source_mp4,
+            spans_tuple,
+            work_dir / "clip_track_proxy.mp4",
+            work_dir / "clip_16k.wav",
+            ffmpeg=binary,
+            width=640,
+            fps=proxy_fps,
+        )
+        sem_eff_words = tuple(semantic_words) if semantic_words else clip_words
+        cfr_cuts = (
+            tuple(explicit_shot_cuts_ms)
+            if explicit_shot_cuts_ms
+            else detect_exact_assembled_cuts_ms(
+                source_mp4,
+                [(sp.source_in_ms, sp.source_out_ms) for sp in spans_tuple],
+                fps=src_fps,
+                ffmpeg=binary,
+            )
+        )
+        sem_director_proxy: Path | None = None
+        if config.director_backend != "offline":
+            sem_director_proxy = _build_spliced_director_proxy(
+                source_mp4,
+                clip_in_ms=clip_in_ms,
+                clip_out_ms=clip_out_ms,
+                silence_plan=None,
+                assembly_spans=spans_tuple,
+                out_mp4=work_dir / "director_spliced_proxy.mp4",
+                ffmpeg=binary,
+            )
+        return _PreparedTimeline(
+            source_width=src_w,
+            source_height=src_h,
+            source_fps=src_fps,
+            effective_duration_ms=eff_dur_ms,
+            effective_words=sem_eff_words,
+            raw_shot_cuts_ms=cfr_cuts,
+            effective_shot_cuts_ms=cfr_cuts,
+            effective_jump_cuts_ms=tuple(
+                sorted({j for j in explicit_jump_cuts_ms if 0 < j < eff_dur_ms})
+            ),
+            silence_plan=None,
+            assembly_spans=spans_tuple,
+            clip_wav_path=clip_wav,
+            proxy_mp4_path=proxy_mp4,
+            director_proxy_mp4=sem_director_proxy,
         )
 
     raw_dur_ms = clip_out_ms - clip_in_ms
@@ -1414,7 +1660,7 @@ def _prepare_real_timeline(
         work_dir / "clip_track_proxy.mp4",
         ffmpeg=binary,
         width=640,
-        fps=5.0,
+        fps=proxy_fps,
     )
     raw_shots = (
         tuple(explicit_shot_cuts_ms)
@@ -1945,8 +2191,14 @@ def compile_v8_clip(
     jump_cuts_ms: Sequence[int] = (),
     source_sentences: Sequence[Sentence] | None = None,
     video_griller: Callable[[Path], VideoGrillReport] | None = None,
+    semantic_assembly_spans: Sequence[AssemblySpan] | None = None,
+    semantic_words: Sequence[Word] | None = None,
+    semantic_cut_times_ms: Sequence[tuple[int, int]] = (),
+    semantic_visual_cues: Sequence[VisualCue] = (),
+    semantic_word_idx_to_ms: Mapping[int, int] | None = None,
+    semantic_hook_title_ckb: str | None = None,
 ) -> V8CompileResult:
-    """Compile one V8 clip: Perceive -> Direct -> Validate -> Compile -> Critique (max 1 rev)."""
+    """Compile one V8/V10.2 clip: Perceive -> Direct -> Validate -> Compile -> Critique."""
     cfg = config if config is not None else V8CompileConfig()
     if not clip_id.strip() or not source_mp4.is_file():
         raise V8CompileError(f"Invalid clip_id or missing source video: {source_mp4}")
@@ -1954,7 +2206,9 @@ def compile_v8_clip(
         raise V8CompileError(f"Invalid clip span [{clip_in_ms}, {clip_out_ms})")
     raw_duration_ms = clip_out_ms - clip_in_ms
     clip_words = tuple(words)
-    if not clip_words or any(w.end_ms > raw_duration_ms for w in clip_words):
+    if not clip_words or (
+        not semantic_assembly_spans and any(w.end_ms > raw_duration_ms for w in clip_words)
+    ):
         raise V8CompileError(f"words must be non-empty and within [0, {raw_duration_ms}] ms")
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1966,6 +2220,14 @@ def compile_v8_clip(
         work_dir = Path(work_str)
         prepared: _PreparedTimeline | None = None
         if use_real_media:
+            sem_jumps = tuple(
+                sorted(
+                    {
+                        *jump_cuts_ms,
+                        *(at_ms for at_ms, rem_ms in semantic_cut_times_ms if rem_ms >= 250),
+                    }
+                )
+            )
             prepared = _prepare_real_timeline(
                 source_mp4=source_mp4,
                 clip_in_ms=clip_in_ms,
@@ -1974,8 +2236,10 @@ def compile_v8_clip(
                 work_dir=work_dir,
                 config=cfg,
                 explicit_shot_cuts_ms=shot_cuts_ms,
-                explicit_jump_cuts_ms=jump_cuts_ms,
+                explicit_jump_cuts_ms=sem_jumps,
                 source_sentences=source_sentences,
+                semantic_assembly_spans=semantic_assembly_spans,
+                semantic_words=semantic_words,
             )
 
         effective_duration_ms = (
@@ -2075,12 +2339,14 @@ def compile_v8_clip(
             )
         )
 
+        track_in_ms = 0 if semantic_assembly_spans else clip_in_ms
+        track_out_ms = effective_duration_ms if semantic_assembly_spans else clip_out_ms
         raw_crops: tuple[LockedCropWindow, ...] = (
             tuple(
                 active_tracker.plan_locked_crops(
                     source_mp4=source_mp4,
-                    clip_in_ms=clip_in_ms,
-                    clip_out_ms=clip_out_ms,
+                    clip_in_ms=track_in_ms,
+                    clip_out_ms=track_out_ms,
                     shot_cuts_ms=raw_shot_cuts,
                 )
             )
@@ -2088,14 +2354,22 @@ def compile_v8_clip(
             else ()
         )
         if prepared is not None and prepared.assembly_spans is not None:
-            remapped_crops = _remap_crops_to_assembly_spans(
-                raw_crops, prepared.assembly_spans, clip_in_ms=clip_in_ms
+            remapped_crops = (
+                raw_crops
+                if semantic_assembly_spans
+                else _remap_crops_to_assembly_spans(
+                    raw_crops, prepared.assembly_spans, clip_in_ms=clip_in_ms
+                )
             )
-            cfr_cuts = detect_exact_assembled_cuts_ms(
-                source_mp4,
-                [(sp.source_in_ms, sp.source_out_ms) for sp in prepared.assembly_spans],
-                fps=effective_fps,
-                ffmpeg=active_cfg.ffmpeg,
+            cfr_cuts = (
+                prepared.effective_shot_cuts_ms
+                if semantic_assembly_spans
+                else detect_exact_assembled_cuts_ms(
+                    source_mp4,
+                    [(sp.source_in_ms, sp.source_out_ms) for sp in prepared.assembly_spans],
+                    fps=effective_fps,
+                    ffmpeg=active_cfg.ffmpeg,
+                )
             )
             snapped_shot_crops = snap_locked_crops_to_cuts(
                 tuple(
@@ -2125,8 +2399,124 @@ def compile_v8_clip(
             effective_shot_cuts = tuple(sorted(set(effective_shot_cuts) | set(cfr_cuts)))
         else:
             locked_crops = raw_crops
+
+        # V10.2/V10.3 Visual-Aware Scene Profiling, §7 VideoChat3/TimeLens2 Grounding & B-Roll.
+        shot_profiles: tuple[ShotVisualProfile, ...] = ()
+        visual_groundings = (
+            run_local_video_awareness(
+                prepared.proxy_mp4_path,
+                effective_duration_ms,
+                device="cuda:1",
+                strict=False,
+            )
+            if (use_real_media and prepared is not None and active_cfg.enable_local_vlm)
+            else None
+        )
+        if visual_groundings is not None and visual_groundings.models_used:
+            write_text_atomic(
+                out_dir / f"{clip_id}.visual.json",
+                json.dumps(visual_groundings.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            )
+        if (
+            prepared is not None
+            and isinstance(active_tracker, DefaultV8ActiveSpeakerTracker)
+            and locked_crops
+        ):
+            p_w, p_h = active_tracker.last_proxy_dims or (
+                prepared.source_width,
+                prepared.source_height,
+            )
+            shot_profiles = apply_visual_groundings_to_profiles(
+                analyze_shot_visual_profiles(
+                    active_tracker.last_detections,
+                    active_tracker.last_scores,
+                    locked_crops,
+                    source_width=prepared.source_width,
+                    source_height=prepared.source_height,
+                    proxy_width=p_w,
+                    proxy_height=p_h,
+                    proxy_mp4=prepared.proxy_mp4_path,
+                ),
+                visual_groundings,
+            )
+
+        resolved_broll: tuple[BRollItem, ...] = ()
+        cue_stat_interrupts: tuple[VisualInterrupt, ...] = ()
+        if (
+            use_real_media
+            and active_cfg.enable_broll
+            and semantic_visual_cues
+            and semantic_word_idx_to_ms
+        ):
+            cover_actions = protect_visual_gestures_in_cuts(
+                choreograph_cut_covers(
+                    semantic_cut_times_ms,
+                    shot_profiles,
+                    semantic_visual_cues,
+                    semantic_word_idx_to_ms,
+                    duration_ms=effective_duration_ms,
+                    existing_shot_cuts_ms=effective_shot_cuts,
+                ),
+                visual_groundings,
+            )
+            # Align B-roll cues chosen as cut-covers & downgrade cues overlapping TimeLens2 peaks.
+            aligned_map = dict(semantic_word_idx_to_ms)
+            protected_cues = list(semantic_visual_cues)
+            for act in cover_actions:
+                if act.cue_index is not None and act.cue_index < len(protected_cues):
+                    orig_cue = protected_cues[act.cue_index]
+                    aligned_map[orig_cue.anchor_word_idx] = act.start_ms
+                    if act.kind == "broll_pip" and orig_cue.layout == "broll_fullscreen":
+                        protected_cues[act.cue_index] = replace(orig_cue, layout="broll_pip")
+            resolved_broll, cue_stat_interrupts = resolve_visual_cues_to_broll(
+                protected_cues,
+                aligned_map,
+                duration_ms=effective_duration_ms,
+                cache_dir=active_cfg.broll_cache_dir or DEFAULT_BROLL_CACHE_DIR,
+                broll_dir=active_cfg.broll_dir,
+                enable_web_stock=(active_cfg.director_backend in ("gemini", "local-omni")),
+                enable_ai_images=(active_cfg.director_backend == "gemini"),
+                verify_with_gemini=(active_cfg.director_backend == "gemini"),
+                verify_with_local_vision=(active_cfg.director_backend == "local-omni"),
+                local_vision_url=active_cfg.omni_url,
+                local_vision_model=active_cfg.director_model,
+                ffmpeg=active_cfg.ffmpeg,
+            )
+            # Never overlay floating top_pip (y=150) across a closeup speaker's face/eyes.
+            if resolved_broll and shot_profiles:
+                resolved_broll = tuple(
+                    bi
+                    for bi in resolved_broll
+                    if bi.position != "top_pip"
+                    or not any(
+                        p.shot_scale == "closeup"
+                        and p.start_ms <= (bi.start_ms + bi.duration_ms // 2) < p.end_ms
+                        for p in shot_profiles
+                    )
+                )
+
+        split_windows: tuple[
+            tuple[int, int, tuple[int, int, int, int], tuple[int, int, int, int]], ...
+        ] = (
+            tuple(
+                (p.start_ms, p.end_ms, p.split_crops[0], p.split_crops[1])
+                for p in shot_profiles
+                if p.dual_active_banter and p.split_crops is not None
+            )
+            if active_cfg.enable_banter_split and shot_profiles
+            else ()
+        )
+        if isinstance(active_rnd, DefaultV8ClipRenderer):
+            active_rnd.set_visual_extras(
+                b_roll=resolved_broll,
+                assembly_crossfade_ms=24 if semantic_assembly_spans else 0,
+                split_screen_windows=split_windows,
+            )
         if isinstance(active_sub, DefaultV8SubtitleRenderer) and prepared is not None:
-            if (
+            active_sub.set_split_screen_windows([(s, e) for s, e, _, _ in split_windows])
+            if any(s < 2_400 and e > 0 for s, e, _, _ in split_windows):
+                active_sub.set_hook_y_top_px(76.0)
+            elif (
                 locked_crops
                 and locked_crops[0].face_height_px > 0
                 and (locked_crops[0].face_height_px / float(prepared.source_height)) >= 0.22
@@ -2154,20 +2544,101 @@ def compile_v8_clip(
         )
         dir_out_ms = dir_in_ms + effective_duration_ms
 
+        director_visual_context = format_visual_groundings_for_director(
+            visual_groundings, shot_profiles
+        )
+        dir_kwargs: dict[str, Any] = {
+            "source_mp4": dir_source,
+            "clip_in_ms": dir_in_ms,
+            "clip_out_ms": dir_out_ms,
+            "clip_id": clip_id,
+            "words": effective_words,
+            "shot_cuts_ms": effective_shot_cuts,
+            "jump_cuts_ms": effective_jump_cuts,
+        }
+        if director_visual_context:
+            try:
+                sig = inspect.signature(active_dir.direct_clip)
+                if "visual_context" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                ):
+                    dir_kwargs["visual_context"] = director_visual_context
+            except (TypeError, ValueError):
+                pass
+
         try:
-            script = active_dir.direct_clip(
-                source_mp4=dir_source,
-                clip_in_ms=dir_in_ms,
-                clip_out_ms=dir_out_ms,
-                clip_id=clip_id,
-                words=effective_words,
-                shot_cuts_ms=effective_shot_cuts,
-                jump_cuts_ms=effective_jump_cuts,
-            )
+            script = active_dir.direct_clip(**dir_kwargs)
         except DirectorUnavailable as exc:
             raise V8CompileError(
                 f"V8 director failed ({active_cfg.director_backend}): {exc}"
             ) from exc
+
+        # Prefer Story Architect's full-episode Kurdish hook title when supplied in Kurdish script.
+        if (
+            semantic_hook_title_ckb
+            and semantic_hook_title_ckb.strip()
+            and _ARABIC_KURDISH_RE.search(semantic_hook_title_ckb) is not None
+        ):
+            script = DirectorScript(
+                clip_id=script.clip_id,
+                hook_title_ckb=semantic_hook_title_ckb.strip(),
+                word_repairs=script.word_repairs,
+                cuts=script.cuts,
+                camera_moves=script.camera_moves,
+                caption_beats=script.caption_beats,
+                visual_interrupts=script.visual_interrupts,
+                cold_open_span_ms=script.cold_open_span_ms,
+            )
+        auto_stat_interrupts: tuple[VisualInterrupt, ...] = ()
+        if use_real_media and director is None and effective_words:
+            raw_auto_stats = extract_kurdish_stat_interrupts(
+                effective_words,
+                duration_ms=effective_duration_ms,
+                existing_interrupts=(*script.visual_interrupts, *cue_stat_interrupts),
+                occupied_broll_ms=tuple(
+                    (bi.start_ms, bi.start_ms + bi.duration_ms) for bi in resolved_broll
+                ),
+                max_cards=max(0, 2 - len(script.visual_interrupts) - len(cue_stat_interrupts)),
+            )
+            routed_stats: list[VisualInterrupt] = []
+            for svi in raw_auto_stats:
+                mid = (svi.start_ms + svi.end_ms) // 2
+                prof = next((p for p in shot_profiles if p.start_ms <= mid < p.end_ms), None)
+                if prof is not None and prof.shot_scale == "closeup":
+                    if prof.safe_overlay_zone == "chest":
+                        routed_stats.append(
+                            VisualInterrupt(
+                                start_ms=svi.start_ms,
+                                end_ms=svi.end_ms,
+                                text_ckb=svi.text_ckb,
+                                position="chest",
+                            )
+                        )
+                    # Skip top Stat Card on closeup shots with active hand gestures (face-safe).
+                else:
+                    routed_stats.append(svi)
+            auto_stat_interrupts = tuple(routed_stats)
+
+        all_extra_stats = (*cue_stat_interrupts, *auto_stat_interrupts)
+        if all_extra_stats:
+            merged_vis = list(script.visual_interrupts)
+            for cvi in all_extra_stats:
+                if len(merged_vis) >= 3:
+                    break
+                if all(abs(cvi.start_ms - ex.start_ms) >= 6_000 for ex in merged_vis):
+                    merged_vis.append(cvi)
+            merged_vis.sort(key=lambda v: v.start_ms)
+            if tuple(merged_vis) != script.visual_interrupts:
+                script = DirectorScript(
+                    clip_id=script.clip_id,
+                    hook_title_ckb=script.hook_title_ckb,
+                    word_repairs=script.word_repairs,
+                    cuts=script.cuts,
+                    camera_moves=script.camera_moves,
+                    caption_beats=script.caption_beats,
+                    visual_interrupts=tuple(merged_vis),
+                    cold_open_span_ms=script.cold_open_span_ms,
+                )
 
         # Augment multimodal Director repairs with deterministic Sorani ASR orthography fixes
         # on untouched word indices (Director's audio-grounded repairs always win on overlap).
@@ -2226,6 +2697,39 @@ def compile_v8_clip(
                     visual_interrupts=cur.visual_interrupts,
                     cold_open_span_ms=cur.cold_open_span_ms,
                 )
+            if prepared is not None and locked_crops and effective_script.visual_interrupts:
+                src_h_f = float(prepared.source_height)
+                placed_vis = []
+                changed_vis = False
+                for vi in effective_script.visual_interrupts:
+                    new_pos = vi.position
+                    if new_pos == "top":
+                        cov = next(
+                            (c for c in locked_crops if c.start_ms <= vi.start_ms < c.end_ms),
+                            locked_crops[0],
+                        )
+                        if cov.face_height_px > 0 and (cov.face_height_px / src_h_f) >= 0.22:
+                            new_pos = "chest"
+                            changed_vis = True
+                    placed_vis.append(
+                        VisualInterrupt(
+                            start_ms=vi.start_ms,
+                            end_ms=vi.end_ms,
+                            text_ckb=vi.text_ckb,
+                            position=new_pos,
+                        )
+                    )
+                if changed_vis:
+                    effective_script = DirectorScript(
+                        clip_id=effective_script.clip_id,
+                        hook_title_ckb=effective_script.hook_title_ckb,
+                        word_repairs=effective_script.word_repairs,
+                        cuts=effective_script.cuts,
+                        camera_moves=effective_script.camera_moves,
+                        caption_beats=effective_script.caption_beats,
+                        visual_interrupts=tuple(placed_vis),
+                        cold_open_span_ms=effective_script.cold_open_span_ms,
+                    )
             repaired = apply_word_repairs(effective_words, effective_script.word_repairs)
             cam_flt, cam_jumps = compile_restrained_camera_filter(
                 effective_duration_ms,

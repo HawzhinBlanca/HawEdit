@@ -216,13 +216,13 @@ class CandidateScreener(Protocol):
 
 
 class GeminiFlashScreener:
-    """Screener backed by Gemini 2.5 Flash / Flash-Lite using structured JSON schema."""
+    """Screener backed by Gemini 4 Hydrogen using structured JSON schema."""
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
-        model_id: str = "gemini-2.5-flash-lite",
+        model_id: str = "gemini-4-hydrogen",
         transport: Callable[[urllib.request.Request], bytes] | None = None,
     ) -> None:
         self.model_id = model_id

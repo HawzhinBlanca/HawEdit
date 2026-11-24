@@ -231,30 +231,58 @@ def _speech_band_envelope(audio_16k: NDArray[np.float32]) -> NDArray[np.float32]
 def _compute_mfcc_16k(
     audio_16k: NDArray[np.float32], n_mfcc: int = _LIGHT_ASD_MFCC
 ) -> NDArray[np.float32]:
-    pre = audio_16k.copy()
+    """Compute python_speech_features-compatible 16 kHz MFCCs for LR-ASD / Light-ASD ONNX."""
+    sig = audio_16k.astype(np.float64) * 32768.0
+    pre = sig.copy()
     if pre.size > 1:
-        pre[1:] = audio_16k[1:] - 0.97 * audio_16k[:-1]
+        pre[1:] = sig[1:] - 0.97 * sig[:-1]
     win, hop, n_fft, n_mels = _SR * _WIN_MS // 1000, _SR * _HOP_MS // 1000, 512, 26
-    frames = _frame_audio(pre, win, hop) * np.hamming(win).astype(np.float32)[None, :]
-    power = (np.abs(np.fft.rfft(frames, n=n_fft, axis=1)) ** 2) / float(n_fft)
+    frames = _frame_audio(pre.astype(np.float32), win, hop).astype(np.float64)
+    pspec = (np.abs(np.fft.rfft(frames, n=n_fft, axis=1)) ** 2) / float(n_fft)
+    eps = float(np.finfo(np.float64).eps)
+    energy = np.maximum(np.sum(pspec, axis=1), eps)
 
     hi_mel = 2595.0 * math.log10(1.0 + (_SR / 2.0) / 700.0)
     hz = 700.0 * (10.0 ** (np.linspace(0.0, hi_mel, n_mels + 2) / 2595.0) - 1.0)
     bins = np.floor((n_fft + 1) * hz / _SR).astype(np.intp)
-    fbank = np.zeros((n_mels, n_fft // 2 + 1), dtype=np.float32)
+    fbank = np.zeros((n_mels, n_fft // 2 + 1), dtype=np.float64)
     for m in range(1, n_mels + 1):
         lo, c, hi = int(bins[m - 1]), int(bins[m]), int(bins[m + 1])
         if c > lo:
             fbank[m - 1, lo:c] = (np.arange(lo, c) - lo) / float(c - lo)
         if hi > c:
             fbank[m - 1, c:hi] = (hi - np.arange(c, hi)) / float(hi - c)
-    log_mel = np.log(np.maximum(power @ fbank.T, 1e-10))
+    log_mel = np.log(np.maximum(pspec @ fbank.T, eps))
     n_i = np.arange(n_mels, dtype=np.float64)[:, None]
     k_i = np.arange(n_mfcc, dtype=np.float64)[None, :]
-    dct = (np.cos(math.pi * (n_i + 0.5) * k_i / n_mels) * math.sqrt(2.0 / n_mels)).astype(
-        np.float32
-    )
-    return np.asarray(log_mel @ dct, dtype=np.float32)
+    dct = np.cos(math.pi * (2.0 * n_i + 1.0) * k_i / (2.0 * n_mels)) * math.sqrt(2.0 / n_mels)
+    dct[:, 0] *= math.sqrt(0.5)
+    cep = log_mel @ dct
+    lift = 1.0 + 11.0 * np.sin(math.pi * np.arange(n_mfcc, dtype=np.float64) / 22.0)
+    cep *= lift[None, :]
+    cep[:, 0] = np.log(energy)
+    return np.asarray(cep, dtype=np.float32)
+
+
+def _extract_lr_asd_crop(gray: NDArray[np.uint8], det: FaceDetectionFrame) -> NDArray[np.float32]:
+    """Extract LR-ASD / Light-ASD official cropScale=0.40 -> 224 -> center 112x112 [0, 255] crop."""
+    cs = 0.40
+    bs = max(det.w, det.h) * 0.5
+    if bs < 1.0:
+        return np.zeros((_LIGHT_ASD_IMG, _LIGHT_ASD_IMG), dtype=np.float32)
+    bsi = max(2, int(bs * (1.0 + 2.0 * cs)) + 2)
+    padded = np.pad(gray, ((bsi, bsi), (bsi, bsi)), mode="constant", constant_values=110)
+    my = det.cy + bsi
+    mx = det.cx + bsi
+    y0 = max(0, int(my - bs))
+    y1 = max(y0 + 1, min(padded.shape[0], int(my + bs * (1.0 + 2.0 * cs))))
+    x0 = max(0, int(mx - bs * (1.0 + cs)))
+    x1 = max(x0 + 1, min(padded.shape[1], int(mx + bs * (1.0 + cs))))
+    face = padded[y0:y1, x0:x1]
+    if face.size == 0:
+        return np.zeros((_LIGHT_ASD_IMG, _LIGHT_ASD_IMG), dtype=np.float32)
+    r224 = cv2.resize(face, (224, 224), interpolation=cv2.INTER_AREA)
+    return np.asarray(r224[56:168, 56:168], dtype=np.float32)
 
 
 def _decode_gray_frames(
@@ -538,21 +566,26 @@ def _score_with_light_asd_onnx(
     for track_id, items in by_track.items():
         ordered = sorted(items, key=lambda pair: pair[1].at_ms)
         t_len = len(ordered)
-        crops = np.stack(
-            [
-                _extract_roi(
-                    gray_frames[d.at_ms], d, (_LIGHT_ASD_IMG, _LIGHT_ASD_IMG), full_face=True
-                )
-                for _, d in ordered
-            ],
-            axis=0,
-        )
-        vis_arr = (crops * 2.0 - 1.0).astype(np.float32)
-        vis_tensor: NDArray[np.float32] = (
-            vis_arr.reshape(1, 1, t_len, _LIGHT_ASD_IMG, _LIGHT_ASD_IMG)
-            if len(vis_in.shape) == 5
-            else vis_arr.reshape(1, t_len, _LIGHT_ASD_IMG, _LIGHT_ASD_IMG)
-        )
+        is_4d_native = len(vis_in.shape) == 4
+        vis_tensor: NDArray[np.float32]
+        if is_4d_native:
+            crops_u8 = np.stack(
+                [_extract_lr_asd_crop(gray_frames[d.at_ms], d) for _, d in ordered],
+                axis=0,
+            )
+            vis_tensor = crops_u8.reshape(1, t_len, _LIGHT_ASD_IMG, _LIGHT_ASD_IMG)
+        else:
+            crops = np.stack(
+                [
+                    _extract_roi(
+                        gray_frames[d.at_ms], d, (_LIGHT_ASD_IMG, _LIGHT_ASD_IMG), full_face=True
+                    )
+                    for _, d in ordered
+                ],
+                axis=0,
+            )
+            vis_arr = (crops * 2.0 - 1.0).astype(np.float32)
+            vis_tensor = vis_arr.reshape(1, 1, t_len, _LIGHT_ASD_IMG, _LIGHT_ASD_IMG)
         aud_arr = np.zeros((4 * t_len, _LIGHT_ASD_MFCC), dtype=np.float32)
         for fi, (_, det) in enumerate(ordered):
             base = det.at_ms // _HOP_MS
@@ -572,11 +605,10 @@ def _score_with_light_asd_onnx(
         if not raw_out:
             raise ActiveSpeakerError("Light-ASD ONNX model returned no outputs")
         arr = np.asarray(raw_out[0], dtype=np.float32)
-        flat = (
-            (arr[..., 1] - arr[..., 0]).reshape(-1)
-            if arr.ndim >= 2 and arr.shape[-1] == 2
-            else arr.reshape(-1)
+        is_two_class = (arr.ndim >= 3 and arr.shape[-1] == 2) or (
+            arr.ndim == 2 and arr.shape[-1] == 2 and arr.shape[0] == t_len and t_len > 1
         )
+        flat = (arr[..., 1] - arr[..., 0]).reshape(-1) if is_two_class else arr.reshape(-1)
         if flat.size < t_len:
             raise ActiveSpeakerError(f"Light-ASD ONNX output length {flat.size} < {t_len}")
         for fi, (orig_idx, det) in enumerate(ordered):

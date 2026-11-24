@@ -68,7 +68,7 @@ from hawedit.silence import (
     audio_cut_fade_filters,
     silence_trim_filter,
 )
-from hawedit.sound_design import write_cinema_sfx_wav
+from hawedit.sound_design import MusicMood, write_cinema_sfx_wav
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -1601,14 +1601,15 @@ def assert_asset_provenance(asset_path: Path) -> None:
 
 @dataclass(frozen=True, slots=True)
 class BRollItem:
-    """A contextual B-roll cutaway item (image or video) overlaid on the reel (Task 5, ADR D-273).
+    """A contextual B-roll cutaway item (image or video) overlaid on the reel (D-273, D-394).
 
     Parameters:
         path: Path to the media asset (image or video).
         start_ms: Offset in milliseconds from the start of the rendered clip.
         duration_ms: Duration in milliseconds for the cutaway overlay (default 2500 ms).
-        position: 'center', 'upper', or 'top' (default 'upper').
+        position: 'center', 'upper', 'top', 'top_pip', or 'fullscreen' (default 'upper').
         width: Rendered width in pixels on the 1080x1920 canvas (default 920).
+        ken_burns: Enable subtle 1.00->1.07 Ken Burns zoom on still images (default False).
     """
 
     path: Path
@@ -1616,6 +1617,7 @@ class BRollItem:
     duration_ms: int = 2500
     position: str = "upper"
     width: int = 920
+    ken_burns: bool = False
 
     def __post_init__(self) -> None:
         if not self.path.is_file():
@@ -1626,8 +1628,129 @@ class BRollItem:
             raise ValueError(f"duration_ms must be positive, got {self.duration_ms}")
         if self.width <= 0 or self.width > VERTICAL_WIDTH:
             raise ValueError(f"width must be in (0, {VERTICAL_WIDTH}], got {self.width}")
-        if self.position not in ("upper", "center", "top"):
-            raise ValueError(f"position must be 'upper', 'center', or 'top', got {self.position!r}")
+        if self.position not in ("upper", "center", "top", "top_pip", "fullscreen"):
+            raise ValueError(
+                "position must be 'upper', 'center', 'top', 'top_pip', or 'fullscreen', "
+                f"got {self.position!r}"
+            )
+
+
+_BROLL_VIDEO_SUFFIXES: Final[frozenset[str]] = frozenset({".mp4", ".mov", ".mkv", ".webm"})
+
+
+def build_broll_overlay_clause(
+    input_idx: int,
+    item: BRollItem,
+    slot_idx: int,
+    v_current: str,
+    *,
+    fps: float = 25.0,
+) -> tuple[str, str]:
+    """Build FFmpeg filtergraph clause for image/video B-roll (upper, top_pip, fullscreen)."""
+    b_dur_s = item.duration_ms / 1000.0
+    b_st_s = item.start_ms / 1000.0
+    b_end_s = b_st_s + b_dur_s
+    fade_d = min(0.22, b_dur_s / 3.0)
+    b_out_tag = f"broll_out_{slot_idx}"
+    v_next = f"[v_brolled_{slot_idx}]"
+    is_video = item.path.suffix.lower() in _BROLL_VIDEO_SUFFIXES
+    total_frames = max(2, int(round(b_dur_s * fps)))
+
+    if item.position == "fullscreen":
+        if is_video:
+            prep_core = (
+                f"trim=duration={b_dur_s:.3f},setpts=PTS-STARTPTS,"
+                f"scale={VERTICAL_WIDTH}:{VERTICAL_HEIGHT}:force_original_aspect_ratio=increase,"
+                f"crop={VERTICAL_WIDTH}:{VERTICAL_HEIGHT},fps={fps:g},format=rgba"
+            )
+        elif item.ken_burns:
+            kb_w, kb_h = VERTICAL_WIDTH * 2, VERTICAL_HEIGHT * 2
+            prep_core = (
+                f"scale={kb_w}:{kb_h}:force_original_aspect_ratio=increase,"
+                f"crop={kb_w}:{kb_h},"
+                f"zoompan=z='1.0+0.07*on/{total_frames}':x='iw/2-(iw/zoom/2)':"
+                f"y='ih/2-(ih/zoom/2)':d={total_frames}:s={VERTICAL_WIDTH}x{VERTICAL_HEIGHT}:"
+                f"fps={fps:g},format=rgba"
+            )
+        else:
+            prep_core = (
+                f"loop=loop=-1:size=2,"
+                f"scale={VERTICAL_WIDTH}:{VERTICAL_HEIGHT}:force_original_aspect_ratio=increase,"
+                f"crop={VERTICAL_WIDTH}:{VERTICAL_HEIGHT},format=rgba"
+            )
+        broll_prep = (
+            f"[{input_idx}:v]{prep_core},"
+            f"drawbox=x=0:y=1240:w={VERTICAL_WIDTH}:h=380:color=black@0.38:t=fill,"
+            f"setpts=PTS-STARTPTS+{b_st_s:.3f}/TB,"
+            f"fade=t=in:st={b_st_s:.3f}:d={fade_d:.3f}:alpha=1,"
+            f"fade=t=out:st={b_end_s - fade_d:.3f}:d={fade_d:.3f}:alpha=1[{b_out_tag}];"
+        )
+        broll_overlay = (
+            f"{v_current}[{b_out_tag}]overlay=x=0:y=0:"
+            f"enable='between(t,{b_st_s:.3f},{b_end_s:.3f})':eof_action=pass{v_next};"
+        )
+        return f"{broll_prep}{broll_overlay}", v_next
+
+    if item.position == "top_pip":
+        pip_w = max(320, min(920, item.width - (item.width % 2)))
+        pip_h = max(240, min(520, int(round(pip_w * 9.0 / 16.0)) // 2 * 2))
+        pip_r = 28
+        # Smooth 28 px anti-aliased rounded-corner alpha mask with crisp 3 px brand-gold rim.
+        rounded_alpha = (
+            f"pad=iw+6:ih+6:3:3:color=0xFFD700@0.92,format=rgba,"
+            f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            f"a='if(gt(abs(W/2-X),W/2-{pip_r})*gt(abs(H/2-Y),H/2-{pip_r}),"
+            f"clip(({pip_r}-hypot({pip_r}-(W/2-abs(W/2-X)),{pip_r}-(H/2-abs(H/2-Y))))*170,0,255),"
+            f"255)'"
+        )
+        if is_video:
+            prep_core = (
+                f"trim=duration={b_dur_s:.3f},setpts=PTS-STARTPTS,"
+                f"scale={pip_w}:{pip_h}:force_original_aspect_ratio=increase,"
+                f"crop={pip_w}:{pip_h},fps={fps:g},{rounded_alpha}"
+            )
+        elif item.ken_burns:
+            prep_core = (
+                f"scale={pip_w * 2}:{pip_h * 2}:force_original_aspect_ratio=increase,"
+                f"crop={pip_w * 2}:{pip_h * 2},"
+                f"zoompan=z='1.0+0.06*on/{total_frames}':x='iw/2-(iw/zoom/2)':"
+                f"y='ih/2-(ih/zoom/2)':d={total_frames}:s={pip_w}x{pip_h}:fps={fps:g},"
+                f"{rounded_alpha}"
+            )
+        else:
+            prep_core = (
+                f"loop=loop=-1:size=2,"
+                f"scale={pip_w}:{pip_h}:force_original_aspect_ratio=increase,"
+                f"crop={pip_w}:{pip_h},{rounded_alpha}"
+            )
+        broll_prep = (
+            f"[{input_idx}:v]{prep_core},setpts=PTS-STARTPTS+{b_st_s:.3f}/TB,"
+            f"fade=t=in:st={b_st_s:.3f}:d={fade_d:.3f}:alpha=1,"
+            f"fade=t=out:st={b_end_s - fade_d:.3f}:d={fade_d:.3f}:alpha=1[{b_out_tag}];"
+        )
+        broll_overlay = (
+            f"{v_current}[{b_out_tag}]overlay=x=(W-w)/2:y=150:"
+            f"enable='between(t,{b_st_s:.3f},{b_end_s:.3f})':eof_action=pass{v_next};"
+        )
+        return f"{broll_prep}{broll_overlay}", v_next
+
+    b_y = "120" if item.position == "top" else ("(H-h)/2" if item.position == "center" else "280")
+    loop_part = (
+        f"trim=duration={b_dur_s:.3f},setpts=PTS-STARTPTS,fps={fps:g},"
+        if is_video
+        else "loop=loop=-1:size=2,"
+    )
+    broll_prep = (
+        f"[{input_idx}:v]format=rgba,{loop_part}"
+        f"scale={item.width}:-2,setpts=PTS-STARTPTS+{b_st_s:.3f}/TB,"
+        f"fade=t=in:st={b_st_s:.3f}:d={fade_d:.3f}:alpha=1,"
+        f"fade=t=out:st={b_end_s - fade_d:.3f}:d={fade_d:.3f}:alpha=1[{b_out_tag}];"
+    )
+    broll_overlay = (
+        f"{v_current}[{b_out_tag}]overlay=x=(W-w)/2:y={b_y}:"
+        f"enable='between(t,{b_st_s:.3f},{b_end_s:.3f})':eof_action=repeat{v_next};"
+    )
+    return f"{broll_prep}{broll_overlay}", v_next
 
 
 @dataclass(frozen=True, slots=True)
@@ -1830,7 +1953,15 @@ def render_clip(
     target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
     cinema_motion: str | None = None,
     cinema_sfx_events_ms: Sequence[int] | None = None,
+    cinema_pop_events_ms: Sequence[int] = (),
+    cinema_music_mood: str = "none",
+    cinema_speech_intervals_ms: Sequence[tuple[int, int]] = (),
     subtitle_overlay_path: Path | None = None,
+    assembly_crossfade_ms: int = 0,
+    split_screen_windows: Sequence[
+        tuple[int, int, tuple[int, int, int, int], tuple[int, int, int, int]]
+    ] = (),
+    cinema_riser_events_ms: Sequence[int] = (),
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -2072,9 +2203,18 @@ def render_clip(
     has_b_roll = len(b_roll) > 0
     has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
     has_music = music_bed_path is not None
-    has_sfx = cinema_sfx_events_ms is not None and not has_music and effective_duration_ms >= 3_000
+    has_sfx = (
+        (
+            cinema_sfx_events_ms is not None
+            or bool(cinema_riser_events_ms)
+            or cinema_music_mood != "none"
+        )
+        and not has_music
+        and effective_duration_ms >= 3_000
+    )
     has_assembly = assembly_spans is not None and len(assembly_spans) > 0
     has_sub_overlay = subtitle_overlay_path is not None
+    has_split_windows = len(split_screen_windows) > 0
 
     current_input_idx = 1
     logo_input_idx: int | None = None
@@ -2100,13 +2240,22 @@ def render_clip(
 
     sfx_wav_path: Path | None = None
     sfx_input_idx: int | None = None
-    if has_sfx and cinema_sfx_events_ms is not None:
+    if has_sfx:
         sfx_wav_path = staging.with_suffix(".sfx.wav")
+        mood_val: MusicMood = (
+            cinema_music_mood  # type: ignore[assignment]
+            if cinema_music_mood in ("none", "curious", "cinematic", "energetic")
+            else "none"
+        )
         write_cinema_sfx_wav(
             sfx_wav_path,
             effective_duration_ms,
-            transition_ms=cinema_sfx_events_ms,
+            transition_ms=cinema_sfx_events_ms or (),
+            pop_ms=cinema_pop_events_ms,
+            riser_ms=cinema_riser_events_ms,
             sample_rate=DELIVERY_AUDIO_RATE,
+            music_mood=mood_val,
+            speech_intervals_ms=cinema_speech_intervals_ms,
         )
         extra_inputs.extend(["-i", str(sfx_wav_path)])
         sfx_input_idx = current_input_idx
@@ -2131,14 +2280,14 @@ def render_clip(
         or has_assembly
         or has_b_roll
         or has_sub_overlay
+        or has_split_windows
     ):
         framed_before_silence = False
         if has_assembly and assembly_spans is not None:
             from hawedit.assembly import assembled_splice_filter
 
-            trim_prefix = (
-                f"{assembled_splice_filter(assembly_spans)};[v_concat]fps={clip_fps}[v_cfr];"
-            )
+            splice_str = assembled_splice_filter(assembly_spans, crossfade_ms=assembly_crossfade_ms)
+            trim_prefix = f"{splice_str};[v_concat]fps={clip_fps}[v_cfr];"
             v_in = "[v_cfr]"
             a_in = "[a_concat]"
         elif has_silence and silence_plan is not None:
@@ -2166,6 +2315,42 @@ def render_clip(
             v_in = "[0:v]"
             a_in = "[0:a]"
 
+        # Optional per-window 50/50 banter split-screen overlay (V10.2 D-394): composites
+        # top+bottom tracked speaker crops over the standard active-speaker crop during banter.
+        if has_split_windows and not framed_before_silence:
+            split_clauses: list[str] = [f"{v_in}split={len(split_screen_windows) + 1}[v_sp_main]"]
+            split_src_tags = [f"[v_sp_src_{i}]" for i in range(len(split_screen_windows))]
+            split_clauses[0] += "".join(split_src_tags)
+            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                split_clauses.append(f"[v_sp_main]{video_filter}[v_sp_cur_0]")
+            else:
+                split_clauses.append(f"[v_sp_main]{video_filter}[v_sp_cur_0]")
+            pane_h = VERTICAL_HEIGHT // 2
+            scale_flags = ":flags=lanczos" if deliverable else ""
+            for w_idx, (sw_s, sw_e, top_c, bot_c) in enumerate(split_screen_windows):
+                tx, ty, tw, th = top_c
+                bx, by, bw, bh = bot_c
+                s_s = sw_s / 1000.0
+                e_s = max(s_s + 0.01, (sw_e - 5) / 1000.0)
+                cur_tag = f"[v_sp_cur_{w_idx}]"
+                nxt_tag = f"[v_sp_cur_{w_idx + 1}]"
+                split_clauses.append(
+                    f"[v_sp_src_{w_idx}]split=2[sp_t_{w_idx}][sp_b_{w_idx}];"
+                    f"[sp_t_{w_idx}]crop={tw}:{th}:{tx}:{ty},"
+                    f"scale={VERTICAL_WIDTH}:{pane_h}{scale_flags}[sp_tp_{w_idx}];"
+                    f"[sp_b_{w_idx}]crop={bw}:{bh}:{bx}:{by},"
+                    f"scale={VERTICAL_WIDTH}:{pane_h}{scale_flags}[sp_bp_{w_idx}];"
+                    f"[sp_tp_{w_idx}][sp_bp_{w_idx}]vstack=inputs=2,"
+                    f"drawbox=x=0:y={pane_h - 2}:w={VERTICAL_WIDTH}:h=4:color=0xFFD700@0.95:t=fill"
+                    f"[sp_comp_{w_idx}];"
+                    f"{cur_tag}[sp_comp_{w_idx}]overlay=0:0:"
+                    f"enable='gte(t,{s_s:.3f})*lt(t,{e_s:.3f})'"
+                    f"{nxt_tag}"
+                )
+            trim_prefix += ";".join(split_clauses) + ";"
+            v_in = f"[v_sp_cur_{len(split_screen_windows)}]"
+            framed_before_silence = True
+
         if has_b_roll:
             if framed_before_silence:
                 if cinema_motion:
@@ -2185,29 +2370,10 @@ def render_clip(
                 v_current = "[v_cut]"
             broll_steps = ""
             for idx, (b_in_idx, b_item) in enumerate(b_roll_inputs):
-                b_dur_s = b_item.duration_ms / 1000.0
-                b_st_s = b_item.start_ms / 1000.0
-                b_end_s = b_st_s + b_dur_s
-                fade_d = min(0.2, b_dur_s / 3.0)
-                b_y = (
-                    "120"
-                    if b_item.position == "top"
-                    else ("(H-h)/2" if b_item.position == "center" else "280")
+                clause, v_current = build_broll_overlay_clause(
+                    b_in_idx, b_item, idx, v_current, fps=clip_fps
                 )
-                b_out_tag = f"broll_out_{idx}"
-                v_next = f"[v_brolled_{idx}]"
-                broll_prep = (
-                    f"[{b_in_idx}:v]format=rgba,loop=loop=-1:size=2,"
-                    f"scale={b_item.width}:-2,setpts=PTS-STARTPTS+{b_st_s}/TB,"
-                    f"fade=t=in:st={b_st_s:.3f}:d={fade_d:.3f}:alpha=1,"
-                    f"fade=t=out:st={b_end_s - fade_d:.3f}:d={fade_d:.3f}:alpha=1[{b_out_tag}];"
-                )
-                broll_overlay = (
-                    f"{v_current}[{b_out_tag}]overlay=x=(W-w)/2:y={b_y}:"
-                    f"enable='between(t,{b_st_s:.3f},{b_end_s:.3f})':eof_action=repeat{v_next};"
-                )
-                broll_steps += f"{broll_prep}{broll_overlay}"
-                v_current = v_next
+                broll_steps += clause
             if has_sub_overlay and sub_overlay_input_idx is not None:
                 v_sub_chain = (
                     f"[{sub_overlay_input_idx}:v]format=rgba[v_sub_ov];"
@@ -2314,9 +2480,9 @@ def render_clip(
         elif has_sfx and sfx_input_idx is not None:
             a_chain = (
                 f"[{sfx_input_idx}:a]aformat=channel_layouts=stereo[sfx_st];"
-                f"{a_in}aformat=channel_layouts=stereo[dia_st];"
-                f"[dia_st][sfx_st]amix=inputs=2:duration=first:dropout_transition=0:normalize=0"
-                f"[a_sfx];[a_sfx]{speech_af}[a_out]"
+                f"{a_in}aformat=channel_layouts=stereo,{speech_af}[dia_norm];"
+                f"[dia_norm][sfx_st]amix=inputs=2:duration=first:dropout_transition=0:normalize=0"
+                f"[a_out]"
             )
         else:
             a_chain = f"{a_in}{speech_af}[a_out]"

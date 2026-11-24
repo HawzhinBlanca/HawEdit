@@ -17,12 +17,12 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from hawedit.atomic_fs import write_text_atomic
 from hawedit.audio_signals import SentenceAudioMetrics, analyze_sentence_audio
 from hawedit.captions import find_ffmpeg
-from hawedit.ingest import extract_audio, ingest
+from hawedit.ingest import extract_audio, ingest, probe_duration_ms
 from hawedit.normalize import normalize_sorani
 from hawedit.sentences import DANGLING_CONJUNCTIONS_CKB, Sentence, segment_sentences
 from hawedit.transcripts import NormalizedTranscript, TranscriptStore, Word
@@ -41,6 +41,13 @@ from hawedit.v8.delivery_pack import (
     verify_client_pack_complete,
     write_client_delivery_pack,
     write_client_review_html,
+)
+from hawedit.v8.story_editor import (
+    StoryEditorError,
+    compile_story_to_assembly_spans,
+    plan_episode_multicut_stories,
+    refine_story_pruning,
+    verify_story_meaning_preservation,
 )
 
 __all__ = [
@@ -186,6 +193,13 @@ class V8EpisodeConfig:
     ffmpeg: Path | None = None
     omni_asr_runtime: str = "auto"
     wsl_distro: str | None = None
+    story_mode: Literal["auto", "semantic-multicut", "legacy"] = "auto"
+    enable_broll: bool = True
+    broll_dir: Path | None = None
+    enable_banter_split: bool = True
+    music_mood: Literal["none", "curious", "cinematic", "energetic"] = "none"
+    overgenerate_candidates: bool = True
+    enable_local_vlm: bool = True
 
     def __post_init__(self) -> None:
         if self.director not in _DIRECTOR_BACKENDS:
@@ -316,6 +330,7 @@ class V8EpisodeResult:
     review_html_path: Path
     total_wall_s: float
     all_grills_passed: bool
+    quarantined: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -325,11 +340,13 @@ class V8EpisodeResult:
             "transcript_path": str(self.transcript_path) if self.transcript_path else None,
             "director": self.director,
             "clip_count": len(self.clips),
+            "quarantined_count": len(self.quarantined),
             "all_grills_passed": self.all_grills_passed,
             "total_wall_s": round(self.total_wall_s, 3),
             "episode_json_path": str(self.episode_json_path),
             "review_html_path": str(self.review_html_path),
             "clips": [c.to_dict() for c in self.clips],
+            "quarantined": list(self.quarantined),
         }
 
 
@@ -628,6 +645,11 @@ def _build_compile_config(cfg: V8EpisodeConfig) -> V8CompileConfig:
         "end_card_subtitle_ckb": cfg.end_card_subtitle_ckb,
         "end_card_handle": cfg.end_card_handle,
         "local_modality": cfg.local_modality,
+        "enable_broll": cfg.enable_broll,
+        "broll_dir": cfg.broll_dir,
+        "enable_banter_split": cfg.enable_banter_split,
+        "music_mood": cfg.music_mood,
+        "enable_local_vlm": cfg.enable_local_vlm,
         # Keep .v8.overlay.mov until write_client_delivery_pack verifies & reclaims it (D-390).
         "keep_overlay": True,
     }
@@ -831,7 +853,208 @@ def compile_v8_episode(
         all_sentences if sentence_ranges is not None else _subsegment_long_utterances(all_sentences)
     )
 
-    # 2. Select top viral arcs (explicit override | Gemini Path A | deterministic offline).
+    # 2. Select top viral arcs (override | V10.2 semantic-multicut | legacy Path A / offline).
+    use_semantic_multicut = sentence_ranges is None and (
+        cfg.story_mode == "semantic-multicut"
+        or (
+            cfg.story_mode == "auto"
+            and cfg.director in ("gemini", "local-omni")
+            and gemini_discoverer is None
+        )
+    )
+    if use_semantic_multicut:
+        if cfg.director == "gemini":
+            story_backend: Literal["gemini", "local-omni"] = "gemini"
+        elif cfg.director == "local-omni":
+            story_backend = "local-omni"
+        else:
+            raise V8EpisodeError(
+                "story_mode='semantic-multicut' requires --director gemini or --director local-omni"
+            )
+        if resolved_wav_path is None:
+            ffmpeg_bin = cfg.ffmpeg or find_ffmpeg()
+            if ffmpeg_bin is not None:
+                work_dir.mkdir(parents=True, exist_ok=True)
+                resolved_wav_path = extract_audio(source, work_dir / "audio.wav", ffmpeg=ffmpeg_bin)
+        ffmpeg_bin = cfg.ffmpeg or find_ffmpeg()
+        src_dur_ms = probe_duration_ms(source, ffmpeg_bin) if ffmpeg_bin is not None else None
+        plan_count = cfg.max_clips + 2 if cfg.overgenerate_candidates else cfg.max_clips
+        try:
+            recipes = plan_episode_multicut_stories(
+                words,
+                backend=story_backend,
+                max_stories=plan_count,
+                min_duration_ms=cfg.min_duration_ms,
+                max_duration_ms=cfg.max_duration_ms,
+                audio_wav=resolved_wav_path,
+                model_id=cfg.director_model,
+                base_url=cfg.omni_url,
+            )
+        except StoryEditorError as exc:
+            raise V8EpisodeError(f"V11 semantic multi-cut planning failed: {exc}") from exc
+
+        compile_cfg = _build_compile_config(cfg)
+        compiler_fn = clip_compiler if clip_compiler is not None else compile_v8_clip
+        sem_items: list[V8EpisodeClipItem] = []
+        quarantined_items: list[dict[str, Any]] = []
+        total_arcs = len(recipes)
+        for cand_idx, raw_recipe in enumerate(recipes, start=1):
+            if len(sem_items) >= cfg.max_clips:
+                break
+            rank = len(sem_items) + 1
+            clip_t0 = time.monotonic()
+            if on_progress is not None:
+                start_pct = 35 + int(((cand_idx - 1) / max(1, total_arcs)) * 55)
+                on_progress(f"v8_clip_{rank}_of_{cfg.max_clips}", "started", start_pct)
+            clip_id = f"{media_id}-r{rank:02d}-mc"
+            try:
+                refined_recipe = refine_story_pruning(
+                    words,
+                    raw_recipe,
+                    backend=story_backend,
+                    model_id=cfg.director_model,
+                    base_url=cfg.omni_url,
+                )
+                verified_recipe, verify_res = verify_story_meaning_preservation(
+                    words,
+                    refined_recipe,
+                    backend=story_backend,
+                    model_id=cfg.director_model if story_backend == "local-omni" else None,
+                    base_url=cfg.omni_url,
+                )
+                compiled = compile_story_to_assembly_spans(
+                    words,
+                    verified_recipe,
+                    audio_wav=resolved_wav_path,
+                    source_duration_ms=src_dur_ms,
+                )
+                clip_in_ms = min(sp.source_in_ms for sp in compiled.assembly_spans)
+                clip_out_ms = max(sp.source_out_ms for sp in compiled.assembly_spans)
+                co_tag = (
+                    f" cold_open={compiled.cold_open_end_ms}ms"
+                    if compiled.cold_open_end_ms is not None
+                    else ""
+                )
+                reason = (
+                    f"v11-semantic-multicut beats={len(verified_recipe.keep_spans)} "
+                    f"spans={len(compiled.assembly_spans)} drops={compiled.dropped_word_count} "
+                    f"restored={len(verify_res.restored_drop_indices)} "
+                    f"cues={len(verified_recipe.visual_cues)}{co_tag}"
+                )
+                compile_res = compiler_fn(
+                    source_mp4=source,
+                    clip_id=clip_id,
+                    clip_in_ms=clip_in_ms,
+                    clip_out_ms=clip_out_ms,
+                    words=compiled.remapped_words,
+                    out_dir=out_dir,
+                    config=compile_cfg,
+                    semantic_assembly_spans=compiled.assembly_spans,
+                    semantic_words=compiled.remapped_words,
+                    semantic_cut_times_ms=compiled.semantic_cut_times_ms,
+                    semantic_visual_cues=verified_recipe.visual_cues,
+                    semantic_word_idx_to_ms=compiled.word_idx_to_output_ms,
+                    semantic_hook_title_ckb=verified_recipe.hook_title_ckb,
+                )
+                pack = write_client_delivery_pack(
+                    compile_res,
+                    source_mp4=source,
+                    clip_in_ms=clip_in_ms,
+                    clip_out_ms=clip_out_ms,
+                    fps=cfg.fps,
+                    media_id=media_id,
+                    hook_title_ckb=compile_res.script.hook_title_ckb,
+                    retained_intervals_ms=compile_res.retained_intervals_ms,
+                    keep_overlay=cfg.keep_overlay,
+                    ffmpeg=cfg.ffmpeg,
+                    cover_extractor=cover_extractor,
+                )
+                verify_client_pack_complete(pack)
+            except (StoryEditorError, V8CompileError, DeliveryPackError) as exc:
+                if not cfg.overgenerate_candidates:
+                    raise V8EpisodeError(
+                        f"V10.2 semantic compile failed for {raw_recipe.story_id}: {exc}"
+                    ) from exc
+                q_dir = out_dir / "quarantine"
+                q_dir.mkdir(parents=True, exist_ok=True)
+                for partial in (
+                    out_dir / f"{clip_id}.v8.mp4",
+                    out_dir / f"{clip_id}.v8.overlay.mov",
+                ):
+                    if partial.is_file():
+                        partial.unlink()
+                q_record = {
+                    "candidate_index": cand_idx,
+                    "story_id": raw_recipe.story_id,
+                    "clip_id": clip_id,
+                    "hook_title_ckb": raw_recipe.hook_title_ckb,
+                    "error": str(exc),
+                }
+                write_text_atomic(
+                    q_dir / f"cand-{cand_idx:02d}-{raw_recipe.story_id}.quarantine.json",
+                    json.dumps(q_record, ensure_ascii=False, indent=2) + "\n",
+                )
+                quarantined_items.append(q_record)
+                continue
+
+            if on_progress is not None:
+                done_pct = 35 + int((len(sem_items) + 1) / max(1, cfg.max_clips) * 55)
+                on_progress(f"v8_clip_{rank}_of_{cfg.max_clips}", "completed", done_pct)
+
+            sem_items.append(
+                V8EpisodeClipItem(
+                    rank=rank,
+                    clip_id=clip_id,
+                    sentence_indices=tuple(range(len(compiled.assembly_spans))),
+                    clip_in_ms=clip_in_ms,
+                    clip_out_ms=clip_out_ms,
+                    discovery_score=round(float(verified_recipe.viral_score), 4),
+                    discovery_reason=reason,
+                    compile_result=compile_res,
+                    delivery_pack=pack,
+                    wall_time_s=round(time.monotonic() - clip_t0, 3),
+                )
+            )
+
+        if not sem_items:
+            summary = "; ".join(f"{q['story_id']}: {q['error']}" for q in quarantined_items)
+            raise V8EpisodeError(
+                f"All {len(recipes)} semantic multi-cut candidates were quarantined: {summary}"
+            )
+
+        total_wall_s = round(time.monotonic() - t0, 3)
+        all_grills_passed = bool(sem_items) and all(item.grill_passed is True for item in sem_items)
+        review_html_path = write_client_review_html(
+            [item.delivery_pack for item in sem_items],
+            out_dir / "client-review.html",
+            episode_title=f"HawEdit V11 — {source.stem}",
+            source_name=source.name,
+            director_backend=cfg.director,
+            total_wall_s=total_wall_s,
+            style_preset=cfg.style_preset,
+        )
+        episode_json_path = out_dir / "episode.v8.json"
+        result = V8EpisodeResult(
+            media_id=media_id,
+            source_mp4=source,
+            out_dir=out_dir,
+            transcript_path=resolved_transcript_path,
+            director=cfg.director,
+            clips=tuple(sem_items),
+            episode_json_path=episode_json_path,
+            review_html_path=review_html_path,
+            total_wall_s=total_wall_s,
+            all_grills_passed=all_grills_passed,
+            quarantined=tuple(quarantined_items),
+        )
+        payload = result.to_dict()
+        payload["config"] = cfg.to_dict()
+        write_text_atomic(
+            episode_json_path,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )
+        return result
+
     selected_arcs: tuple[tuple[tuple[int, ...], float, str], ...]
     if sentence_ranges is not None:
         if not sentence_ranges:

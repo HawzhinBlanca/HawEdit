@@ -405,6 +405,8 @@ class _HookTitleLayout:
     box_bottom: float
     center_x: float
     center_y: float
+    accent_bar_rect: tuple[float, float, float, float] | None = None
+    accent_line_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +423,8 @@ class _VisualInterruptLayout:
     center_x: float
     center_y: float
     dirty_band: tuple[int, int]
+    stat_hero: tuple[_ShapedWord, float, float] | None = None
+    divider_rect: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,20 +597,32 @@ class _SkiaHarfBuzzShaper:
         tokens = hook_title_ckb.strip().split()
         if not tokens:
             raise ValueError("hook_title_ckb must not be whitespace-only")
-        lines_text = _balance_hook_lines(tokens)
+        lines_text = _balance_hook_lines(
+            tokens, max_single_line_chars=16 if len(tokens) >= 3 else 24
+        )
         max_w, pad_x, pad_y, size = float(width - 180), 34.0, 22.0, 54.0
+        accent_h, accent_gap = 5.0, 12.0
         shaped = [self.shape_token(t, size, base_rtl=_has_rtl(t)) for t in lines_text]
         widest = max(s.advance_px for s in shaped)
         if widest + 2.0 * pad_x > max_w and widest > 0.0:
             size = max(34.0, size * ((max_w - 2.0 * pad_x) / widest))
             shaped = [self.shape_token(t, size, base_rtl=_has_rtl(t)) for t in lines_text]
             widest = max(s.advance_px for s in shaped)
-        first_base = y_top_px + pad_y - min(s.ink_top for s in shaped)
+        accent_w = max(84.0, min(widest * 0.44, 150.0))
+        accent_top = y_top_px + 14.0
+        accent_bar = (
+            (width - accent_w) * 0.5,
+            accent_top,
+            (width + accent_w) * 0.5,
+            accent_top + accent_h,
+        )
+        first_base = accent_top + accent_h + accent_gap - min(s.ink_top for s in shaped)
         placed = tuple(
             (s, (width - s.advance_px) * 0.5, first_base + idx * size * 1.32)
             for idx, s in enumerate(shaped)
         )
         box_bottom = placed[-1][2] + max(s.ink_bottom for s in shaped) + pad_y
+        accent_idx: int | None = len(shaped) - 1 if len(shaped) >= 2 else None
         return _HookTitleLayout(
             placed,
             (width - widest) * 0.5 - pad_x,
@@ -615,6 +631,8 @@ class _SkiaHarfBuzzShaper:
             box_bottom,
             width * 0.5,
             (y_top_px + box_bottom) * 0.5,
+            accent_bar_rect=accent_bar,
+            accent_line_index=accent_idx,
         )
 
     def layout_visual_interrupt(
@@ -632,6 +650,78 @@ class _SkiaHarfBuzzShaper:
         tokens = text_ckb.strip().split()
         if not tokens:
             raise ValueError("visual_interrupt text_ckb must not be empty")
+        border_hex = (
+            preset.interrupt_top_border_hex
+            if position == "top"
+            else preset.interrupt_chest_border_hex
+        )
+        border_rgb = _hex_to_rgb(border_hex)
+
+        # Animated Stat Card mode when formatted as "<HERO_STAT> | <KURDISH_LABEL>"
+        if " | " in text_ckb:
+            hero_raw, label_raw = (part.strip() for part in text_ckb.split(" | ", 1))
+            if hero_raw and label_raw:
+                max_w, pad_x, pad_y = float(width - 180), 42.0, 22.0
+                hero_sz, label_sz = 82.0, 40.0
+                hero_s = self.shape_token(hero_raw, hero_sz, base_rtl=_has_rtl(hero_raw))
+                if hero_s.advance_px + 2.0 * pad_x > max_w and hero_s.advance_px > 0.0:
+                    hero_sz = max(48.0, hero_sz * ((max_w - 2.0 * pad_x) / hero_s.advance_px))
+                    hero_s = self.shape_token(hero_raw, hero_sz, base_rtl=_has_rtl(hero_raw))
+                label_lines = _balance_hook_lines(label_raw.split(), max_single_line_chars=24)
+                shaped_labels = [
+                    self.shape_token(t, label_sz, base_rtl=_has_rtl(t)) for t in label_lines
+                ]
+                widest_lbl = max(s.advance_px for s in shaped_labels)
+                if widest_lbl + 2.0 * pad_x > max_w and widest_lbl > 0.0:
+                    label_sz = max(28.0, label_sz * ((max_w - 2.0 * pad_x) / widest_lbl))
+                    shaped_labels = [
+                        self.shape_token(t, label_sz, base_rtl=_has_rtl(t)) for t in label_lines
+                    ]
+                    widest_lbl = max(s.advance_px for s in shaped_labels)
+                widest = max(hero_s.advance_px, widest_lbl, 220.0)
+                hero_h = hero_s.ink_bottom - hero_s.ink_top
+                div_gap_top, div_h, div_gap_bot = 14.0, 4.0, 16.0
+                lbl_step = label_sz * 1.28
+                lbl_top = min(s.ink_top for s in shaped_labels)
+                lbl_bot = max(s.ink_bottom for s in shaped_labels)
+                lbl_h = (len(shaped_labels) - 1) * lbl_step + (lbl_bot - lbl_top)
+                box_h = pad_y + hero_h + div_gap_top + div_h + div_gap_bot + lbl_h + pad_y
+                target_y = (
+                    float(VISUAL_INTERRUPT_TOP_Y_PX + 28)
+                    if position == "top"
+                    else float(VISUAL_INTERRUPT_CHEST_Y_PX)
+                )
+                if position == "chest" and y_center_px > 400:
+                    target_y = min(target_y, float(y_center_px - 110) - box_h * 0.5)
+                box_top = max(72.0, min(float(height) - box_h - 72.0, target_y - box_h * 0.5))
+                box_bottom = box_top + box_h
+                hero_base = box_top + pad_y - hero_s.ink_top
+                div_y = box_top + pad_y + hero_h + div_gap_top
+                div_w = min(widest * 0.65, 220.0)
+                div_rect = ((width - div_w) * 0.5, div_y, (width + div_w) * 0.5, div_y + div_h)
+                first_lbl_base = div_y + div_h + div_gap_bot - lbl_top
+                placed_lbl = tuple(
+                    (s, (width - s.advance_px) * 0.5, first_lbl_base + idx * lbl_step)
+                    for idx, s in enumerate(shaped_labels)
+                )
+                dirty = (max(0, math.floor(box_top - 64)), min(height, math.ceil(box_bottom + 64)))
+                return _VisualInterruptLayout(
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    position=position,
+                    border_rgb=border_rgb,
+                    lines=placed_lbl,
+                    box_left=(width - widest) * 0.5 - pad_x,
+                    box_top=box_top,
+                    box_right=(width + widest) * 0.5 + pad_x,
+                    box_bottom=box_bottom,
+                    center_x=width * 0.5,
+                    center_y=(box_top + box_bottom) * 0.5,
+                    dirty_band=dirty,
+                    stat_hero=(hero_s, (width - hero_s.advance_px) * 0.5, hero_base),
+                    divider_rect=div_rect,
+                )
+
         lines_text = _balance_hook_lines(tokens, max_single_line_chars=26)
         max_w, pad_x, pad_y, size = float(width - 160), 34.0, 20.0, 48.0
         shaped = [self.shape_token(t, size, base_rtl=_has_rtl(t)) for t in lines_text]
@@ -662,17 +752,12 @@ class _SkiaHarfBuzzShaper:
             (s, (width - s.advance_px) * 0.5, first_base + idx * line_step)
             for idx, s in enumerate(shaped)
         )
-        border_hex = (
-            preset.interrupt_top_border_hex
-            if position == "top"
-            else preset.interrupt_chest_border_hex
-        )
         dirty = (max(0, math.floor(box_top - 64)), min(height, math.ceil(box_bottom + 64)))
         return _VisualInterruptLayout(
             start_ms=start_ms,
             end_ms=end_ms,
             position=position,
-            border_rgb=_hex_to_rgb(border_hex),
+            border_rgb=border_rgb,
             lines=placed,
             box_left=(width - widest) * 0.5 - pad_x,
             box_top=box_top,
@@ -984,7 +1069,7 @@ def _draw_hook_title(
 ) -> None:
     if not 0.0 <= t_ms < HOOK_DURATION_MS:
         return
-    scale = spring_bounce_scale(t_ms, duration_ms=160.0)
+    scale = spring_bounce_scale(t_ms, duration_ms=140.0)
     alpha = (
         0.35 + 0.65 * (t_ms / 45.0)
         if t_ms < 45.0
@@ -1022,17 +1107,25 @@ def _draw_hook_title(
             Color=skia.ColorSetARGB(round(preset.hook_border_alpha * alpha), br, bg, bb),
         ),
     )
+    full_a = max(0, min(255, round(alpha * 255)))
+    if hook.accent_bar_rect is not None:
+        al, at, ar_, ab = hook.accent_bar_rect
+        bar_rrect = skia.RRect.MakeRectXY(skia.Rect.MakeLTRB(al, at, ar_, ab), 3.0, 3.0)
+        canvas.drawRRect(
+            bar_rrect,
+            skia.Paint(AntiAlias=True, Color=skia.ColorSetARGB(full_a, 255, 215, 0)),
+        )
     t_sh = skia.Paint(
         AntiAlias=True,
         Color=skia.ColorSetARGB(round(170 * alpha), 0, 0, 0),
         MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, 4.0),
     )
-    t_fg = skia.Paint(
-        AntiAlias=True, Color=skia.ColorSetARGB(max(0, min(255, round(alpha * 255))), 255, 255, 255)
-    )
-    for shaped, bx, by in hook.lines:
+    t_fg = skia.Paint(AntiAlias=True, Color=skia.ColorSetARGB(full_a, 255, 255, 255))
+    t_gold = skia.Paint(AntiAlias=True, Color=skia.ColorSetARGB(full_a, 255, 215, 0))
+    for line_idx, (shaped, bx, by) in enumerate(hook.lines):
         canvas.drawTextBlob(shaped.blob, bx, by + 3.0, t_sh)
-        canvas.drawTextBlob(shaped.blob, bx, by, t_fg)
+        paint = t_gold if hook.accent_line_index == line_idx else t_fg
+        canvas.drawTextBlob(shaped.blob, bx, by, paint)
     canvas.restore()
 
 
@@ -1280,6 +1373,29 @@ def _draw_visual_interrupt(
         Color=skia.ColorSetARGB(round(170 * alpha), 0, 0, 0),
         MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, 4.0),
     )
+    if item.stat_hero is not None:
+        hero_s, hx, hy = item.stat_hero
+        hero_glow = skia.Paint(
+            AntiAlias=True,
+            Color=skia.ColorSetARGB(round(125 * alpha), *item.border_rgb),
+            MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, 10.0),
+        )
+        hero_fg = skia.Paint(
+            AntiAlias=True,
+            Color=skia.ColorSetARGB(max(0, min(255, round(alpha * 255))), *item.border_rgb),
+        )
+        canvas.drawTextBlob(hero_s.blob, hx, hy + 4.0, t_sh)
+        canvas.drawTextBlob(hero_s.blob, hx, hy, hero_glow)
+        canvas.drawTextBlob(hero_s.blob, hx, hy, hero_fg)
+    if item.divider_rect is not None:
+        dl, dt_, dr, db = item.divider_rect
+        canvas.drawRRect(
+            skia.RRect.MakeRectXY(skia.Rect.MakeLTRB(dl, dt_, dr, db), 2.0, 2.0),
+            skia.Paint(
+                AntiAlias=True,
+                Color=skia.ColorSetARGB(round(215 * alpha), *item.border_rgb),
+            ),
+        )
     t_fg = skia.Paint(
         AntiAlias=True, Color=skia.ColorSetARGB(max(0, min(255, round(alpha * 255))), 255, 255, 255)
     )
@@ -1572,6 +1688,7 @@ def _render_single_surface(
     y_center_px: int,
     background_rgba: tuple[int, int, int, int],
     hook_y_top_px: float = 250.0,
+    split_screen_windows_ms: Sequence[tuple[int, int]] = (),
 ) -> tuple[Any, Any]:
     if width <= 0 or height <= 0:
         raise ValueError(f"invalid frame dimensions {width}x{height}")
@@ -1583,7 +1700,47 @@ def _render_single_surface(
     norm_end_card = _normalize_end_card(end_card)
     shaper = _SkiaHarfBuzzShaper(font_path)
     skia = shaper.skia
-    layouts = [shaper.layout_chunk(c, width=width, y_center_px=y_center_px) for c in chunks]
+
+    def _resolve_chunk_y_center(
+        chunk: ViralCaptionChunk,
+        *,
+        y_center_px: int,
+        height: int,
+        duration_ms: int | None,
+        has_end_card: bool,
+        split_screen_windows_ms: Sequence[tuple[int, int]],
+    ) -> int:
+        if split_screen_windows_ms:
+            mid = (chunk.start_ms + chunk.end_ms) // 2
+            in_end_card = (
+                has_end_card
+                and duration_ms is not None
+                and mid >= max(0, duration_ms - END_CARD_DURATION_MS)
+            )
+            c_dur = max(1, chunk.end_ms - chunk.start_ms)
+            if not in_end_card and any(
+                s_ms <= mid < e_ms
+                or (min(chunk.end_ms, e_ms) - max(chunk.start_ms, s_ms)) * 3 >= c_dur
+                for s_ms, e_ms in split_screen_windows_ms
+            ):
+                return height // 2
+        return y_center_px
+
+    layouts = [
+        shaper.layout_chunk(
+            c,
+            width=width,
+            y_center_px=_resolve_chunk_y_center(
+                c,
+                y_center_px=y_center_px,
+                height=height,
+                duration_ms=duration_ms,
+                has_end_card=norm_end_card is not None,
+                split_screen_windows_ms=split_screen_windows_ms,
+            ),
+        )
+        for c in chunks
+    ]
     hook = (
         shaper.layout_hook_title(hook_title_ckb, width=width, y_top_px=hook_y_top_px)
         if hook_title_ckb and hook_title_ckb.strip()
@@ -1652,6 +1809,7 @@ def render_tiktok_frame_rgba(
     height: int = 1920,
     y_center_px: int = DEFAULT_Y_CENTER_PX,
     background_rgba: tuple[int, int, int, int] = (0, 0, 0, 0),
+    split_screen_windows_ms: Sequence[tuple[int, int]] = (),
 ) -> bytes:
     """Render one 1080×1920 straight-RGBA frame at ``t_ms``."""
     skia, surface = _render_single_surface(
@@ -1668,6 +1826,7 @@ def render_tiktok_frame_rgba(
         height=height,
         y_center_px=y_center_px,
         background_rgba=background_rgba,
+        split_screen_windows_ms=split_screen_windows_ms,
     )
     out = bytearray(width * height * 4)
     unpremul = skia.ImageInfo.Make(
@@ -1694,6 +1853,7 @@ def render_tiktok_preview_png(
     height: int = 1920,
     y_center_px: int = DEFAULT_Y_CENTER_PX,
     background_rgba: tuple[int, int, int, int] = (18, 20, 28, 255),
+    split_screen_windows_ms: Sequence[tuple[int, int]] = (),
 ) -> Path:
     """Render one 1080×1920 PNG preview frame directly via Skia."""
     skia, surface = _render_single_surface(
@@ -1710,6 +1870,7 @@ def render_tiktok_preview_png(
         height=height,
         y_center_px=y_center_px,
         background_rgba=background_rgba,
+        split_screen_windows_ms=split_screen_windows_ms,
     )
     encoded = surface.makeImageSnapshot().encodeToData(skia.kPNG, 100)
     if encoded is None:
@@ -1735,6 +1896,7 @@ def render_tiktok_overlay_video(
     height: int = 1920,
     y_center_px: int = DEFAULT_Y_CENTER_PX,
     hook_y_top_px: float = 250.0,
+    split_screen_windows_ms: Sequence[tuple[int, int]] = (),
     ffmpeg: Path | None = None,
 ) -> Path:
     """Pipe a 1080×1920 transparent-alpha Skia+HarfBuzz subtitle stream into FFmpeg."""
@@ -1761,7 +1923,47 @@ def render_tiktok_overlay_video(
 
     shaper = _SkiaHarfBuzzShaper(font_path)
     skia = shaper.skia
-    layouts = [shaper.layout_chunk(c, width=width, y_center_px=y_center_px) for c in chunks]
+
+    def _resolve_chunk_y_center(
+        chunk: ViralCaptionChunk,
+        *,
+        y_center_px: int,
+        height: int,
+        duration_ms: int | None,
+        has_end_card: bool,
+        split_screen_windows_ms: Sequence[tuple[int, int]],
+    ) -> int:
+        if split_screen_windows_ms:
+            mid = (chunk.start_ms + chunk.end_ms) // 2
+            in_end_card = (
+                has_end_card
+                and duration_ms is not None
+                and mid >= max(0, duration_ms - END_CARD_DURATION_MS)
+            )
+            c_dur = max(1, chunk.end_ms - chunk.start_ms)
+            if not in_end_card and any(
+                s_ms <= mid < e_ms
+                or (min(chunk.end_ms, e_ms) - max(chunk.start_ms, s_ms)) * 3 >= c_dur
+                for s_ms, e_ms in split_screen_windows_ms
+            ):
+                return height // 2
+        return y_center_px
+
+    layouts = [
+        shaper.layout_chunk(
+            c,
+            width=width,
+            y_center_px=_resolve_chunk_y_center(
+                c,
+                y_center_px=y_center_px,
+                height=height,
+                duration_ms=duration_ms,
+                has_end_card=norm_end_card is not None,
+                split_screen_windows_ms=split_screen_windows_ms,
+            ),
+        )
+        for c in chunks
+    ]
     hook = (
         shaper.layout_hook_title(hook_title_ckb, width=width, y_top_px=hook_y_top_px)
         if hook_title_ckb and hook_title_ckb.strip()

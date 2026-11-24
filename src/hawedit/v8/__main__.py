@@ -184,6 +184,44 @@ def build_episode_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-critique", action="store_true")
     p.add_argument("--no-asd", action="store_true")
     p.add_argument("--no-cinema-grade", action="store_true")
+    p.add_argument(
+        "--story-mode",
+        choices=("auto", "semantic-multicut", "legacy"),
+        default="auto",
+        help="V10.2 story selection mode (semantic-multicut default for gemini/local-omni).",
+    )
+    p.add_argument(
+        "--broll-dir",
+        type=Path,
+        default=None,
+        help="Optional local commercial B-roll folder for content-aware visual cutaways.",
+    )
+    p.add_argument(
+        "--no-broll",
+        action="store_true",
+        help="Disable content-aware B-roll cutaways & Top-PiP overlays.",
+    )
+    p.add_argument(
+        "--no-banter-split",
+        action="store_true",
+        help="Disable automatic 50/50 split-screen on dual-speaker banter wide shots.",
+    )
+    p.add_argument(
+        "--music-mood",
+        choices=("none", "curious", "cinematic", "energetic"),
+        default="curious",
+        help="Optional subtle CC0 procedural voice-ducked ambient music bed (D-395).",
+    )
+    p.add_argument(
+        "--no-overgenerate",
+        action="store_true",
+        help="Disable candidate over-generation and quarantine promotion.",
+    )
+    p.add_argument(
+        "--no-local-vlm",
+        action="store_true",
+        help="Disable local §7 VideoChat3-4B / TimeLens2-4B visual grounding.",
+    )
     _add_shared_v9_style_flags(p)
     return p
 
@@ -250,6 +288,13 @@ def _run_episode_cli(argv: Sequence[str]) -> int:
             omni_url=args.omni_url,
             local_modality=local_modality,
             asd_onnx_path=args.asd_onnx,
+            story_mode=args.story_mode,
+            enable_broll=not args.no_broll,
+            broll_dir=args.broll_dir,
+            enable_banter_split=not args.no_banter_split,
+            music_mood=args.music_mood,
+            overgenerate_candidates=not args.no_overgenerate,
+            enable_local_vlm=not args.no_local_vlm,
         )
         result = compile_v8_episode(
             source=args.source,

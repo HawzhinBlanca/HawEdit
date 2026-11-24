@@ -308,14 +308,22 @@ def assemble_cold_open(
     return assemble_spans(span_groups)
 
 
-def assembled_splice_filter(spans: Sequence[AssemblySpan]) -> str:
-    """Generate the FFmpeg filtergraph splicing participating spans in order (Task T4.9).
+def assembled_splice_filter(
+    spans: Sequence[AssemblySpan],
+    *,
+    crossfade_ms: int = 0,
+) -> str:
+    """Generate the FFmpeg filtergraph splicing participating spans in order (Task T4.9, D-394).
 
     Trims video and audio for each span, resets PTS, and concatenates them into
-    single continuous [v_concat] and [a_concat] streams.
+    single continuous [v_concat] and [a_concat] streams. When ``crossfade_ms > 0``, applies
+    symmetric equal-power quarter-sine ``afade`` ramps at every interior splice boundary so
+    semantic multi-cut joins stay 0.000 ms frame-locked with zero clicks or harsh room-tone drops.
     """
     if not spans:
         raise ValueError("Cannot create splice filter for empty spans")
+    if crossfade_ms < 0:
+        raise ValueError(f"crossfade_ms must be non-negative, got {crossfade_ms}")
 
     v_trims: list[str] = []
     a_trims: list[str] = []
@@ -325,11 +333,24 @@ def assembled_splice_filter(spans: Sequence[AssemblySpan]) -> str:
     for i, span in enumerate(spans):
         in_s = span.source_in_ms / 1000.0
         out_s = span.source_out_ms / 1000.0
-        fades = audio_cut_fade_filters(
-            span.source_out_ms - span.source_in_ms,
-            fade_in=(i > 0),
-            fade_out=(i < n - 1),
-        )
+        span_dur_ms = span.source_out_ms - span.source_in_ms
+        if crossfade_ms > 0:
+            eff_fade_ms = min(crossfade_ms, max(4, span_dur_ms // 4))
+            fade_s = eff_fade_ms / 1000.0
+            fades: list[str] = []
+            if i > 0:
+                fades.append(f"afade=t=in:st=0:d={fade_s:.3f}:curve=qsin")
+            if i < n - 1:
+                out_st = max(0.0, (span_dur_ms - eff_fade_ms) / 1000.0)
+                fades.append(f"afade=t=out:st={out_st:.3f}:d={fade_s:.3f}:curve=qsin")
+        else:
+            fades = list(
+                audio_cut_fade_filters(
+                    span_dur_ms,
+                    fade_in=(i > 0),
+                    fade_out=(i < n - 1),
+                )
+            )
         a_chain = ",".join(["asetpts=PTS-STARTPTS", *fades])
         v_trims.append(f"[0:v]trim=start={in_s:.3f}:end={out_s:.3f},setpts=PTS-STARTPTS[v{i}]")
         a_trims.append(f"[0:a]atrim=start={in_s:.3f}:end={out_s:.3f},{a_chain}[a{i}]")

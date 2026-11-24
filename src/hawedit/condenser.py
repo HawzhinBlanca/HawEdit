@@ -157,13 +157,13 @@ STORY_EVALUATION_SCHEMA: Final[dict[str, Any]] = {
 
 
 class GeminiStoryEvaluator:
-    """AI narrative evaluator powered by Gemini 2.5 Flash / Flash-Lite."""
+    """AI narrative evaluator powered by Gemini 4 Hydrogen."""
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
-        model_id: str = "gemini-2.5-flash-lite",
+        model_id: str = "gemini-4-hydrogen",
         transport: Callable[[urllib.request.Request], bytes] | None = None,
     ) -> None:
         self.model_id = model_id
