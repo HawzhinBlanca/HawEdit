@@ -16,6 +16,8 @@ Stock voice is the default. A cloned voice additionally requires `--reference RE
 
 For TikTok or Instagram manual posting, download the approved package on the phone. For direct Instagram publishing, the operator must connect an eligible professional account through Facebook Login for Business and provide its Meta token via `HAWEDIT_META_ACCESS_TOKEN`. Explicitly run `python -m hawedit.v8 publish-instagram PACKAGE --state STATE --account INSTAGRAM_ID`. The publisher uploads the approved reel directly to Meta, checks processing, and records the media ID. Repeating the command uses the stored container. After an ambiguous publish response it checks the existing container and avoids submitting another publication.
 
+When the local director scans a long episode, it selects source spans in overlapping sections. Repeating the episode command with the same output directory can reuse completed nominations from `.work/story-nominations`. Changes to source words, timing, model or prompts produce new cache entries. The refiner and meaning check still run on the selected candidates.
+
 ## Provenance
 
 The [yt-dlp manual](https://github.com/yt-dlp/yt-dlp), [Chatterbox repository](https://github.com/resemble-ai/chatterbox), [pinned voice model](https://huggingface.co/ResembleAI/chatterbox/tree/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18), and [Meta content publishing guide](https://developers.facebook.com/documentation/instagram-platform/content-publishing) document the provider interfaces.

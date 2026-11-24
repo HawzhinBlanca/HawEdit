@@ -17,10 +17,12 @@ backends, bounded HTTP reads, no redirects, and strict JSON schema validation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import wave
@@ -427,6 +429,38 @@ MULTICUT_EPISODE_SCHEMA: Final[dict[str, Any]] = {
     "required": ["stories"],
 }
 
+_NOMINATION_FIELDS = ("story_id", "hook_title_ckb", "viral_score", "rationale_ckb", "keep_spans")
+_NOMINATION_SCHEMA: Final[dict[str, Any]] = {
+    "type": "object",
+    "required": ["stories"],
+    "properties": {
+        "stories": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+                "type": "object",
+                "required": list(_NOMINATION_FIELDS),
+                "properties": {
+                    key: MULTICUT_EPISODE_SCHEMA["properties"]["stories"]["items"]["properties"][
+                        key
+                    ]
+                    for key in _NOMINATION_FIELDS
+                },
+            },
+        }
+    },
+}
+_NOMINATION_PROMPT = (
+    "You edit Sorani podcasts. Nominate the single strongest standalone short in this excerpt. "
+    "Choose 2-4 short source spans in spoken order with a hook, enough context "
+    "and a resolved payoff. "
+    "Preserve names, numbers, negation, attribution and speaker intent. Avoid mid-sentence starts, "
+    "greetings, repeats and incomplete endings. Use inclusive word indices. Write a short Sorani "
+    "headline and one sentence explaining the choice. Score editorial strength from 0 to 1. "
+    "If there is no complete story of the target duration, return an empty stories array."
+)
+
+
 MEANING_CHECK_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
@@ -572,6 +606,7 @@ def _call_structured_llm(
     base_url: str | None,
     transport: Transport | None,
     local_reasoning_effort: str = "none",
+    local_max_tokens: int = 4096,
 ) -> tuple[dict[str, Any], str]:
     if backend == "gemini":
         key = _resolve_gemini_key(api_key)
@@ -611,7 +646,7 @@ def _call_structured_llm(
             {
                 "model": resolved_model,
                 "temperature": 0.0,
-                "max_tokens": 4096,
+                "max_tokens": local_max_tokens,
                 "reasoning_effort": local_reasoning_effort,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -629,6 +664,8 @@ def _call_structured_llm(
             ensure_ascii=False,
         ).encode("utf-8")
         status, body = tx(f"{resolved_url}/chat/completions", payload, {})
+        if status in (408, 504) or (status == 0 and "timed out" in body.lower()):
+            raise _LocalTimeout(f"Local model {resolved_model} timed out on the request")
         if status == 400 and any(
             marker in body.lower()
             for marker in (
@@ -937,6 +974,10 @@ def _distinct_recipes(
     return tuple(selected)
 
 
+class _LocalTimeout(StoryEditorError):
+    """A transient local model timeout."""
+
+
 class _ContextLimit(StoryEditorError):
     """The local provider explicitly rejected the prompt length."""
 
@@ -982,6 +1023,7 @@ def plan_episode_multicut_stories(
     api_key: str | None = None,
     base_url: str | None = None,
     transport: Transport | None = None,
+    checkpoint_dir: Path | None = None,
 ) -> tuple[MultiCutStoryRecipe, ...]:
     """Plan non-contiguous semantic multi-cut stories across an entire episode transcript."""
     if not words:
@@ -989,7 +1031,18 @@ def plan_episode_multicut_stories(
     if max_stories < 1:
         raise StoryEditorError(f"max_stories must be >= 1, got {max_stories}")
 
-    def nominate(words: Sequence[Word], max_stories: int) -> tuple[MultiCutStoryRecipe, ...]:
+    if backend == "local-omni" and checkpoint_dir is not None:
+        base_url = (
+            (base_url or os.environ.get(OMNI_URL_ENV) or DEFAULT_OMNI_URL).strip().rstrip("/")
+        )
+        model_id = _resolve_local_model(
+            base_url, model_id, transport or _make_story_transport(DEFAULT_OMNI_TIMEOUT_S)
+        )
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    def nominate(
+        words: Sequence[Word], max_stories: int, compact: bool
+    ) -> tuple[MultiCutStoryRecipe, ...]:
         ep_dur_s = (words[-1].end_ms - words[0].start_ms) / 1000.0
         indexed_text = _format_indexed_episode_transcript(words, audio_wav=audio_wav)
         user_prompt = (
@@ -1003,25 +1056,69 @@ def plan_episode_multicut_stories(
             f"INDEXED SORANI TRANSCRIPT:\n{indexed_text}\n"
         )
 
+        system = _NOMINATION_PROMPT if compact else STORY_ARCHITECT_SYSTEM_PROMPT
+        schema = _NOMINATION_SCHEMA if compact else MULTICUT_EPISODE_SCHEMA
+        cache_file = None
+        if checkpoint_dir is not None and backend == "local-omni":
+            signature = json.dumps(
+                [
+                    base_url,
+                    model_id,
+                    schema,
+                    system,
+                    user_prompt,
+                    [(w.start_ms, w.end_ms) for w in words],
+                ],
+                ensure_ascii=False,
+            )
+            cache_file = checkpoint_dir / (hashlib.sha256(signature.encode()).hexdigest() + ".json")
+
+        def validate(payload: Mapping[str, Any]) -> tuple[MultiCutStoryRecipe, ...]:
+            return _parse_and_validate_recipes(
+                payload,
+                words,
+                max_stories=max_stories,
+                min_duration_ms=min_duration_ms,
+                max_duration_ms=max_duration_ms,
+            )
+
+        if cache_file is not None and cache_file.is_file():
+            try:
+                saved = json.loads(cache_file.read_text(encoding="utf-8"))
+            except (ValueError, UnicodeError):
+                saved = None
+            if isinstance(saved, dict):
+                if saved.get("stories") == []:
+                    raise _NoStory("No story nominated in this source section")
+                try:
+                    return validate(saved)
+                except StoryEditorError:
+                    pass
         payload, _ = _call_structured_llm(
             backend=backend,
-            system_prompt=STORY_ARCHITECT_SYSTEM_PROMPT,
+            system_prompt=system,
             user_prompt=user_prompt,
-            schema=MULTICUT_EPISODE_SCHEMA,
-            schema_name="hawedit_v11_multicut_episode",
+            schema=schema,
+            schema_name="hawedit_local_nomination" if compact else "hawedit_v11_multicut_episode",
             model_id=model_id,
             default_gemini_model=DEFAULT_STORY_ARCHITECT_MODEL,
             api_key=api_key,
             base_url=base_url,
             transport=transport,
+            local_max_tokens=700 if compact else 4096,
         )
-        return _parse_and_validate_recipes(
-            payload,
-            words,
-            max_stories=max_stories,
-            min_duration_ms=min_duration_ms,
-            max_duration_ms=max_duration_ms,
-        )
+        selected = () if payload.get("stories") == [] else validate(payload)
+        if cache_file is not None:
+            with tempfile.NamedTemporaryFile(dir=cache_file.parent, delete=False) as temp:
+                staged = Path(temp.name)
+            try:
+                staged.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                staged.replace(cache_file)
+            finally:
+                staged.unlink(missing_ok=True)
+        if not selected:
+            raise _NoStory("No story nominated in this source section")
+        return selected
 
     start = 0
     window_size = min(1200, len(words))
@@ -1030,13 +1127,13 @@ def plan_episode_multicut_stories(
         end = min(start + window_size, len(words))
         whole_episode = start == 0 and end == len(words)
         try:
-            local = nominate(
-                words[start:end], max_stories if whole_episode else min(3, max_stories)
-            )
+            compact = backend == "local-omni" and not whole_episode
+            count = 1 if compact else (max_stories if whole_episode else min(3, max_stories))
+            local = nominate(words[start:end], count, compact)
             if whole_episode:
                 return local
             nominations.extend(_episode_recipe(story, start) for story in local)
-        except _ContextLimit:
+        except (_LocalTimeout, _ContextLimit):
             if end - start <= 200:
                 raise
             window_size = max(200, (end - start) // 2)

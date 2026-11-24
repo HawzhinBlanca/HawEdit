@@ -77,7 +77,7 @@ def resolve_youtube_source(url: str, library: Path) -> Path:
             "--",
             "https://www.youtube.com/watch?v=" + video_id,
         ]
-        result = subprocess.run(cmd, cwd=bundle, check=False)
+        result = subprocess.run(cmd, cwd=bundle, check=False, timeout=3 * 60 * 60)
         if result.returncode or _archived_movie(bundle / info_name, video_id) is None:
             raise ValueError("YouTube download failed to produce a matching MP4")
         try:

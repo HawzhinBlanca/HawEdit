@@ -944,6 +944,7 @@ def compile_v8_episode(
                 min_duration_ms=cfg.min_duration_ms,
                 max_duration_ms=cfg.max_duration_ms,
                 audio_wav=resolved_wav_path,
+                checkpoint_dir=work_dir / "story-nominations",
                 model_id=cfg.director_model,
                 base_url=cfg.omni_url,
             )

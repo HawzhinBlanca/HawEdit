@@ -94,6 +94,7 @@ def dub_reel(
         subprocess.run(
             [str(worker), "-I", str(Path(__file__).with_name("voice_worker.py")), str(request)],
             check=True,
+            timeout=300 + 180 * len(phrases),
         )
         cmd = [str(binary), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(movie)]
         filters = []
@@ -146,7 +147,7 @@ def dub_reel(
                 str(staged),
             ]
         )
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, timeout=600)
         staged.replace(output)
     return output
 

@@ -429,6 +429,13 @@ def _build_v8_episode_config(config_cls: Any, opts: Mapping[str, Any]) -> Any:
         "end_card_title_ckb": end_title,
         "end_card_handle": end_handle,
     }
+    if opts.get("director") == "local-omni":
+        from hawedit.v8.director import DEFAULT_OMNI_URL, OMNI_URL_ENV
+
+        url = os.environ.get(OMNI_URL_ENV, "").strip() or DEFAULT_OMNI_URL
+        if urlparse(url).hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("Private Studio jobs require a loopback local director URL")
+        candidates["omni_url"] = url
     if opts.get("transcript_corrections"):
         from hawedit.v8.schema import WordRepair
 

@@ -1004,3 +1004,16 @@ def test_studio_word_corrections_are_source_bound_and_preserve_timing() -> None:
     payload["options"]["transcript_corrections"].append(edit)
     with pytest.raises(ValueError, match="duplicate"):
         web._parse_v8_repurpose_payload(payload)
+
+
+def test_studio_local_director_uses_loopback_for_private_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hawedit.v8.episode import V8EpisodeConfig
+
+    monkeypatch.setenv("HAWEDIT_OMNI_URL", "https://remote.invalid/v1")
+    with pytest.raises(ValueError, match="loopback"):
+        web._build_v8_episode_config(V8EpisodeConfig, {"director": "local-omni"})
+    monkeypatch.setenv("HAWEDIT_OMNI_URL", "http://localhost:8123/v1")
+    config = web._build_v8_episode_config(V8EpisodeConfig, {"director": "local-omni"})
+    assert config.omni_url == "http://localhost:8123/v1"

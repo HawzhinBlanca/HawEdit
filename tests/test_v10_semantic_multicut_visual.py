@@ -203,10 +203,32 @@ def test_multicut_story_plan_and_meaning_preservation_surgical_restore(tmp_path:
         min_duration_ms=15_000,
         max_duration_ms=55_000,
         transport=small_context,
+        checkpoint_dir=tmp_path / "nominations",
     )
     assert "1200 total words" in requests[0] and "600 total words" in requests[1]
     assert [story.keep_spans[0].start_word_idx for story in resized] == [0, 400, 800]
     assert "250 total words" in requests[-1]
+
+    # After a restart, the oversized request times out; all smaller completed windows resume.
+    def resumed(url: str, body: bytes | None, headers: Any) -> tuple[int, str]:
+        assert (
+            body is not None and "1200 total words" in json.loads(body)["messages"][-1]["content"]
+        )
+        return 0, "timed out"
+
+    assert (
+        plan_episode_multicut_stories(
+            long_words,
+            backend="local-omni",
+            model_id="local-test",
+            max_stories=3,
+            min_duration_ms=15_000,
+            max_duration_ms=55_000,
+            transport=resumed,
+            checkpoint_dir=tmp_path / "nominations",
+        )
+        == resized
+    )
 
     # Gemini 4 Carbon verifier catches drop[1] (the risky negation drop) and restores ONLY drop[1].
     verify_payload = {
