@@ -804,6 +804,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           ></div>
           <div id="previewPanel" class="stack" hidden>
             <h3 id="headlineText" dir="auto"></h3>
+          <details id="sourceQuotes" hidden><summary>هۆکاری هەڵبژاردن و دەقی سەرچاوە</summary>
+            <p id="selectReason"></p><ol id="quoteList"></ol>
+          </details>
             <div id="grillBadgeRow" class="toolbar" hidden>
               <span id="grillBadge" class="grill-badge"></span>
               <span id="grillSummaryText" class="muted" dir="auto"></span>
@@ -933,6 +936,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         if (!opts || opts.engine !== 'v8') return opts;
         const copy = {...opts, speaker_name_ckb: null, speaker_role_ckb: null};
         delete copy.speaker_source_id;
+        delete copy.transcript_corrections;
+        delete copy.correction_source_id;
         delete copy.cloud_consent_token;
         if (copy.director === 'gemini') copy.director = 'offline';
         return copy;
@@ -1031,6 +1036,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         if (!save('source', source))
           throw new Error('ناسنامەی سەرچاوە پاشەکەوت نەکرا.');
         if (state.source?.source_id !== source.source_id) {
+          $('sourceQuotes').hidden = true;
           $('optSpeakerName').value = '';
           $('optSpeakerRole').value = '';
         }
@@ -1178,6 +1184,50 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           controls();
         }
       }
+      function correctionOptions() {
+        const id = state.source?.source_id;
+        const edits = id && read('corrections.' + id);
+        return Array.isArray(edits) && edits.length ?
+          {correction_source_id:id, transcript_corrections:edits} : {};
+      }
+      function correctionEditor(words, id) {
+        const group = document.createElement('fieldset');
+        const legend = document.createElement('legend');
+        legend.textContent = 'ڕاستکردنەوەی وشە بۆ دروستکردنەوەی داهاتوو';
+        const select = document.createElement('select');
+        select.setAttribute('aria-label', 'وشەی سەرچاوە');
+        words.forEach(w => select.add(new Option(w.original + ' · ' + w.index, String(w.index))));
+        const field = document.createElement('input');
+        field.maxLength = 100;
+        field.setAttribute('aria-label', 'ڕاستنووس');
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.textContent = 'پاشەکەوتکردنی ڕاستکردنەوە';
+        const status = document.createElement('span');
+        status.setAttribute('role', 'status');
+        const selected = () => words[select.selectedIndex];
+        function restoreWord() {
+          const w = selected();
+          const edits = read('corrections.' + id) || [];
+          field.value = edits.find(r => r.word_index === w.index)?.repaired || w.original;
+          status.textContent = '';
+        }
+        select.onchange = restoreWord;
+        restoreWord();
+        apply.onclick = () => {
+          if (state.source?.source_id !== id || !field.value.trim()) return;
+          const w = selected();
+          const remaining = (read('corrections.' + id) || []).filter(r => r.word_index !== w.index);
+          if (field.value.trim() !== w.original) remaining.push({
+            word_index:w.index, original:w.original,
+            repaired:field.value.trim(), reason:'native editor'
+          });
+          if (remaining.length > 32) {status.textContent = 'زۆرترین ٣٢ ڕاستکردنەوە'; return;}
+          if (save('corrections.' + id, remaining)) status.textContent = 'پاشەکەوت کرا';
+        };
+        group.append(legend, select, field, apply, status);
+        return group;
+      }
       function options() {
         if ($('optEngine').value === 'v8') {
           const trimOrNull = (id) => {
@@ -1195,6 +1245,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             brand_accent_hex: trimOrNull('optBrandAccent'),
             subtitle_languages: ['ar','en'].filter(l => $(l === 'ar' ? 'subAr' : 'subEn').checked),
             dub_languages: ['ar','en'].filter(l => $(l === 'ar' ? 'dubAr' : 'dubEn').checked),
+            ...correctionOptions(),
             speaker_source_id: state.source?.source_id || null,
             speaker_name_ckb: trimOrNull('optSpeakerName'),
             speaker_role_ckb: trimOrNull('optSpeakerRole'),
@@ -1226,7 +1277,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             'cold_open',
             'max_clips',
             'brand_accent_hex',
-            'speaker_source_id',
+            'speaker_source_id', 'transcript_corrections', 'correction_source_id',
             'cloud_consent_token',
             'subtitle_languages','dub_languages',
             'speaker_name_ckb',
@@ -1616,6 +1667,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           item.setAttribute('aria-pressed', String(item === button));
         $('previewPanel').hidden = false;
         $('headlineText').textContent = clip.hook_title_ckb || clip.headline || clip.clip_id;
+        const quotes = Array.isArray(clip.source_quotes) ? clip.source_quotes : [];
+        $('sourceQuotes').hidden = !quotes.length;
+        $('selectReason').textContent = clip.editorial_reason || '';
+        $('quoteList').replaceChildren(...quotes.map(part => {
+          const row = document.createElement('li');
+          row.textContent = (part.in_ms / 1000).toFixed(1) + '–' +
+            (part.out_ms / 1000).toFixed(1) + ' s · ' + part.quote;
+          const id = state.job?.options?.episode_source_id;
+          if (id && state.source?.source_id === id &&
+              Array.isArray(part.words) && part.words.length)
+            row.append(correctionEditor(part.words, id));
+          return row;
+        }));
         if (typeof clip.grill_passed === 'boolean') {
           $('grillBadgeRow').hidden = false;
           $('grillBadge').className = 'grill-badge ' + (clip.grill_passed ? 'pass' : 'fail');
@@ -1983,6 +2047,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         message('sourceError', '');
         message('uploadMessage', 'ئەڵقەکە دەهێنرێت…');
         try {
+          state.source = null;
+          state.file = null;
+          state.ticket = null;
+          $('videoFile').value = '';
+          $('optSpeakerName').value = '';
+          $('optSpeakerRole').value = '';
+          message('sourceIdentity', '');
+          message('fileInfo', '');
+          if (!save('source', null) || !save('upload',null))
+            throw new Error('پاشەکەوتکردن شکستی هێنا.');
           if (!save('youtube', url)) throw new Error('پاشەکەوتکردن سەرکەوتوو نەبوو.');
           let endpoint = resume ? 'status' : 'import';
           for (;;) {

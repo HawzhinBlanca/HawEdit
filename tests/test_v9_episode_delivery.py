@@ -22,6 +22,7 @@ from hawedit.discovery import Candidate
 from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
 from hawedit.v8.compiler import (
+    DefaultV8SubtitleRenderer,
     LockedCropWindow,
     ReelQualityError,
     SubtitleArtifact,
@@ -1048,3 +1049,37 @@ def test_sidecar_rejects_cues_past_rendered_end(tmp_path: Path) -> None:
             clip_out_ms=36_000,
             cover_extractor=lambda _mp4, out, _ts: _make_fake_png(out),
         )
+
+
+def test_closeup_outro_keeps_call_to_action_in_post_text(tmp_path: Path) -> None:
+    result = _make_compile_result(tmp_path)
+    title = "بۆ ئەڵقەی زیاتر"
+    renderer = DefaultV8SubtitleRenderer(end_card=(title, None, None))
+    renderer.set_hook_y_top_px(1030.0)
+    renderer.protect_outro_faces([LockedCropWindow(0, 8000, 960, 500, 430)], 1920, 1080, 8000, [])
+    subs = renderer.render_subtitles(
+        words=result.repaired_words,
+        script=result.script,
+        clip_duration_ms=8000,
+        out_dir=tmp_path,
+        engine="libass",
+    )
+    assert subs.ass_path is not None
+    ass = subs.ass_path.read_text(encoding="utf-8")
+    assert ",EndCard," not in ass
+    assert any(
+        line.endswith(",1030,0")
+        for line in ass.splitlines()
+        if line.startswith("Style: HookTitle,")
+    )
+    pack = write_client_delivery_pack(
+        replace(result, subtitles=subs),
+        source_mp4=tmp_path / "src.mp4",
+        clip_in_ms=0,
+        clip_out_ms=8000,
+        post_cta=(title,),
+        cover_extractor=lambda _mp4, out, _ts: _make_fake_png(out),
+    )
+    assert pack.social_zip_path is not None
+    with zipfile.ZipFile(pack.social_zip_path) as archive:
+        assert title in archive.read("post.txt").decode()

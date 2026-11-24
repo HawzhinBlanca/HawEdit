@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import stat
 import sys
 import time
@@ -172,7 +173,15 @@ def _candidates(
             if isinstance(v8_clips_map, dict) and isinstance(v8_clips_map.get(clip_id), dict):
                 rel_map = v8_clips_map[clip_id]
                 download_urls: dict[str, str] = {}
-                for dl_kind in ("mp4", "srt", "edl", "otio", "director_json", "grill_json"):
+                for dl_kind in (
+                    "mp4",
+                    "social_zip",
+                    "srt",
+                    "edl",
+                    "otio",
+                    "director_json",
+                    "grill_json",
+                ):
                     if isinstance(rel_map.get(dl_kind), str) and rel_map[dl_kind]:
                         download_urls[dl_kind] = (
                             f"/api/jobs/{encoded_job_id}/clips/{encoded_cid}/artifacts/{dl_kind}"
@@ -186,6 +195,25 @@ def _candidates(
                     clip_entry["review_sheet_url"] = review_sheet_url
             if isinstance(v8_meta_map, dict) and isinstance(v8_meta_map.get(clip_id), dict):
                 meta = v8_meta_map[clip_id]
+                if isinstance(meta.get("editorial_reason"), str):
+                    clip_entry["editorial_reason"] = _text(meta["editorial_reason"])
+                quotes = meta.get("source_quotes")
+                if isinstance(quotes, list):
+                    clip_entry["source_quotes"] = [
+                        q
+                        for q in quotes
+                        if isinstance(q, dict)
+                        and type(q.get("in_ms")) is int
+                        and type(q.get("out_ms")) is int
+                        and isinstance(q.get("quote"), str)
+                        and isinstance(q.get("words", []), list)
+                        and all(
+                            isinstance(w, dict)
+                            and type(w.get("index")) is int
+                            and isinstance(w.get("original"), str)
+                            for w in q.get("words", [])
+                        )
+                    ]
                 if isinstance(meta.get("hook_title_ckb"), str):
                     clip_entry["hook_title_ckb"] = _text(meta["hook_title_ckb"])
                 if type(meta.get("duration_s")) in {int, float} and math.isfinite(
@@ -274,6 +302,13 @@ def read_historical_job(
         if recovery
         else None,
     }
+    source_id = data.get("options", {}).get("episode_source_id")
+    if (
+        include_candidates
+        and isinstance(source_id, str)
+        and re.fullmatch("[a-f0-9]{32}", source_id)
+    ):
+        record_out["options"] = {"episode_source_id": source_id}
     if review_sheet_url is not None:
         record_out["review_sheet_url"] = review_sheet_url
     return record_out

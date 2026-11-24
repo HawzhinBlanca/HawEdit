@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from contextlib import closing
 from http.client import HTTPSConnection
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import IO, Any
 from urllib.parse import urlencode
 
 from hawedit.v8.team_review import ReviewStore
@@ -30,7 +30,7 @@ class InstagramClient:
         host: str,
         method: str,
         route: str,
-        body: bytes | BinaryIO | None,
+        body: bytes | IO[bytes] | None,
         headers: Mapping[str, str],
     ) -> dict[str, Any]:
         conn = HTTPSConnection(host, timeout=120)
@@ -58,7 +58,7 @@ class InstagramClient:
             },
         )
 
-    def upload(self, container: str, movie: BinaryIO, size: int) -> None:
+    def upload(self, container: str, movie: IO[bytes], size: int) -> None:
         result = self.call(
             "rupload.facebook.com",
             "POST",
@@ -173,13 +173,13 @@ def publish_approved(store: ReviewStore, package: Path, account: str, api: Insta
                     "Publish already requested; check this container again for its result"
                 )
             result = api.graph(account + "/media_publish", {"creation_id": container})
-            receipt = str(result["id"])
+            media_id = str(result["id"])
             db.execute(
                 "UPDATE instagram SET phase='published',receipt=? WHERE bundle=? AND account=?",
-                (receipt, bundle, account),
+                (media_id, bundle, account),
             )
             db.commit()
-            return receipt
+            return media_id
 
 
 def instagram_cli(argv: list[str]) -> int:

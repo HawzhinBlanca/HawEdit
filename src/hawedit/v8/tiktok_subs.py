@@ -2166,6 +2166,7 @@ def build_viral_tiktok_ass(
     play_res_y: int = 1920,
     margin_v: int = 480,
     hook_title_ckb: str | None = None,
+    hook_y_top_px: float = 210.0,
     visual_interrupts: Sequence[tuple[int, int, str, str]] = (),
     style_preset: ClientStylePreset | str | None = None,
     speaker_bio: tuple[str, str | None] | None = None,
@@ -2178,6 +2179,8 @@ def build_viral_tiktok_ass(
         raise ValueError(f"clip_duration_ms must be > 0, got {clip_duration_ms}")
     if font_size <= 0:
         raise ValueError(f"font_size must be > 0, got {font_size}")
+    if not math.isfinite(hook_y_top_px) or not 0 <= hook_y_top_px < play_res_y:
+        raise ValueError("Hook top must lie within the output frame")
     preset = resolve_client_style_preset(style_preset)
     norm_interrupts = _normalize_visual_interrupts(visual_interrupts)
     norm_bio = _normalize_speaker_bio(speaker_bio)
@@ -2205,7 +2208,7 @@ def build_viral_tiktok_ass(
         f"Style: Default,{font_name},{font_size},{white},{active_bgr},{outline},&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,6.0,2.5,2,80,80,{margin_v},0",
         f"Style: HookTitle,{font_name},56,{hook_bgr},{hook_bgr},{outline},&HB40F0B0B,"
-        "-1,0,0,0,100,100,0,0,3,14.0,0.0,8,70,70,210,0",
+        f"-1,0,0,0,100,100,0,0,3,14.0,0.0,8,70,70,{round(hook_y_top_px)},0",
         f"Style: InterruptTop,{font_name},48,{white},{int_top_bgr},&H231C120F,&H231C120F,"
         "-1,0,0,0,100,100,0,0,3,16.0,0.0,8,70,70,175,0",
         f"Style: InterruptChest,{font_name},48,{white},{int_chest_bgr},&H231C120F,&H231C120F,"

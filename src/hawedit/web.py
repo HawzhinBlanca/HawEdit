@@ -63,6 +63,8 @@ _V8_OPTION_KEYS: Final[frozenset[str]] = frozenset(
         "max_clips",
         "brand_accent_hex",
         "speaker_source_id",
+        "correction_source_id",
+        "transcript_corrections",
         "cloud_consent_token",
         "subtitle_languages",
         "dub_languages",
@@ -252,6 +254,30 @@ def _parse_v8_repurpose_payload(payload: Mapping[str, Any]) -> tuple[str, str, d
         "end_card_handle": end_card_handle,
         "use_omni_asr": use_omni_asr,
     }
+    corrections = merged.get("transcript_corrections", [])
+    if not isinstance(corrections, list) or len(corrections) > 32:
+        raise ValueError("Expected at most 32 transcript corrections")
+    if corrections:
+        if merged.get("correction_source_id") != source_id:
+            raise ValueError("Confirm transcript corrections for this source")
+        from hawedit.v8.schema import WordRepair
+
+        checked = []
+        indices = set()
+        for row in corrections:
+            if not isinstance(row, dict):
+                raise ValueError("Expected a transcript correction")
+            repair = WordRepair.from_dict(row)
+            if (
+                max(len(repair.original), len(repair.repaired)) > 100
+                or repair.reason != "native editor"
+                or repair.word_index in indices
+            ):
+                raise ValueError("Invalid or duplicate transcript correction")
+            indices.add(repair.word_index)
+            checked.append(repair.to_dict())
+        normalized["transcript_corrections"] = checked
+        normalized["correction_source_id"] = source_id
     for option_name in ("subtitle_languages", "dub_languages"):
         tracks = merged.get(option_name, [])
         if (
@@ -403,6 +429,12 @@ def _build_v8_episode_config(config_cls: Any, opts: Mapping[str, Any]) -> Any:
         "end_card_title_ckb": end_title,
         "end_card_handle": end_handle,
     }
+    if opts.get("transcript_corrections"):
+        from hawedit.v8.schema import WordRepair
+
+        candidates["transcript_corrections"] = tuple(
+            WordRepair.from_dict(r) for r in opts["transcript_corrections"]
+        )
     if isinstance(config_cls, type) and dataclasses.is_dataclass(config_cls):
         field_names = {f.name for f in dataclasses.fields(config_cls)}
         kwargs = {k: v for k, v in candidates.items() if k in field_names}
@@ -1230,6 +1262,8 @@ class JobManager:
                         "face_share": face_share,
                         "grill_passed": grill_passed,
                         "grill_summary": grill_summary,
+                        "editorial_reason": getattr(item, "editorial_reason", ""),
+                        "source_quotes": list(getattr(item, "source_quotes", ())),
                         "preview_url": preview_url,
                         "preview_verified": bool(mp4_sha256 and duration_s > 0),
                         "cover_url": cover_url,
@@ -1242,6 +1276,8 @@ class JobManager:
                 )
                 v8_clip_artifacts[cid] = rel_map
                 v8_clip_meta[cid] = {
+                    "editorial_reason": clips_data[-1]["editorial_reason"],
+                    "source_quotes": clips_data[-1]["source_quotes"],
                     "hook_title_ckb": hook_title,
                     "duration_s": duration_s,
                     "face_share": face_share,
@@ -1516,7 +1552,7 @@ class HawEditWebHandler(http.server.BaseHTTPRequestHandler):
                     job = JOB_MANAGER.submit_job(
                         str(source_path),
                         client_token=client_token,
-                        options=v8_opts,
+                        options={**v8_opts, "episode_source_id": source_id},
                         desktop_mode=True,
                     )
                     self._json_reply(

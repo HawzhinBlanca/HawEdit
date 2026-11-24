@@ -1,7 +1,7 @@
 import hashlib
 import zipfile
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import IO, Any
 
 import pytest
 
@@ -24,7 +24,7 @@ class MetaTestClient(InstagramClient):
             return {"id": "123"}
         return {"status_code": "FINISHED"}
 
-    def upload(self, container: str, movie: BinaryIO, size: int) -> None:
+    def upload(self, container: str, movie: IO[bytes], size: int) -> None:
         assert container == "123" and size == 5
         self.uploaded = movie.read()
 

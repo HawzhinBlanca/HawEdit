@@ -43,6 +43,7 @@ from hawedit.v8.delivery_pack import (
     write_client_delivery_pack,
     write_client_review_html,
 )
+from hawedit.v8.schema import WordRepair
 from hawedit.v8.story_editor import (
     StoryEditorError,
     compile_story_to_assembly_spans,
@@ -198,6 +199,7 @@ class V8EpisodeConfig:
     subtitle_languages: tuple[str, ...] = ()
     dub_languages: tuple[str, ...] = ()
     translation_model: str | None = None
+    transcript_corrections: tuple[WordRepair, ...] = ()
     allow_web_stock: bool = False
     enable_broll: bool = True
     broll_dir: Path | None = None
@@ -263,11 +265,50 @@ class V8EpisodeConfig:
             "subtitle_languages": self.subtitle_languages,
             "dub_languages": self.dub_languages,
             "allow_web_stock": self.allow_web_stock,
+            "transcript_corrections": [r.to_dict() for r in self.transcript_corrections],
             "end_card_title_ckb": self.end_card_title_ckb,
             "end_card_handle": self.end_card_handle,
             "director_model": self.director_model,
             "omni_url": self.omni_url,
         }
+
+
+def _correct_source_words(words: Sequence[Word], repairs: Sequence[WordRepair]) -> tuple[Word, ...]:
+    corrected = list(words)
+    seen: set[int] = set()
+    for repair in repairs:
+        idx = repair.word_index
+        if idx in seen or idx >= len(words) or words[idx].w != repair.original:
+            raise V8EpisodeError(
+                f"Source word {idx} has changed or appears twice. Review the transcript again."
+            )
+        seen.add(idx)
+        corrected[idx] = dataclasses.replace(words[idx], w=repair.repaired)
+    return tuple(corrected)
+
+
+def _quote_source_spans(
+    words: Sequence[Word],
+    spans: Sequence[tuple[int, int]],
+    originals: Sequence[Word],
+) -> tuple[dict[str, Any], ...]:
+    excerpts = []
+    for start, end in spans:
+        indexed = [
+            (i, w) for i, w in enumerate(words) if start <= (w.start_ms + w.end_ms) // 2 < end
+        ]
+        if indexed:
+            excerpts.append(
+                {
+                    "in_ms": start,
+                    "out_ms": end,
+                    "first_word": indexed[0][0],
+                    "last_word": indexed[-1][0],
+                    "quote": " ".join(w.w for _, w in indexed),
+                    "words": [{"index": i, "original": originals[i].w} for i, _ in indexed],
+                }
+            )
+    return tuple(excerpts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +325,8 @@ class V8EpisodeClipItem:
     compile_result: V8CompileResult
     delivery_pack: ClientDeliveryPack
     wall_time_s: float
+    source_quotes: tuple[dict[str, Any], ...] = ()
+    editorial_reason: str = ""
 
     @property
     def grill_passed(self) -> bool | None:
@@ -314,6 +357,8 @@ class V8EpisodeClipItem:
             "clip_out_ms": self.clip_out_ms,
             "discovery_score": self.discovery_score,
             "discovery_reason": self.discovery_reason,
+            "source_quotes": list(self.source_quotes),
+            "editorial_reason": self.editorial_reason,
             "grill_passed": self.grill_passed,
             "grill_summary": self.grill_summary,
             "hook_title_ckb": self.hook_title_ckb,
@@ -855,6 +900,9 @@ def compile_v8_episode(
         if resolved_wav_path is None:
             resolved_wav_path = stage0_wav
 
+    original_words = words
+    if cfg.transcript_corrections:
+        words = _correct_source_words(words, cfg.transcript_corrections)
     all_sentences = segment_sentences(words)
     if not all_sentences:
         raise V8EpisodeError("Transcript segmented into zero sentences")
@@ -994,21 +1042,30 @@ def compile_v8_episode(
                     ) from exc
                 q_dir = out_dir / "quarantine"
                 q_dir.mkdir(parents=True, exist_ok=True)
-                for partial in (
-                    out_dir / f"{clip_id}.v8.mp4",
-                    out_dir / f"{clip_id}.v8.overlay.mov",
+                candidate_key = f"cand-{cand_idx:02d}-{_safe_media_id(raw_recipe.story_id)[:64]}"
+                evidence = []
+                for suffix in (
+                    ".v8.mp4",
+                    ".v8.overlay.mov",
+                    ".v8.ass",
+                    ".director.json",
+                    ".grill.json",
                 ):
+                    partial = out_dir / f"{clip_id}{suffix}"
                     if partial.is_file():
-                        partial.unlink()
+                        target = q_dir / f"{candidate_key}{suffix}"
+                        partial.replace(target)
+                        evidence.append(target.name)
                 q_record = {
                     "candidate_index": cand_idx,
+                    "evidence_files": evidence,
                     "story_id": raw_recipe.story_id,
                     "clip_id": clip_id,
                     "hook_title_ckb": raw_recipe.hook_title_ckb,
                     "error": str(exc),
                 }
                 write_text_atomic(
-                    q_dir / f"cand-{cand_idx:02d}-{raw_recipe.story_id}.quarantine.json",
+                    q_dir / f"{candidate_key}.quarantine.json",
                     json.dumps(q_record, ensure_ascii=False, indent=2) + "\n",
                 )
                 quarantined_items.append(q_record)
@@ -1027,6 +1084,12 @@ def compile_v8_episode(
                     clip_out_ms=clip_out_ms,
                     discovery_score=round(float(verified_recipe.viral_score), 4),
                     discovery_reason=reason,
+                    editorial_reason=verified_recipe.rationale_ckb,
+                    source_quotes=_quote_source_spans(
+                        words,
+                        [(sp.source_in_ms, sp.source_out_ms) for sp in compiled.assembly_spans],
+                        original_words,
+                    ),
                     compile_result=compile_res,
                     delivery_pack=pack,
                     wall_time_s=round(time.monotonic() - clip_t0, 3),
@@ -1212,6 +1275,12 @@ def compile_v8_episode(
                 clip_out_ms=clip_out_ms,
                 discovery_score=score,
                 discovery_reason=reason,
+                editorial_reason=reason,
+                source_quotes=_quote_source_spans(
+                    words,
+                    compile_res.retained_intervals_ms or ((clip_in_ms, clip_out_ms),),
+                    original_words,
+                ),
                 compile_result=compile_res,
                 delivery_pack=pack,
                 wall_time_s=round(time.monotonic() - clip_t0, 3),

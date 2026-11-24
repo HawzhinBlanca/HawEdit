@@ -185,6 +185,29 @@ def test_multicut_story_plan_and_meaning_preservation_surgical_restore(tmp_path:
     assert whole_episode[-1].visual_cues[0].anchor_word_idx == 2028
     assert whole_episode[-1].drop_ranges[0].start_word_idx == 2003
 
+    requests = []
+
+    def small_context(url: str, body: bytes | None, headers: Any) -> tuple[int, str]:
+        assert body is not None
+        prompt = json.loads(body)["messages"][-1]["content"]
+        requests.append(prompt)
+        if "1200 total words" in prompt:
+            return 400, '{"error": {"code": "context_length_exceeded"}}'
+        return 200, json.dumps({"choices": [{"message": {"content": json.dumps(story_payload)}}]})
+
+    resized = plan_episode_multicut_stories(
+        long_words,
+        backend="local-omni",
+        model_id="local-test",
+        max_stories=3,
+        min_duration_ms=15_000,
+        max_duration_ms=55_000,
+        transport=small_context,
+    )
+    assert "1200 total words" in requests[0] and "600 total words" in requests[1]
+    assert [story.keep_spans[0].start_word_idx for story in resized] == [0, 400, 800]
+    assert "250 total words" in requests[-1]
+
     # Gemini 4 Carbon verifier catches drop[1] (the risky negation drop) and restores ONLY drop[1].
     verify_payload = {
         "approved": False,
@@ -613,6 +636,7 @@ def test_v10_3_episode_overgenerate_quarantines_bad_candidate_and_promotes_winne
     assert res.clips[0].hook_title_ckb == "چیرۆکی سەرکەوتوو"
     assert len(res.quarantined) == 1
     assert res.quarantined[0]["story_id"] == "bad-cand"
+    assert (tmp_path / "out/quarantine/cand-01-bad-cand.v8.mp4").read_bytes() == b"mp4-bytes"
     assert (tmp_path / "out" / "quarantine" / "cand-01-bad-cand.quarantine.json").is_file()
 
 

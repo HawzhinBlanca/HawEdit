@@ -805,14 +805,16 @@ class DefaultV8SubtitleRenderer:
             if crop.end_ms <= start or crop.start_ms >= duration_ms:
                 continue
             if crop.start_ms > covered or crop.face_height_px <= 0:
-                break
+                self._end_card = None
+                return
             _, height, top = vertical_framing(
                 source_height, cw, ch, crop.face_center_y_px, crop.face_height_px
             )
             face_top = (crop.face_center_y_px - crop.face_height_px / 2 - top) / height
             face_bottom = (crop.face_center_y_px + crop.face_height_px / 2 - top) / height
             if face_top < 0.72 and face_bottom > 0.13:
-                break
+                self._end_card = None
+                return
             covered = max(covered, crop.end_ms)
         if covered < duration_ms or any(s < duration_ms and e > start for s, e in split_windows):
             self._end_card = None
@@ -852,6 +854,7 @@ class DefaultV8SubtitleRenderer:
                 play_res_x=self._width,
                 play_res_y=self._height,
                 hook_title_ckb=script.hook_title_ckb or None,
+                hook_y_top_px=min(self._hook_y_top_px, self._height - 1),
                 visual_interrupts=vis_interrupts,
                 style_preset=self._style_preset,
                 speaker_bio=self._speaker_bio,

@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from hawedit.delivery import ms_to_srt_time, parse_srt_times
 from hawedit.studio_artifacts import UnsatisfiableRange, byte_range
 from hawedit.studio_private import PrivateDirectory
 from hawedit.v8.blind_review import _CRITERIA
@@ -107,6 +108,8 @@ class ReviewClip:
     video: Path
     package: Path
     post: str
+    dubs: dict[str, Path]
+    tracks: dict[str, bytes]
 
 
 def load_release_candidates(episode: Path, snapshot: Path) -> dict[str, ReviewClip]:
@@ -131,7 +134,25 @@ def load_release_candidates(episode: Path, snapshot: Path) -> dict[str, ReviewCl
             with archive.open("reel.mp4") as source, video.open("wb") as dest:
                 shutil.copyfileobj(source, dest)
             post = archive.read("post.txt").decode("utf-8")
-        clips[key] = ReviewClip(video, package, post)
+            dubs = {}
+            tracks = {}
+            for lang in ("ar", "en"):
+                dub = f"reel.{lang}.dub.mp4"
+                caption = f"captions.{lang}.draft.srt"
+                if dub in archive.namelist():
+                    target = snapshot / f"{key}.{lang}.mp4"
+                    with archive.open(dub) as source, target.open("wb") as dest:
+                        shutil.copyfileobj(source, dest)
+                    dubs[lang] = target
+                if caption in archive.namelist():
+                    raw = archive.read(caption).decode("utf-8-sig").strip()
+                    blocks = raw.split("\n\n")
+                    cues = ["WEBVTT"]
+                    for (a, b), lines in zip(parse_srt_times(raw), blocks, strict=True):
+                        timing = (ms_to_srt_time(a) + " --> " + ms_to_srt_time(b)).replace(",", ".")
+                        cues.append(timing + "\n" + html.escape("\n".join(lines.splitlines()[2:])))
+                    tracks[lang] = ("\n\n".join(cues) + "\n").encode()
+        clips[key] = ReviewClip(video, package, post, dubs, tracks)
     if not clips:
         raise ValueError("No accepted social handoff packages")
     return clips
@@ -158,9 +179,22 @@ def _review_page(store: ReviewStore, clips: dict[str, ReviewClip], approver: boo
         release = (
             f'<a href="/pack/{key}">داگرتنی پاکێجی پەسەندکراو</a>' if store.approved(key) else ""
         )
+        tracks = "".join(
+            f'<track kind="subtitles" srclang="{lang}" label="{lang.upper()}" '
+            f'src="/sub-{lang}/{key}">'
+            for lang in clip.tracks
+        )
+        versions = (
+            '<label>دەنگ <select class="voice"><option value="video">کوردی</option>'
+            + "".join(f'<option value="dub-{lang}">{lang.upper()}</option>' for lang in clip.dubs)
+            + "</select></label>"
+            if clip.dubs
+            else ""
+        )
         rows.append(
             f'<form data-key="{key}"><h2>کلیپ {index}</h2>'
-            f'<video controls preload="metadata" playsinline src="/video/{key}"></video>'
+            '<video controls preload="metadata" playsinline '
+            f'src="/video/{key}">{tracks}</video>{versions}'
             f"<p>{html.escape(clip.post)}</p>{scores}<label>تێبینی"
             f'<textarea name="notes" maxlength="2000"></textarea></label>{decisions}'
             f"<button>پاشەکەوتکردن</button> {release}<output></output></form>"
@@ -174,7 +208,10 @@ label,output{display:block;margin:.6rem 0}button,select,textarea{font:inherit}a{
 p{white-space:pre-line}</style><h1>هەڵسەنگاندنی کلیپەکان</h1>"""
         + "".join(rows)
         + """
-<script>for(const f of document.forms) f.onsubmit=async e=>{
+<script>for(const select of document.querySelectorAll('.voice')){
+select.onchange=()=>{const form=select.closest('form'),v=form.querySelector('video');
+v.src='/'+select.value+'/'+form.dataset.key;v.load()}}
+for(const f of document.forms) f.onsubmit=async e=>{
 e.preventDefault();const scores={};for(const s of f.querySelectorAll('select[required]'))
 scores[s.name]=Number(s.value);
 try{const r=await fetch('/ballot/'+f.dataset.key,{method:'POST',
@@ -224,15 +261,27 @@ def review_handler(
                 self.reply(200, _review_page(store, clips, member[1]), "text/html; charset=utf-8")
                 return
             parts = self.path.split("/")
-            if len(parts) != 3 or parts[2] not in clips or parts[1] not in ("video", "pack"):
+            if len(parts) != 3 or parts[2] not in clips:
                 self.reply(404, b"Unknown candidate")
                 return
             action, key = parts[1:]
+            clip = clips[key]
             is_pack = action == "pack"
             if is_pack and not store.approved(key):
                 self.reply(403, b"Approval required for this package")
                 return
-            target = clips[key].package if is_pack else clips[key].video
+            if action.startswith("sub-") and action[4:] in clip.tracks:
+                self.reply(200, clip.tracks[action[4:]], "text/vtt; charset=utf-8")
+                return
+            if is_pack:
+                target = clip.package
+            elif action == "video":
+                target = clip.video
+            elif action.startswith("dub-") and action[4:] in clip.dubs:
+                target = clip.dubs[action[4:]]
+            else:
+                self.reply(404, b"Unknown review asset")
+                return
             with target.open("rb") as stream:
                 size = target.stat().st_size
                 try:

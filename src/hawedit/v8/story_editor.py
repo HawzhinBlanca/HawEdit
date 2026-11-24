@@ -629,6 +629,15 @@ def _call_structured_llm(
             ensure_ascii=False,
         ).encode("utf-8")
         status, body = tx(f"{resolved_url}/chat/completions", payload, {})
+        if status == 400 and any(
+            marker in body.lower()
+            for marker in (
+                "exceed_context_size_error",
+                "exceeds the available context size",
+                "context_length_exceeded",
+            )
+        ):
+            raise _ContextLimit(f"Local model {resolved_model} cannot fit this transcript section")
         if status != 200:
             raise StoryEditorError(
                 f"Local LLM {resolved_model} request failed (HTTP {status}): "
@@ -756,7 +765,9 @@ def _parse_and_validate_recipes(
     max_duration_ms: int,
 ) -> tuple[MultiCutStoryRecipe, ...]:
     raw_stories = payload.get("stories")
-    if not isinstance(raw_stories, list) or not raw_stories:
+    if not isinstance(raw_stories, list):
+        raise StoryEditorError("Story Architect returned invalid stories")
+    if not raw_stories:
         raise _NoStory("Story Architect returned zero stories")
 
     n_words = len(words)
@@ -926,6 +937,10 @@ def _distinct_recipes(
     return tuple(selected)
 
 
+class _ContextLimit(StoryEditorError):
+    """The local provider explicitly rejected the prompt length."""
+
+
 class _NoStory(StoryEditorError):
     """A window contained no valid nomination."""
 
@@ -974,65 +989,67 @@ def plan_episode_multicut_stories(
     if max_stories < 1:
         raise StoryEditorError(f"max_stories must be >= 1, got {max_stories}")
 
-    window_size = 1200
-    if len(words) > window_size:
-        nominations: list[MultiCutStoryRecipe] = []
-        for start in range(0, len(words), window_size - 200):
-            end = min(start + window_size, len(words))
-            try:
-                local = plan_episode_multicut_stories(
-                    words[start:end],
-                    backend=backend,
-                    max_stories=min(3, max_stories),
-                    min_duration_ms=min_duration_ms,
-                    max_duration_ms=max_duration_ms,
-                    audio_wav=audio_wav,
-                    model_id=model_id,
-                    api_key=api_key,
-                    base_url=base_url,
-                    transport=transport,
-                )
-                nominations.extend(_episode_recipe(story, start) for story in local)
-            except _NoStory:
-                pass
-            if end == len(words):
-                break
-        if not nominations:
-            raise _NoStory("No episode window produced a valid source-grounded story")
-        return _distinct_recipes(nominations, max_stories)
+    def nominate(words: Sequence[Word], max_stories: int) -> tuple[MultiCutStoryRecipe, ...]:
+        ep_dur_s = (words[-1].end_ms - words[0].start_ms) / 1000.0
+        indexed_text = _format_indexed_episode_transcript(words, audio_wav=audio_wav)
+        user_prompt = (
+            f"Source section duration: {ep_dur_s:.1f} s "
+            f"({len(words)} total words, indices 0..{len(words) - 1}).\n"
+            f"Return {max_stories} distinct non-overlapping viral multi-cut stories in `stories` "
+            "(spread across early, middle, and late sections of the transcript).\n"
+            f"Target edited duration per story (AFTER subtracting drop_ranges): "
+            f"{min_duration_ms / 1000.0:.0f}s to {max_duration_ms / 1000.0:.0f}s "
+            "(aim for 90-165 kept words across 2-4 beats per story).\n\n"
+            f"INDEXED SORANI TRANSCRIPT:\n{indexed_text}\n"
+        )
 
-    ep_dur_s = words[-1].end_ms / 1000.0
-    indexed_text = _format_indexed_episode_transcript(words, audio_wav=audio_wav)
-    user_prompt = (
-        f"Episode duration: {ep_dur_s:.1f} s "
-        f"({len(words)} total words, indices 0..{len(words) - 1}).\n"
-        f"Return {max_stories} distinct non-overlapping viral multi-cut stories in `stories` "
-        "(spread across early, middle, and late sections of the transcript).\n"
-        f"Target edited duration per story (AFTER subtracting drop_ranges): "
-        f"{min_duration_ms / 1000.0:.0f}s to {max_duration_ms / 1000.0:.0f}s "
-        "(aim for 90-165 kept words across 2-4 beats per story).\n\n"
-        f"FULL INDEXED SORANI TRANSCRIPT:\n{indexed_text}\n"
-    )
+        payload, _ = _call_structured_llm(
+            backend=backend,
+            system_prompt=STORY_ARCHITECT_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema=MULTICUT_EPISODE_SCHEMA,
+            schema_name="hawedit_v11_multicut_episode",
+            model_id=model_id,
+            default_gemini_model=DEFAULT_STORY_ARCHITECT_MODEL,
+            api_key=api_key,
+            base_url=base_url,
+            transport=transport,
+        )
+        return _parse_and_validate_recipes(
+            payload,
+            words,
+            max_stories=max_stories,
+            min_duration_ms=min_duration_ms,
+            max_duration_ms=max_duration_ms,
+        )
 
-    payload, _ = _call_structured_llm(
-        backend=backend,
-        system_prompt=STORY_ARCHITECT_SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-        schema=MULTICUT_EPISODE_SCHEMA,
-        schema_name="hawedit_v11_multicut_episode",
-        model_id=model_id,
-        default_gemini_model=DEFAULT_STORY_ARCHITECT_MODEL,
-        api_key=api_key,
-        base_url=base_url,
-        transport=transport,
-    )
-    return _parse_and_validate_recipes(
-        payload,
-        words,
-        max_stories=max_stories,
-        min_duration_ms=min_duration_ms,
-        max_duration_ms=max_duration_ms,
-    )
+    start = 0
+    window_size = min(1200, len(words))
+    nominations: list[MultiCutStoryRecipe] = []
+    while start < len(words):
+        end = min(start + window_size, len(words))
+        whole_episode = start == 0 and end == len(words)
+        try:
+            local = nominate(
+                words[start:end], max_stories if whole_episode else min(3, max_stories)
+            )
+            if whole_episode:
+                return local
+            nominations.extend(_episode_recipe(story, start) for story in local)
+        except _ContextLimit:
+            if end - start <= 200:
+                raise
+            window_size = max(200, (end - start) // 2)
+            continue
+        except _NoStory:
+            if whole_episode:
+                raise
+        if end == len(words):
+            break
+        start = end - min(200, window_size // 3)
+    if not nominations:
+        raise _NoStory("No episode window produced a valid source-grounded story")
+    return _distinct_recipes(nominations, max_stories)
 
 
 def refine_story_pruning(

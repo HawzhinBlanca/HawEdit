@@ -210,6 +210,8 @@ class _StubClipItem:
     hook_title_ckb: str
     duration_s: float
     face_share: float
+    editorial_reason: str = "A complete anecdote"
+    source_quotes: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -870,6 +872,8 @@ def test_v9_audit_fixes_review_links_restart_history_etag_and_security(
     assert hclip["cover_url"] == f"/api/jobs/{job_id}/clips/ep-clip-01/cover.png"
     assert hclip["grill_passed"] is True
     assert hclip["face_share"] == 0.98
+    assert hclip["editorial_reason"] == "A complete anecdote"
+    assert hclip["source_quotes"] == []
     assert hclip["duration_s"] == 32.0
     assert set(hclip["download_urls"]) >= {"mp4", "srt", "edl", "otio"}
 
@@ -969,3 +973,34 @@ def test_studio_import_reuses_archived_youtube_and_returns_upload_identity(
     assert store.source(status["source"]["source_id"]).read_bytes() == FIXTURE_VIDEO.read_bytes()
     assert json.loads(_http_post("/api/youtube/import", payload)[2]) == status
     assert _http_post("/api/youtube/import", payload, host="example.org")[0] == 403
+
+
+def test_studio_word_corrections_are_source_bound_and_preserve_timing() -> None:
+    from hawedit.transcripts import Word
+    from hawedit.v8.episode import (
+        V8EpisodeConfig,
+        V8EpisodeError,
+        _correct_source_words,
+        _quote_source_spans,
+    )
+
+    source_id = "a" * 32
+    payload = _v8_payload(source_id)
+    edit = {"word_index": 1, "original": "old", "repaired": "new", "reason": "native editor"}
+    payload["options"].update(transcript_corrections=[edit], correction_source_id="b" * 32)
+    with pytest.raises(ValueError, match="this source"):
+        web._parse_v8_repurpose_payload(payload)
+    payload["options"]["correction_source_id"] = source_id
+    opts = web._parse_v8_repurpose_payload(payload)[2]
+    config = web._build_v8_episode_config(V8EpisodeConfig, opts)
+    original = (Word("first", 0, 200, 0.9), Word("old", 220, 480, 0.8))
+    changed = _correct_source_words(original, config.transcript_corrections)
+    assert changed == (original[0], Word("new", 220, 480, 0.8))
+    evidence = _quote_source_spans(changed, [(0, 500)], original)[0]
+    assert evidence["quote"] == "first new"
+    assert evidence["words"][1] == {"index": 1, "original": "old"}
+    with pytest.raises(V8EpisodeError, match="changed"):
+        _correct_source_words(changed, config.transcript_corrections)
+    payload["options"]["transcript_corrections"].append(edit)
+    with pytest.raises(ValueError, match="duplicate"):
+        web._parse_v8_repurpose_payload(payload)
