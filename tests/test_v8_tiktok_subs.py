@@ -621,6 +621,9 @@ class TestVisualInterruptsAndBidiD387:
         )
         assert "Style: InterruptTop," in ass_text
         assert "Style: InterruptChest," in ass_text
+        # Every V8 ASS style must use Encoding=-1 (D-334) so libass keeps Kurdish RTL word order.
+        style_lines = [line for line in ass_text.splitlines() if line.startswith("Style:")]
+        assert style_lines and all(line.endswith(",-1") for line in style_lines)
         # Top interrupt clamped to >= 2600 ms (0:00:02.60) so it never overlaps hook card.
         assert (
             f"Dialogue: 2,0:00:0{VISUAL_INTERRUPT_MIN_START_MS // 1000}.60,0:00:04.20,InterruptTop"

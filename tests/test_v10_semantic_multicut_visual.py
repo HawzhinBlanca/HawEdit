@@ -1089,3 +1089,58 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
             model_id="test",
             transport=lambda *_: (200, '{"choices":[{"message":{"content":"{}"}}]}'),
         )
+
+    # Fallback source-quote hook prefers clause boundaries and trims dangling prepositions.
+    from hawedit.v8.story_editor import _source_quote_hook
+
+    clause_words = [
+        Word(w="نووسرابێ", start_ms=0, end_ms=400, conf=1.0),
+        Word(w="هەنێ", start_ms=800, end_ms=1100, conf=1.0),
+        Word(w="مۆدێلی", start_ms=1120, end_ms=1500, conf=1.0),
+        Word(w="وەکو", start_ms=1520, end_ms=1800, conf=1.0),
+        Word(w="جێمنای", start_ms=1820, end_ms=2200, conf=1.0),
+        Word(w="لە", start_ms=2220, end_ms=2400, conf=1.0),
+    ]
+    hook = _source_quote_hook("مۆدێلی جێمنای کوردی", clause_words)
+    assert hook == "هەنێ مۆدێلی وەکو جێمنای"
+
+    # Late-episode assembled spans use fast -ss/-t input seeking with shifted trim bounds.
+    from hawedit.assembly import assembly_seek_args
+    from hawedit.sentences import Sentence
+
+    dummy_sent = (
+        Sentence(words=(Word(w="کوردی", start_ms=0, end_ms=500, conf=1.0),), complete=True),
+    )
+    late_spans = (
+        AssemblySpan(
+            span_index=0,
+            source_in_ms=2_203_659,
+            source_out_ms=2_206_097,
+            duration_ms=2_438,
+            sentences=dummy_sent,
+        ),
+        AssemblySpan(
+            span_index=1,
+            source_in_ms=2_269_665,
+            source_out_ms=2_271_000,
+            duration_ms=1_335,
+            sentences=dummy_sent,
+        ),
+    )
+    seek_args, seek_offset = assembly_seek_args(late_spans)
+    assert seek_args == ["-ss", "2202.659", "-t", "69.341"]
+    assert seek_offset == 2_202_659
+    shifted = assembled_splice_filter(late_spans, crossfade_ms=24, input_offset_ms=seek_offset)
+    assert "trim=start=1.000:end=3.438" in shifted
+    assert "trim=start=67.006:end=68.341" in shifted
+    assert assembly_seek_args(
+        (
+            AssemblySpan(
+                span_index=0,
+                source_in_ms=500,
+                source_out_ms=1_500,
+                duration_ms=1_000,
+                sentences=dummy_sent,
+            ),
+        )
+    ) == ([], 0)

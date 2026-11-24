@@ -50,6 +50,7 @@ __all__ = [
     "assemble_cold_open",
     "assemble_spans",
     "assembled_splice_filter",
+    "assembly_seek_args",
     "judge_assembled_reel_multimodal",
     "judge_assembly",
     "plan_viral_story_cut",
@@ -308,10 +309,24 @@ def assemble_cold_open(
     return assemble_spans(span_groups)
 
 
+def assembly_seek_args(spans: Sequence[AssemblySpan]) -> tuple[list[str], int]:
+    """Return fast FFmpeg input-seek args ``([-ss, ..., -t, ...], offset_ms)`` for late spans."""
+    if not spans:
+        raise ValueError("Cannot compute seek window for empty spans")
+    min_in = min(sp.source_in_ms for sp in spans)
+    max_out = max(sp.source_out_ms for sp in spans)
+    if min_in < 2_000:
+        return ([], 0)
+    seek_in = min_in - 1_000
+    dur_ms = (max_out + 1_000) - seek_in
+    return (["-ss", f"{seek_in / 1000.0:.3f}", "-t", f"{dur_ms / 1000.0:.3f}"], seek_in)
+
+
 def assembled_splice_filter(
     spans: Sequence[AssemblySpan],
     *,
     crossfade_ms: int = 0,
+    input_offset_ms: int = 0,
 ) -> str:
     """Generate the FFmpeg filtergraph splicing participating spans in order (Task T4.9, D-394).
 
@@ -324,6 +339,8 @@ def assembled_splice_filter(
         raise ValueError("Cannot create splice filter for empty spans")
     if crossfade_ms < 0:
         raise ValueError(f"crossfade_ms must be non-negative, got {crossfade_ms}")
+    if input_offset_ms < 0 or input_offset_ms > min(sp.source_in_ms for sp in spans):
+        raise ValueError(f"input_offset_ms out of range: {input_offset_ms}")
 
     v_trims: list[str] = []
     a_trims: list[str] = []
@@ -331,8 +348,8 @@ def assembled_splice_filter(
 
     n = len(spans)
     for i, span in enumerate(spans):
-        in_s = span.source_in_ms / 1000.0
-        out_s = span.source_out_ms / 1000.0
+        in_s = (span.source_in_ms - input_offset_ms) / 1000.0
+        out_s = (span.source_out_ms - input_offset_ms) / 1000.0
         span_dur_ms = span.source_out_ms - span.source_in_ms
         if crossfade_ms > 0:
             eff_fade_ms = min(crossfade_ms, max(4, span_dur_ms // 4))

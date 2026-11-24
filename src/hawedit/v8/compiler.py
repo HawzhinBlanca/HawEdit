@@ -1360,17 +1360,19 @@ def _build_spliced_director_proxy(
     ffmpeg: Path,
 ) -> Path:
     """Build a compact 360p @ 1 fps + 16 kHz AAC proxy matching the exact effective timeline."""
-    from hawedit.assembly import assembled_splice_filter
+    from hawedit.assembly import assembled_splice_filter, assembly_seek_args
     from hawedit.silence import silence_trim_filter
 
     if assembly_spans:
-        splice = assembled_splice_filter(assembly_spans)
+        seek_args, seek_offset = assembly_seek_args(assembly_spans)
+        splice = assembled_splice_filter(assembly_spans, input_offset_ms=seek_offset)
         fc = f"{splice};[v_concat]fps=1,scale=-2:360[v_out];[a_concat]aresample=16000[a_out]"
         cmd = [
             str(ffmpeg),
             "-hide_banner",
             "-loglevel",
             "error",
+            *seek_args,
             "-i",
             str(source_mp4),
             "-filter_complex",
@@ -1554,9 +1556,10 @@ def _extract_assembled_proxy_and_wav(
     fps: float = 25.0,
 ) -> tuple[Path, Path]:
     """Extract a spliced tracking proxy + 16 kHz WAV matching exact semantic assembly spans."""
-    from hawedit.assembly import assembled_splice_filter
+    from hawedit.assembly import assembled_splice_filter, assembly_seek_args
 
-    splice = assembled_splice_filter(assembly_spans, crossfade_ms=24)
+    seek_args, seek_offset = assembly_seek_args(assembly_spans)
+    splice = assembled_splice_filter(assembly_spans, crossfade_ms=24, input_offset_ms=seek_offset)
     fc = f"{splice};[v_concat]fps={fps:g},scale={width}:-2[v_out];[a_concat]aresample=16000[a_out]"
     dur_s = sum(sp.duration_ms for sp in assembly_spans) / 1000.0
     proc = subprocess.run(
@@ -1565,6 +1568,7 @@ def _extract_assembled_proxy_and_wav(
             "-hide_banner",
             "-loglevel",
             "error",
+            *seek_args,
             "-i",
             str(source_mp4),
             "-filter_complex",

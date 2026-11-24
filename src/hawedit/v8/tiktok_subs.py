@@ -23,7 +23,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.captions import DEFAULT_CAPTION_FONT, RTL_MARK, assert_font_covers_kurdish, find_ffmpeg
+from hawedit.captions import (
+    ASS_ENCODING_AUTO,
+    DEFAULT_CAPTION_FONT,
+    RTL_MARK,
+    assert_font_covers_kurdish,
+    find_ffmpeg,
+)
 from hawedit.transcripts import Word
 from hawedit.v8.styles import ClientStylePreset, resolve_client_style_preset
 
@@ -2206,23 +2212,23 @@ def build_viral_tiktok_ass(
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Default,{font_name},{font_size},{white},{active_bgr},{outline},&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,6.0,2.5,2,80,80,{margin_v},0",
+        f"-1,0,0,0,100,100,0,0,1,6.0,2.5,2,80,80,{margin_v},{ASS_ENCODING_AUTO}",
         f"Style: HookTitle,{font_name},56,{hook_bgr},{hook_bgr},{outline},&HB40F0B0B,"
-        f"-1,0,0,0,100,100,0,0,3,14.0,0.0,8,70,70,{round(hook_y_top_px)},0",
+        f"-1,0,0,0,100,100,0,0,3,14.0,0.0,8,70,70,{round(hook_y_top_px)},{ASS_ENCODING_AUTO}",
         f"Style: InterruptTop,{font_name},48,{white},{int_top_bgr},&H231C120F,&H231C120F,"
-        "-1,0,0,0,100,100,0,0,3,16.0,0.0,8,70,70,175,0",
+        f"-1,0,0,0,100,100,0,0,3,16.0,0.0,8,70,70,175,{ASS_ENCODING_AUTO}",
         f"Style: InterruptChest,{font_name},48,{white},{int_chest_bgr},&H231C120F,&H231C120F,"
-        "-1,0,0,0,100,100,0,0,3,16.0,0.0,2,70,70,750,0",
+        f"-1,0,0,0,100,100,0,0,3,16.0,0.0,2,70,70,750,{ASS_ENCODING_AUTO}",
     ]
     if norm_bio is not None:
         lines.append(
             f"Style: SpeakerBio,{font_name},40,{white},{active_bgr},&H2018120E,&H2018120E,"
-            "-1,0,0,0,100,100,0,0,3,14.0,0.0,3,90,136,240,0"
+            f"-1,0,0,0,100,100,0,0,3,14.0,0.0,3,90,136,240,{ASS_ENCODING_AUTO}"
         )
     if norm_end_card is not None:
         lines.append(
             f"Style: EndCard,{font_name},52,{white},{active_bgr},&H1418120E,&H1418120E,"
-            "-1,0,0,0,100,100,0,0,3,22.0,0.0,5,90,90,120,0"
+            f"-1,0,0,0,100,100,0,0,3,22.0,0.0,5,90,90,120,{ASS_ENCODING_AUTO}"
         )
     lines.extend(
         [

@@ -1975,7 +1975,15 @@ class OfflineRestrainedDirector:
                 continue
             if any(abs(w.start_ms - prev.start_ms) < 9_000 for prev in interrupts):
                 continue
-            phrase_words = repaired_words[word_idx : min(len(repaired_words), word_idx + 3)]
+            raw_slice = repaired_words[word_idx : min(len(repaired_words), word_idx + 3)]
+            phrase_words = [raw_slice[0]]
+            for nxt_w in raw_slice[1:]:
+                if nxt_w.start_ms - phrase_words[-1].end_ms >= 350:
+                    break
+                phrase_words.append(nxt_w)
+            _dangling = {"و", "لە", "بە", "بۆ", "کە", "یا", "یان", "ئەو", "ئەم", "تا"}
+            while len(phrase_words) > 2 and phrase_words[-1].w.strip(_PUNCT_STRIP) in _dangling:
+                phrase_words.pop()
             phrase = " ".join(
                 pw.w.strip(_PUNCT_STRIP) for pw in phrase_words if pw.w.strip(_PUNCT_STRIP)
             )

@@ -1075,7 +1075,7 @@ def test_closeup_outro_keeps_call_to_action_in_post_text(tmp_path: Path) -> None
     ass = subs.ass_path.read_text(encoding="utf-8")
     assert ",EndCard," not in ass
     assert any(
-        line.endswith(",1030,0")
+        line.endswith(",1030,-1")
         for line in ass.splitlines()
         if line.startswith("Style: HookTitle,")
     )

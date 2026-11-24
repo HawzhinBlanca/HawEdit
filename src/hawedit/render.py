@@ -2271,6 +2271,7 @@ def render_clip(
 
     filter_script: Path | None = None
     filter_script_content: str | None = None
+    assembly_input_args: list[str] = []
     if (
         has_logo
         or has_pb
@@ -2284,9 +2285,14 @@ def render_clip(
     ):
         framed_before_silence = False
         if has_assembly and assembly_spans is not None:
-            from hawedit.assembly import assembled_splice_filter
+            from hawedit.assembly import assembled_splice_filter, assembly_seek_args
 
-            splice_str = assembled_splice_filter(assembly_spans, crossfade_ms=assembly_crossfade_ms)
+            assembly_input_args, assembly_offset_ms = assembly_seek_args(assembly_spans)
+            splice_str = assembled_splice_filter(
+                assembly_spans,
+                crossfade_ms=assembly_crossfade_ms,
+                input_offset_ms=assembly_offset_ms,
+            )
             trim_prefix = f"{splice_str};[v_concat]fps={clip_fps}[v_cfr];"
             v_in = "[v_cfr]"
             a_in = "[a_concat]"
@@ -2541,7 +2547,7 @@ def render_clip(
             filter_script.write_text(filter_script_content, encoding="utf-8")
         try:
             input_cut_args = (
-                []
+                assembly_input_args
                 if has_assembly
                 else ["-ss", f"{clip.in_ms / 1000:.3f}", "-t", f"{duration_ms / 1000:.3f}"]
             )

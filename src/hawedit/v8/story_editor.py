@@ -1149,6 +1149,11 @@ def plan_episode_multicut_stories(
     return _distinct_recipes(nominations, max_stories)
 
 
+_DANGLING_HOOK_WORDS: Final[frozenset[str]] = frozenset(
+    {"و", "لە", "بە", "بۆ", "کە", "یا", "یان", "ئەو", "ئەم", "تا"}
+)
+
+
 def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
     """Use an actual contiguous spoken phrase for an automatically ranked headline."""
     tokens = [w.w for w in words]
@@ -1157,10 +1162,34 @@ def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
         return " ".join(proposed)
     width = min(len(tokens), max(5, min(8, len(proposed))))
     terms = set(proposed)
-    start = max(
-        range(len(tokens) - width + 1), key=lambda i: len(terms.intersection(tokens[i : i + width]))
-    )
-    return " ".join(tokens[start : start + width])
+
+    def _window_score(i: int) -> tuple[int, int, int, int, int]:
+        chunk = tokens[i : i + width]
+        overlap = len(terms.intersection(chunk))
+        no_internal_break = int(
+            all(
+                (words[j].start_ms - words[j - 1].end_ms) < 220
+                and not words[j - 1].w.endswith((".", "!", "?", "؟", "،", "…"))
+                for j in range(i + 1, i + width)
+            )
+        )
+        clause_start = int(
+            i == 0
+            or (words[i].start_ms - words[i - 1].end_ms) >= 220
+            or words[i - 1].w.endswith((".", "!", "?", "؟", "،", "…"))
+        )
+        clean_edges = int(chunk[0].strip("،.؟!") not in _DANGLING_HOOK_WORDS) + int(
+            chunk[-1].strip("،.؟!") not in _DANGLING_HOOK_WORDS
+        )
+        return (overlap, no_internal_break, clause_start, clean_edges, -i)
+
+    start = max(range(len(tokens) - width + 1), key=_window_score)
+    chosen = tokens[start : start + width]
+    while len(chosen) > 3 and chosen[0].strip("،.؟!") in _DANGLING_HOOK_WORDS:
+        chosen = chosen[1:]
+    while len(chosen) > 3 and chosen[-1].strip("،.؟!") in _DANGLING_HOOK_WORDS:
+        chosen = chosen[:-1]
+    return " ".join(chosen)
 
 
 def rank_local_source_spans(
