@@ -15,3 +15,5 @@ The owner asked to fix unfinished hooks and fast captions and validate three uns
 A locally generated title that has no qualifying match may use an eligible source phrase. Filler tails stay ineligible. `compile_v8_clip` reports a missing title as a reel-quality rejection before it encodes. The existing reserve path in `compile_v8_episode` advances automatically, and explicit ranges continue to fail on quality errors.
 
 The final headline selector checks pause-only candidates for a closing predicate. Explicit sentence-final punctuation still marks a clause boundary. The same compiler path updates the automatic on-screen title and posting pack together.
+
+`compile_v8_clip` validates original word boundaries against a retained-word sequence before accepting a source headline. Both burned and posting titles still come from the final director script.

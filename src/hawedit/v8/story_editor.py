@@ -1208,7 +1208,9 @@ _HOOK_VERB_ENDINGS = (
 _HOOK_EDGE = """،,؛;:؟?!."'«»…"""
 
 
-def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
+def _source_quote_hook(
+    proposal: str, words: Sequence[Word], *, retained_words: Sequence[Word] | None = None
+) -> str:
     """Choose a bounded, source-exact headline or omit the title when none qualifies."""
 
     def breaks_after(index: int) -> bool:
@@ -1219,6 +1221,11 @@ def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
     def terms(phrase: str) -> set[str]:
         return {part.strip(_HOOK_EDGE).casefold() for part in phrase.split()}
 
+    spoken = (
+        f" {' '.join(w.w for w in retained_words)} ".casefold()
+        if retained_words is not None
+        else None
+    )
     wanted = terms(proposal) - _DANGLING_HOOK_WORDS
     candidates = []
     start = 0
@@ -1242,6 +1249,7 @@ def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
                 and first not in _DANGLING_HOOK_WORDS | _HOOK_FILLER
                 and last not in _DANGLING_HOOK_WORDS | _HOOK_FILLER
                 and closes_clause
+                and (spoken is None or f" {phrase.casefold()} " in spoken)
             ):
                 candidates.append((overlap, explicit_end, -start, phrase))
         start = end + 1

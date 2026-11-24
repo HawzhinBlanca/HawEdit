@@ -2800,7 +2800,11 @@ def compile_v8_clip(
                         cut.start_ms <= word.start_ms < cut.end_ms for cut in effective_script.cuts
                     )
                 )
-                grounded_hook = _source_quote_hook(effective_script.hook_title_ckb, hook_words)
+                grounded_hook = _source_quote_hook(
+                    effective_script.hook_title_ckb, clip_words, retained_words=hook_words
+                )
+                if not grounded_hook:
+                    grounded_hook = _source_quote_hook(effective_script.hook_title_ckb, hook_words)
                 if not grounded_hook:
                     raise ReelQualityError(f"No complete grounded Sorani headline for {clip_id}")
                 effective_script = replace(effective_script, hook_title_ckb=grounded_hook)

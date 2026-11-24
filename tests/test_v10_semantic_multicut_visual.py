@@ -1116,6 +1116,10 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
     final = following[-1]
     following[-1] = Word(final.w, final.start_ms + 400, final.end_ms + 400, final.conf)
     assert _source_quote_hook(incomplete, (*tokens, *following)) == complete
+    # A measured source pause remains evidence after shortening the pause in the reel.
+    retimed = _make_words([*complete.split(), "کۆتایی"], step_ms=320, gap_ms=20)
+    assert _source_quote_hook(incomplete, (*tokens, *following), retained_words=retimed) == complete
+    assert _source_quote_hook(incomplete, (*tokens, *following), retained_words=retimed[1:]) == ""
 
     # Late-episode assembled spans use fast -ss/-t input seeking with shifted trim bounds.
     from hawedit.assembly import assembly_seek_args

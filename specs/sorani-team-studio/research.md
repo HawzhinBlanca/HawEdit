@@ -8,3 +8,5 @@ Existing episode discovery already scores complete-sentence spans and the semant
 The first raw forensic-medicine clip failed Watch-Before-Ship because the validated headline had no overlap with the generator's fragment. The selected spoken span still contains other bounded source phrases. A candidate with no qualifying grounded headline is an editorial reject and may use an already ranked reserve.
 
 The Asoy Runaki raw benchmark exposed a pause-bounded headline ending in واردی. A pause marks a candidate boundary but does not establish clause closure. Before accepting pause-only titles, check for a Sorani predicate ending.
+
+The first set of strict retries showed that pause evidence changes when the compiler condenses silences. Keep clause boundaries from the pre-edit clock and verify that the entire phrase survives contiguously in the rendered speech.
