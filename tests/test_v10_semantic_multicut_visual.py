@@ -1080,6 +1080,7 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
     results = rank_local_source_spans(words, spans, max_stories=2, model_id="test", transport=score)
     assert [r.story_id for r in results] == ["shortlist-150-189", "shortlist-50-89"]
     assert results[0].keep_spans[0].end_word_idx == 189
+    assert results[0].hook_title_ckb == "word word word word word"
     with pytest.raises(StoryEditorError, match="every source candidate"):
         rank_local_source_spans(
             words,
