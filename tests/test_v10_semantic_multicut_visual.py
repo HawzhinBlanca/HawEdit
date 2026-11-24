@@ -1080,7 +1080,7 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
     results = rank_local_source_spans(words, spans, max_stories=2, model_id="test", transport=score)
     assert [r.story_id for r in results] == ["shortlist-150-189", "shortlist-50-89"]
     assert results[0].keep_spans[0].end_word_idx == 189
-    assert results[0].hook_title_ckb == "word word word word word"
+    assert results[0].hook_title_ckb == "headline"
     with pytest.raises(StoryEditorError, match="every source candidate"):
         rank_local_source_spans(
             words,
@@ -1090,19 +1090,14 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
             transport=lambda *_: (200, '{"choices":[{"message":{"content":"{}"}}]}'),
         )
 
-    # Fallback source-quote hook prefers clause boundaries and trims dangling prepositions.
+    # A matched prefix inside the spoken sentence must not become a title.
     from hawedit.v8.story_editor import _source_quote_hook
 
-    clause_words = [
-        Word(w="نووسرابێ", start_ms=0, end_ms=400, conf=1.0),
-        Word(w="هەنێ", start_ms=800, end_ms=1100, conf=1.0),
-        Word(w="مۆدێلی", start_ms=1120, end_ms=1500, conf=1.0),
-        Word(w="وەکو", start_ms=1520, end_ms=1800, conf=1.0),
-        Word(w="جێمنای", start_ms=1820, end_ms=2200, conf=1.0),
-        Word(w="لە", start_ms=2220, end_ms=2400, conf=1.0),
-    ]
-    hook = _source_quote_hook("مۆدێلی جێمنای کوردی", clause_words)
-    assert hook == "هەنێ مۆدێلی وەکو جێمنای"
+    proposal = "ئێستا بۆچی ئەگەزانی لەم ماوەی"
+    clause = [*proposal.split(), "ئەنترۆپیک", "چی", "کرد؟"]
+    words = _make_words(clause, step_ms=400, gap_ms=25)
+    assert _source_quote_hook(proposal, words) == " ".join(clause)
+    assert _source_quote_hook(proposal, words[:5]) == ""
 
     # Late-episode assembled spans use fast -ss/-t input seeking with shifted trim bounds.
     from hawedit.assembly import assembly_seek_args

@@ -82,14 +82,14 @@ from hawedit.v8.schema import (
     snap_camera_moves_to_cuts,
     validate_director_script,
 )
-from hawedit.v8.story_editor import VisualCue
+from hawedit.v8.story_editor import VisualCue, _source_quote_hook
 from hawedit.v8.styles import ClientStylePreset, get_client_style_preset
 from hawedit.v8.tiktok_subs import (
     END_CARD_DURATION_MS,
     VISUAL_INTERRUPT_MIN_START_MS,
     TikTokSubtitleError,
     build_viral_tiktok_ass,
-    chunk_viral_kurdish_words,
+    pace_viral_captions,
     render_tiktok_overlay_video,
 )
 from hawedit.v8.visual_aware import (
@@ -846,7 +846,9 @@ class DefaultV8SubtitleRenderer:
             if vi.end_ms > max(VISUAL_INTERRUPT_MIN_START_MS, vi.start_ms)
         )
         try:
-            chunks = chunk_viral_kurdish_words(words, power_word_indices=power_indices)
+            chunks = pace_viral_captions(
+                words, duration_ms=clip_duration_ms, power_word_indices=power_indices
+            )
             ass_text = build_viral_tiktok_ass(
                 chunks,
                 clip_in_ms=0,
@@ -2790,6 +2792,18 @@ def compile_v8_clip(
                         cold_open_span_ms=effective_script.cold_open_span_ms,
                     )
             repaired = apply_word_repairs(effective_words, effective_script.word_repairs)
+            if use_real_media and director is None:
+                hook_words = tuple(
+                    word
+                    for word in repaired
+                    if not any(
+                        cut.start_ms <= word.start_ms < cut.end_ms for cut in effective_script.cuts
+                    )
+                )
+                effective_script = replace(
+                    effective_script,
+                    hook_title_ckb=_source_quote_hook(effective_script.hook_title_ckb, hook_words),
+                )
             cam_flt, cam_jumps = compile_restrained_camera_filter(
                 effective_duration_ms,
                 effective_script.camera_moves,

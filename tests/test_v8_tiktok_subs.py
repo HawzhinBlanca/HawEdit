@@ -656,3 +656,21 @@ def test_chunk_viral_kurdish_words_splits_multi_token_repaired_words() -> None:
         assert 1 <= len(toks) <= 3, f"Chunk exceeded 3 tokens: {rendered!r}"
         if len(toks) == 3:
             assert len(rendered) <= 14, f"3-word chunk exceeded 14 chars: {rendered!r}"
+
+
+def test_paced_captions_keep_highlights_and_respect_speech_and_clip_boundaries() -> None:
+    from hawedit.v8.tiktok_subs import pace_viral_captions
+
+    words = (
+        Word("دەستپێکەکە", 0, 190, 0.99),
+        Word("باشە", 190, 440, 0.99),
+        Word("زۆرە.", 440, 550, 0.99),
+        Word("کۆتایی", 900, 1100, 0.99),
+    )
+    chunks = pace_viral_captions(words, duration_ms=1300, power_word_indices={0})
+    assert [c.text for c in chunks] == ["دەستپێکەکە باشە زۆرە.", "کۆتایی"]
+    assert [c.end_ms for c in chunks] == [650, 1300]
+    assert [(w.start_ms, w.end_ms) for c in chunks for w in c.words] == [
+        (w.start_ms, w.end_ms) for w in words
+    ]
+    assert chunks[0].words[0].is_power_word

@@ -19,7 +19,7 @@ import tempfile
 import unicodedata
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -263,6 +263,48 @@ def chunk_viral_kurdish_words(
             )
         )
     return tuple(chunks)
+
+
+def pace_viral_captions(
+    words: Sequence[Word],
+    *,
+    duration_ms: int,
+    power_word_indices: AbstractSet[int] = frozenset(),
+) -> tuple[ViralCaptionChunk, ...]:
+    """Give short caption phrases more reading time while their word highlight stays aligned."""
+    groups = chunk_viral_kurdish_words(words, power_word_indices=power_word_indices)
+    target_ms = 650
+    merged: list[ViralCaptionChunk] = []
+    for chunk in groups:
+        if merged:
+            prior = merged[-1]
+            combined = prior.words + chunk.words
+            if (
+                min(prior.end_ms - prior.start_ms, chunk.end_ms - chunk.start_ms) < target_ms
+                and len(combined) <= 3
+                and len(prior.text) + len(chunk.text) + 1 <= 28
+                and chunk.start_ms - prior.end_ms <= 140
+                and chunk.end_ms - prior.start_ms <= 1450
+                and not _ends_sentence(prior.words[-1].text)
+            ):
+                merged[-1] = replace(
+                    prior,
+                    words=combined,
+                    end_ms=max(prior.end_ms, chunk.end_ms),
+                    has_power_word=prior.has_power_word or chunk.has_power_word,
+                )
+                continue
+        merged.append(chunk)
+
+    paced = []
+    for index, chunk in enumerate(merged):
+        next_start = merged[index + 1].start_ms if index + 1 < len(merged) else duration_ms
+        end = max(
+            chunk.end_ms,
+            min(chunk.start_ms + target_ms, chunk.end_ms + 240, next_start, duration_ms),
+        )
+        paced.append(replace(chunk, end_ms=end))
+    return tuple(paced)
 
 
 def spring_bounce_scale(elapsed_ms: float, *, duration_ms: float = SPRING_BOUNCE_MS) -> float:

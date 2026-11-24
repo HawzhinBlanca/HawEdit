@@ -1039,7 +1039,7 @@ def test_unpunctuated_reel_has_timed_phrase_sidecar(tmp_path: Path) -> None:
     cues = parse_srt_times(content)
     assert len(cues) >= 20
     assert cues[0][0] == 0
-    assert cues[-1][1] == words[-1].end_ms
+    assert words[-1].end_ms <= cues[-1][1] <= words[-1].end_ms + 240
     tokens = [
         w for cue in content.strip().split("\n\n") for w in " ".join(cue.splitlines()[2:]).split()
     ]

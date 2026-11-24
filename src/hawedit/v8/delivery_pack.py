@@ -37,7 +37,7 @@ from hawedit.v8.compiler import LockedCropWindow, V8CompileResult, VideoGrillRep
 from hawedit.v8.dubbing import dub_reel
 from hawedit.v8.localization import translate_sidecar
 from hawedit.v8.media_settings import media_setting
-from hawedit.v8.tiktok_subs import chunk_viral_kurdish_words
+from hawedit.v8.tiktok_subs import pace_viral_captions
 
 __all__ = [
     "ClientDeliveryPack",
@@ -358,6 +358,7 @@ def extract_v8_cover_png(
 def _sentences_for_v8_srt(
     result: V8CompileResult,
     explicit_sentences: Sequence[Sentence] | None,
+    duration_ms: int,
 ) -> tuple[Sentence, ...]:
     if explicit_sentences is not None:
         return tuple(explicit_sentences)
@@ -368,12 +369,19 @@ def _sentences_for_v8_srt(
         for beat in result.script.caption_beats
         if beat.power_word_index is not None
     )
-    chunks = chunk_viral_kurdish_words(result.repaired_words, power_word_indices=power_indices)
+    chunks = pace_viral_captions(
+        result.repaired_words, duration_ms=duration_ms, power_word_indices=power_indices
+    )
     return tuple(
         Sentence(
             words=tuple(
-                Word(w.text, w.start_ms, w.end_ms, result.repaired_words[w.index].conf)
-                for w in chunk.words
+                Word(
+                    w.text,
+                    w.start_ms,
+                    chunk.end_ms if index == len(chunk.words) - 1 else w.end_ms,
+                    result.repaired_words[w.index].conf,
+                )
+                for index, w in enumerate(chunk.words)
             ),
             complete=True,
         )
@@ -460,7 +468,7 @@ def write_client_delivery_pack(
         duration_ms = clip_out_ms - clip_in_ms
 
     # a) .v8.srt — post-repair, post-trim Kurdish SRT via hawedit.delivery.build_srt
-    srt_sentences = _sentences_for_v8_srt(result, sentences)
+    srt_sentences = _sentences_for_v8_srt(result, sentences, duration_ms)
     try:
         srt_text = build_srt(srt_sentences, clip_in_ms=0, clip_duration_ms=duration_ms)
     except (DeliveryError, UndeliverableOrder) as exc:
