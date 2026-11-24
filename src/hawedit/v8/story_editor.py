@@ -1156,7 +1156,55 @@ _DANGLING_HOOK_WORDS: Final[frozenset[str]] = (
     | DANGLING_CONJUNCTIONS_CKB
 )
 _HOOK_FILLER = frozenset({"یانی", "یەعنی", "ئا", "ئێ", "ها", "ئەها", "وەڵا"})
-_HOOK_TERMINAL = ".!?؟؛…"
+_HOOK_TERMINAL = ".!?؟۔"
+_HOOK_PREDICATES = frozenset(
+    {
+        "بوو",
+        "بوون",
+        "بووین",
+        "نەبوو",
+        "نەبوون",
+        "هەیە",
+        "هەن",
+        "نییە",
+        "نین",
+        "هات",
+        "کرد",
+        "کردووە",
+        "کردیان",
+        "گوت",
+        "گوتی",
+        "ڕۆیشت",
+        "چوو",
+        "گۆڕا",
+        "نەبێت",
+        "نەبێ",
+    }
+)
+_HOOK_VERB_PREFIXES = ("دە", "ئە", "نا", "نە")
+_HOOK_VERB_ENDINGS = (
+    "کەم",
+    "کەی",
+    "کا",
+    "کات",
+    "کەن",
+    "چێ",
+    "چێت",
+    "چن",
+    "گرێ",
+    "گرێت",
+    "ڵێ",
+    "ڵێت",
+    "ڵێن",
+    "زانم",
+    "زانێ",
+    "بێ",
+    "بێت",
+    "ێتەوە",
+    "ێنەوە",
+    "نێتەوە",
+    "مێنمەوە",
+)
 _HOOK_EDGE = """،,؛;:؟?!."'«»…"""
 
 
@@ -1182,13 +1230,20 @@ def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
             tokens = phrase.split()
             first, last = tokens[0].strip(_HOOK_EDGE), tokens[-1].strip(_HOOK_EDGE)
             overlap = len(wanted & terms(phrase))
+            explicit_end = word.w.rstrip("""'"»""").endswith(tuple(_HOOK_TERMINAL))
+            closes_clause = (
+                explicit_end
+                or last in _HOOK_PREDICATES
+                or (last.startswith(_HOOK_VERB_PREFIXES) and last.endswith(_HOOK_VERB_ENDINGS))
+            )
             if (
                 3 <= len(tokens) <= 12
                 and len(phrase) <= 76
                 and first not in _DANGLING_HOOK_WORDS | _HOOK_FILLER
                 and last not in _DANGLING_HOOK_WORDS | _HOOK_FILLER
+                and closes_clause
             ):
-                candidates.append((overlap, word.w.endswith(tuple(_HOOK_TERMINAL)), -start, phrase))
+                candidates.append((overlap, explicit_end, -start, phrase))
         start = end + 1
     return max(candidates)[-1] if candidates else ""
 
