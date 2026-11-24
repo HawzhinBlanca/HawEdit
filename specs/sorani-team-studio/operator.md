@@ -1,6 +1,8 @@
 # Running the Sorani podcast Studio
 
-Open HawEdit Studio, paste a YouTube episode URL or upload the source, then choose the V8 engine. Enter the guest name for this episode. Select Arabic or English subtitles or stock dubbing if needed. The local director uses offline stock by default. Gemini requires a new decision for each Studio job.
+From the HawEdit checkout in PowerShell, run `./.venv/Scripts/python.exe -m hawedit.web` and open `http://127.0.0.1:8080` on the same computer.
+
+In Studio, paste a YouTube episode URL or upload the source, then choose the V8 engine. Enter the guest name for this episode. Select Arabic or English subtitles or stock dubbing if needed. The local director uses offline stock by default. Gemini requires a new decision for each Studio job.
 
 In the local Studio, open a completed clip’s selection evidence to read each quoted passage with its original episode time. Select a source word, enter the corrected spelling, save it, and generate again from the same upload. The next job records the edits and preserves word timing. Restoring the original spelling removes that edit. Earlier renders and ASR records stay available.
 

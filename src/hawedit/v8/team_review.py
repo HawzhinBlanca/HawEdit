@@ -145,8 +145,8 @@ def load_release_candidates(episode: Path, snapshot: Path) -> dict[str, ReviewCl
                         shutil.copyfileobj(source, dest)
                     dubs[lang] = target
                 if caption in archive.namelist():
-                    raw = archive.read(caption).decode("utf-8-sig").strip()
-                    blocks = raw.split("\n\n")
+                    raw = "\n".join(archive.read(caption).decode("utf-8-sig").splitlines()).strip()
+                    blocks = re.split(r"\n[ \t]*\n+", raw)
                     cues = ["WEBVTT"]
                     for (a, b), lines in zip(parse_srt_times(raw), blocks, strict=True):
                         timing = (ms_to_srt_time(a) + " --> " + ms_to_srt_time(b)).replace(",", ".")

@@ -26,7 +26,11 @@ def test_private_team_scores_approval_and_range_downloads(tmp_path: Path) -> Non
         archive.writestr("reel.mp4", b"test-video")
         archive.writestr("post.txt", "A sample")
         archive.writestr("reel.en.dub.mp4", b"dub-test")
-        archive.writestr("captions.en.draft.srt", "1\n00:00:00,100 --> 00:00:01,001\nHello\n")
+        archive.writestr(
+            "captions.en.draft.srt",
+            "1\r\n00:00:00,100 --> 00:00:01,001\r\nHello\r\n\r\n"
+            "2\r\n00:00:01,100 --> 00:00:02,000\r\nagain\r\n",
+        )
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
     store = ReviewStore(tmp_path / "private")
@@ -64,6 +68,7 @@ def test_private_team_scores_approval_and_range_downloads(tmp_path: Path) -> Non
             assert request("GET", "/dub-en/" + key, headers("reader")) == (200, b"dub-test")
             status, vtt = request("GET", "/sub-en/" + key, headers("reader"))
             assert status == 200 and b"00:00:00.100 --> 00:00:01.001" in vtt
+            assert b"00:00:01.100 --> 00:00:02.000\nagain" in vtt
             assert request("GET", "/pack/" + key, headers("reader"))[0] == 403
             assert request("POST", "/ballot/" + key, headers("reader"), body)[0] == 403
             assert request("POST", "/ballot/" + key, headers("editor"), body)[0] == 200
