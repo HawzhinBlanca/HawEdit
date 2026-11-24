@@ -7,19 +7,23 @@ may depend on a display being present to be verifiable.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
 from hawedit import credentials, setup_panel
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 
 FAKE_GEMINI = "AIza" + "0" * 35
 FAKE_HF = "hf_" + "0" * 34
 
 
 def _accepting(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
-    return 200, '{"models": [{"name": "models/gemini-2.5-pro"}], "name": "hawzhin"}'
+    return 200, json.dumps(
+        {"models": [{"name": f"models/{KURDISH_EDITORIAL_JUDGE}"}], "name": "hawzhin"}
+    )
 
 
 def _rejecting(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:

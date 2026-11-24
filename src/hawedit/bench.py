@@ -51,8 +51,10 @@ from hawedit.corpus import Corpus, CorpusItem, Coverage, Dialect, Provenance
 from hawedit.corpus_acceptance import verify_corpus_acceptance
 from hawedit.metrics import (
     code_switch_error_rate,
+    edit_distance,
     named_entity_error_rate,
     normalized_cer,
+    normalized_wer,
     spacing_free_cer,
 )
 from hawedit.normalize import normalize_sorani
@@ -61,13 +63,17 @@ from hawedit.transcripts import AsrProvenance
 __all__ = [
     "CANONICAL_ASR",
     "MATERIAL_GAIN_RATIO",
+    "AblationClipPair",
+    "AblationClipScore",
     "BenchmarkReport",
     "CanonicalDecision",
     "ItemScore",
     "ModelReport",
+    "ValidatorAblationReport",
     "decide_canonical",
     "main",
     "run_benchmark",
+    "score_validator_ablation",
 ]
 
 # §3 Stage 1 / §7: the pinned canonical ASR. Provisional pending this benchmark, which is
@@ -495,6 +501,177 @@ def decide_canonical(
         f"Record the numbers in DECISIONS.md before changing the pin."
     )
     return CanonicalDecision(incumbent, best[0], switch=True, reasons=tuple(reasons))
+
+
+@dataclass(frozen=True, slots=True)
+class AblationClipPair:
+    """Paired validator-off vs validator-on outputs for one real clip (Phase B6)."""
+
+    clip_id: str
+    reference_ckb: str
+    audio_duration_s: float
+    without_validator_text: str
+    with_validator_text: str
+    without_validator_wall_s: float
+    with_validator_wall_s: float
+    validator_passes: int = 0
+    rejected_corrections: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.clip_id.strip():
+            raise ValueError("ablation clip_id must be non-empty")
+        if self.audio_duration_s <= 0:
+            raise ValueError("ablation audio_duration_s must be positive")
+        if self.without_validator_wall_s <= 0 or self.with_validator_wall_s <= 0:
+            raise ValueError("ablation wall timings must be positive")
+        if self.validator_passes < 0 or self.rejected_corrections < 0:
+            raise ValueError("ablation pass and rejection counts must be non-negative")
+        if not normalize_sorani(self.reference_ckb).strip():
+            raise ValueError("ablation reference_ckb must be non-empty after normalization")
+
+
+@dataclass(frozen=True, slots=True)
+class AblationClipScore:
+    """Per-clip WER/CER/wall comparison from paired validator ablation."""
+
+    clip_id: str
+    reference_words: int
+    reference_chars: int
+    wer_off: float
+    wer_on: float
+    cer_off: float
+    cer_on: float
+    without_validator_wall_s: float
+    with_validator_wall_s: float
+    validator_passes: int
+    rejected_corrections: int
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatorAblationReport:
+    """Micro-averaged WER, normalized CER, and runtime delta for validator ON vs OFF."""
+
+    hardware: Hardware
+    clip_count: int
+    wer_off: float
+    wer_on: float
+    wer_delta: float
+    cer_off: float
+    cer_on: float
+    cer_delta: float
+    rtf_off: float
+    rtf_on: float
+    speedup: float
+    total_validator_passes: int
+    total_rejected_corrections: int
+    clips: tuple[AblationClipScore, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "hardware": {
+                "host": self.hardware.host,
+                "accelerator": self.hardware.accelerator,
+                "notes": self.hardware.notes,
+            },
+            "clip_count": self.clip_count,
+            "wer_off": self.wer_off,
+            "wer_on": self.wer_on,
+            "wer_delta": self.wer_delta,
+            "cer_off": self.cer_off,
+            "cer_on": self.cer_on,
+            "cer_delta": self.cer_delta,
+            "rtf_off": self.rtf_off,
+            "rtf_on": self.rtf_on,
+            "speedup": self.speedup,
+            "total_validator_passes": self.total_validator_passes,
+            "total_rejected_corrections": self.total_rejected_corrections,
+            "clips": [
+                {
+                    "clip_id": c.clip_id,
+                    "reference_words": c.reference_words,
+                    "reference_chars": c.reference_chars,
+                    "wer_off": c.wer_off,
+                    "wer_on": c.wer_on,
+                    "cer_off": c.cer_off,
+                    "cer_on": c.cer_on,
+                    "without_validator_wall_s": c.without_validator_wall_s,
+                    "with_validator_wall_s": c.with_validator_wall_s,
+                    "validator_passes": c.validator_passes,
+                    "rejected_corrections": c.rejected_corrections,
+                }
+                for c in self.clips
+            ],
+        }
+
+
+def score_validator_ablation(
+    pairs: Sequence[AblationClipPair], *, hardware: Hardware
+) -> ValidatorAblationReport:
+    """Compute micro-averaged WER/CER and RTF speedup on paired validator ON/OFF clips."""
+    if not pairs:
+        raise ValueError("validator ablation requires at least one clip pair")
+    scores: list[AblationClipScore] = []
+    word_err_off = word_err_on = total_words = 0
+    char_err_off = char_err_on = total_chars = 0
+    total_audio_s = total_wall_off = total_wall_on = 0.0
+    passes = rejected = 0
+
+    for pair in pairs:
+        norm_ref = normalize_sorani(pair.reference_ckb)
+        ref_words = norm_ref.split()
+        norm_off = normalize_sorani(pair.without_validator_text)
+        norm_on = normalize_sorani(pair.with_validator_text)
+        we_off = edit_distance(ref_words, norm_off.split())
+        we_on = edit_distance(ref_words, norm_on.split())
+        ce_off = edit_distance(norm_ref, norm_off)
+        ce_on = edit_distance(norm_ref, norm_on)
+        word_err_off += we_off
+        word_err_on += we_on
+        total_words += len(ref_words)
+        char_err_off += ce_off
+        char_err_on += ce_on
+        total_chars += len(norm_ref)
+        total_audio_s += pair.audio_duration_s
+        total_wall_off += pair.without_validator_wall_s
+        total_wall_on += pair.with_validator_wall_s
+        passes += pair.validator_passes
+        rejected += pair.rejected_corrections
+        scores.append(
+            AblationClipScore(
+                clip_id=pair.clip_id,
+                reference_words=len(ref_words),
+                reference_chars=len(norm_ref),
+                wer_off=normalized_wer(pair.reference_ckb, pair.without_validator_text),
+                wer_on=normalized_wer(pair.reference_ckb, pair.with_validator_text),
+                cer_off=normalized_cer(pair.reference_ckb, pair.without_validator_text),
+                cer_on=normalized_cer(pair.reference_ckb, pair.with_validator_text),
+                without_validator_wall_s=pair.without_validator_wall_s,
+                with_validator_wall_s=pair.with_validator_wall_s,
+                validator_passes=pair.validator_passes,
+                rejected_corrections=pair.rejected_corrections,
+            )
+        )
+
+    wer_off = word_err_off / total_words
+    wer_on = word_err_on / total_words
+    cer_off = char_err_off / total_chars
+    cer_on = char_err_on / total_chars
+    return ValidatorAblationReport(
+        hardware=hardware,
+        clip_count=len(pairs),
+        wer_off=wer_off,
+        wer_on=wer_on,
+        wer_delta=wer_on - wer_off,
+        cer_off=cer_off,
+        cer_on=cer_on,
+        cer_delta=cer_on - cer_off,
+        rtf_off=total_wall_off / total_audio_s,
+        rtf_on=total_wall_on / total_audio_s,
+        speedup=total_wall_on / total_wall_off,
+        total_validator_passes=passes,
+        total_rejected_corrections=rejected,
+        clips=tuple(scores),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

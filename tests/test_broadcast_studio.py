@@ -85,10 +85,11 @@ def test_instant_camera_cut_transitions_on_subframe_delta() -> None:
         clip_in_ms=1000,
         punch_ins=(),
     )
-    # Transition delta is 1ms (0.001s), evaluating to an instant cut
+    # Sub-2ms transition delta collapses into a zero-ramp hard cut placed 2ms before the cut
     assert "895" in filt
     assert "1575" in filt
-    assert "0.001" in filt
+    assert "if(lt(t\\,1.997)\\,895\\," in filt
+    assert "/0.001" not in filt
 
 
 def test_broadcast_line_subtitles_emit_clean_white_text_without_override_tags(

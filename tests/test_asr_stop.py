@@ -26,7 +26,7 @@ from hawedit.captions import find_ffmpeg
 from hawedit.checkpoint import load_stage_checkpoint
 from hawedit.discovery import Candidate
 from hawedit.events import RunEvent, RunState
-from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import PipelineRun, StageSkipped, run_pipeline
 from hawedit.transcripts import (
     NormalizedTranscript,
@@ -220,7 +220,7 @@ def damaged_transcript(kind: str) -> RawTranscript:
 
 
 class NeverJudge:
-    model_id = "gemini-2.5-pro"
+    model_id = KURDISH_EDITORIAL_JUDGE
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
         raise AssertionError("damaged transcript reached paid judging")

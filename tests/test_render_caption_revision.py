@@ -20,7 +20,7 @@ import pytest
 
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Qc
-from hawedit.judge import JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeVerdict
 from hawedit.learning import ReasonCode
 from hawedit.pipeline import PipelineRun, StageSkipped, run_pipeline
 from hawedit.proposals import (
@@ -71,7 +71,7 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
         title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
         description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
         hashtags_ckb=("#کوردی",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=clip_in_ms,
         clip_out_ms=clip_out_ms,
     )
@@ -333,12 +333,14 @@ def test_the_revised_ass_actually_changes_style(real_run: tuple[Path, PipelineRu
     published_dir = Path(run.render.path).parent
     (original_ass_path,) = published_dir.glob("*.ass")
     original_ass = original_ass_path.read_text(encoding="utf-8")
-    assert "\\kf" in original_ass, "the fixture's own default style must be word_highlight"
+    assert "\\clip(" in original_ass, "the fixture's own default style must be word_highlight"
+    assert "\\kf" not in original_ass
 
     _approve(work, "measured-line", caption_style="line")
     record = render_caption_revision(work, "measured-line")
     revised_ass = Path(record["ass_path"]).read_text(encoding="utf-8")
     assert "\\kf" not in revised_ass, "a 'line' revision must not carry karaoke timing tags"
+    assert "\\clip(" not in revised_ass, "a 'line' revision must not carry karaoke clip tags"
 
 
 @needs_ffmpeg

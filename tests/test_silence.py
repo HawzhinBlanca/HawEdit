@@ -6,11 +6,14 @@ import pytest
 
 from hawedit.boundary import Boundary
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Qc
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.sentences import Sentence
 from hawedit.silence import (
+    CUT_AUDIO_FADE_MS,
     KURDISH_FILLER_TOKENS,
     SilencePlan,
     SilencePolicy,
+    audio_cut_fade_filters,
     plan_silence_tightening,
     remap_timestamp,
     silence_trim_filter,
@@ -60,7 +63,7 @@ def _make_dummy_clip(words: tuple[Word, ...], silence_removed_ms: int = 0) -> Cl
             misleading_edit_risk=0.08,
             cultural_landing=0.90,
             narrative_role="test",
-            judge="gemini-2.5-pro",
+            judge=KURDISH_EDITORIAL_JUDGE,
         ),
         output=Output(
             title_ckb="تێست",
@@ -225,12 +228,12 @@ def test_plan_silence_tightening_identifies_dead_air_and_retained_intervals() ->
     assert plan.total_removed_ms == 1350
     assert plan.effective_duration_ms == 5500 - 1350  # 4150 ms
     assert len(plan.removed_intervals_ms) == 1
-    # Relative to clip_in_ms (500):
-    # Cut in source is [2150, 3500] -> [1650, 3000] in clip time
-    assert plan.removed_intervals_ms[0] == (1650, 3000)
+    # Relative to clip_in_ms (500), 150 ms target_gap splits 75/75 across both edges:
+    # Cut in source is [2075, 3425] -> [1575, 2925] in clip time.
+    assert plan.removed_intervals_ms[0] == (1575, 2925)
     assert len(plan.retained_intervals_ms) == 2
-    assert plan.retained_intervals_ms[0] == (0, 1650)
-    assert plan.retained_intervals_ms[1] == (3000, 5500)
+    assert plan.retained_intervals_ms[0] == (0, 1575)
+    assert plan.retained_intervals_ms[1] == (2925, 5500)
 
 
 def test_plan_silence_tightening_no_excess_pause_returns_single_interval() -> None:
@@ -268,7 +271,7 @@ def test_plan_silence_tightening_input_validation() -> None:
 def test_remap_timestamp_shifts_events_accurately() -> None:
     words = (
         _make_word("یەک", 1000, 2000),
-        # Pause: 2000 to 4000 = 2000 ms. Keep 150 -> Remove 2150 to 4000 (1850 ms).
+        # Pause: 2000 to 4000 = 2000 ms. Keep 75+75 -> Remove 2075 to 3925 (1850 ms).
         _make_word("دوو", 4000, 5000),
     )
     plan = plan_silence_tightening(
@@ -282,14 +285,15 @@ def test_remap_timestamp_shifts_events_accurately() -> None:
     # Before the excised interval:
     assert remap_timestamp(0, plan) == 0
     assert remap_timestamp(1500, plan) == 1500
-    assert remap_timestamp(2150, plan) == 2150
+    assert remap_timestamp(2075, plan) == 2075
 
-    # Inside the excised interval (clamped to start of gap):
-    assert remap_timestamp(2500, plan) == 2150
-    assert remap_timestamp(3500, plan) == 2150
+    # Inside the excised interval (clamped to splice point 2075):
+    assert remap_timestamp(2500, plan) == 2075
+    assert remap_timestamp(3500, plan) == 2075
 
-    # At boundary of resume:
-    assert remap_timestamp(4000, plan) == 2150  # 4000 - 1850 = 2150
+    # At boundary of resume (3925) and word onset (4000):
+    assert remap_timestamp(3925, plan) == 2075
+    assert remap_timestamp(4000, plan) == 2150  # 4000 - 1850 = 2150 (150 ms total gap preserved)
 
     # After the excised interval (shifted by 1850 ms):
     assert remap_timestamp(4500, plan) == 4500 - 1850  # 2650
@@ -301,13 +305,35 @@ def test_silence_trim_filter_generates_valid_ffmpeg_filtergraph() -> None:
     assert silence_trim_filter(((0, 5000),)) == ""
     assert silence_trim_filter(()) == ""
 
-    # Two intervals
+    # Two intervals with 30 ms qsin audio fades at cut boundary
     filt = silence_trim_filter(((0, 1500), (3000, 5000)))
     assert "[0:v]trim=start=0.000:end=1.500,setpts=PTS-STARTPTS[v0]" in filt
-    assert "[0:a]atrim=start=0.000:end=1.500,asetpts=PTS-STARTPTS[a0]" in filt
+    assert (
+        "[0:a]atrim=start=0.000:end=1.500,asetpts=PTS-STARTPTS,"
+        "afade=t=out:st=1.470:d=0.030:curve=qsin[a0]"
+    ) in filt
     assert "[0:v]trim=start=3.000:end=5.000,setpts=PTS-STARTPTS[v1]" in filt
-    assert "[0:a]atrim=start=3.000:end=5.000,asetpts=PTS-STARTPTS[a1]" in filt
+    assert (
+        "[0:a]atrim=start=3.000:end=5.000,asetpts=PTS-STARTPTS,"
+        "afade=t=in:st=0:d=0.030:curve=qsin[a1]"
+    ) in filt
     assert "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_tightened][a_tightened]" in filt
+
+
+def test_cut_audio_fade_clamps_safely_on_short_segments() -> None:
+    """D8 AC1. Short segments (< 60 ms) clamp fade duration to half segment length cleanly."""
+    assert CUT_AUDIO_FADE_MS == 30
+    assert audio_cut_fade_filters(0, fade_in=True, fade_out=True) == ()
+    assert audio_cut_fade_filters(500, fade_in=False, fade_out=False) == ()
+
+    short_both = audio_cut_fade_filters(40, fade_in=True, fade_out=True)
+    assert short_both == (
+        "afade=t=in:st=0:d=0.020:curve=qsin",
+        "afade=t=out:st=0.020:d=0.020:curve=qsin",
+    )
+    filt = silence_trim_filter(((0, 40), (100, 120)))
+    assert "afade=t=out:st=0.020:d=0.020:curve=qsin[a0]" in filt
+    assert "afade=t=in:st=0:d=0.010:curve=qsin[a1]" in filt
 
 
 def test_plan_silence_tightening_excises_kurdish_filler_tokens() -> None:
@@ -513,7 +539,7 @@ def test_false_start_restart_detection_excises_truncated_prefix_token() -> None:
     Truncated prefix followed by full token within 1.5s is detected and cut.
     """
     words = (
-        _make_word("کورد", 100, 400),
+        _make_word("کورد-", 100, 400),
         _make_word("کوردستان", 550, 1100),
         _make_word("ئازادە", 1200, 1700),
     )
@@ -522,11 +548,12 @@ def test_false_start_restart_detection_excises_truncated_prefix_token() -> None:
         clip_in_ms=0,
         clip_out_ms=1800,
         filler_tokens=KURDISH_FILLER_TOKENS,
+        detect_restarts=True,
     )
     assert plan.excised_word_count >= 1
-    tightened, _ = tighten_silence(words, filler_tokens=KURDISH_FILLER_TOKENS)
+    tightened, _ = tighten_silence(words, filler_tokens=KURDISH_FILLER_TOKENS, detect_restarts=True)
     surviving_words = [w.w for w in tightened]
-    assert "کورد" not in surviving_words
+    assert "کورد-" not in surviving_words
     assert "کوردستان" in surviving_words
     assert "ئازادە" in surviving_words
 
@@ -545,9 +572,10 @@ def test_repeated_phrase_stutter_is_excised() -> None:
         clip_in_ms=0,
         clip_out_ms=2300,
         filler_tokens=KURDISH_FILLER_TOKENS,
+        detect_restarts=True,
     )
     assert plan.excised_word_count >= 2
-    tightened, _ = tighten_silence(words, filler_tokens=KURDISH_FILLER_TOKENS)
+    tightened, _ = tighten_silence(words, filler_tokens=KURDISH_FILLER_TOKENS, detect_restarts=True)
     surviving_words = [w.w for w in tightened]
     assert surviving_words == ["لە", "بەغدا", "تەقینەوە"]
 
@@ -638,16 +666,16 @@ def test_silence_policy_preserves_quiet_speech_and_protected_beats() -> None:
         target_gap_ms=150,
         speech_intervals=((3000, 4500),),
     )
-    # The candidate removal (2150..6000 ms on source = 1150..5000 ms relative)
+    # The candidate removal (2075..5925 ms on source = 1075..4925 ms relative, 75 ms both edges)
     # intersects the quiet speech (3000..4500 ms on source = 2000..3500 ms relative).
     # The quiet speech MUST be retained!
-    # Expected removed intervals: 1150..2000 ms (source 2150..3000 ms) and
-    # 3500..5000 ms (source 4500..6000 ms)
-    assert (1150, 2000) in plan_speech.removed_intervals_ms
-    assert (3500, 5000) in plan_speech.removed_intervals_ms
+    # Expected removed intervals: 1075..2000 ms (source 2075..3000 ms) and
+    # 3500..4925 ms (source 4500..5925 ms)
+    assert (1075, 2000) in plan_speech.removed_intervals_ms
+    assert (3500, 4925) in plan_speech.removed_intervals_ms
     # The quiet speech interval 2000..3500 relative (3000..4500 source) is strictly retained:
     assert (2000, 3500) in plan_speech.retained_intervals_ms
-    # And total removed ms reflects only the true dead air (850 + 1500 = 2350 ms):
+    # And total removed ms reflects only the true dead air (925 + 1425 = 2350 ms):
     assert plan_speech.total_removed_ms == 2350
     # Quiet speech is in protected_intervals_ms:
     assert (3000, 4500) in plan_speech.protected_intervals_ms
@@ -677,9 +705,9 @@ def test_silence_policy_preserves_quiet_speech_and_protected_beats() -> None:
     assert (3000, 5500) in plan_beat.protected_intervals_ms
     # Relative retained intervals include 2000..4500 (3000..5500 source):
     assert (2000, 4500) in plan_beat.retained_intervals_ms
-    # Dead air before the beat (1150..2000) and after (4500..6000) are excised:
-    assert (1150, 2000) in plan_beat.removed_intervals_ms
-    assert (4500, 6000) in plan_beat.removed_intervals_ms
+    # Dead air before the beat (1075..2000) and after (4500..5925) are excised:
+    assert (1075, 2000) in plan_beat.removed_intervals_ms
+    assert (4500, 5925) in plan_beat.removed_intervals_ms
 
     # 3. Uncertain Alignment Handling & Review Requirement:
     # Word with uncertain alignment confidence (0.42 < 0.70) or explicit uncertain region
@@ -725,3 +753,24 @@ def test_silence_policy_preserves_quiet_speech_and_protected_beats() -> None:
         source_r_e = r_e + 1000
         # No removal slices into the uncertain span 3200..4800
         assert not (max(source_r_s, 3200) < min(source_r_e, 4800))
+
+
+@pytest.mark.parametrize("tokens", [None, KURDISH_FILLER_TOKENS])
+@pytest.mark.parametrize("text", ["we went home", "من منداڵم.", "زۆر زۆر گرنگە."])
+def test_silence_only_and_filler_mode_preserve_meaningful_prefixes_and_repeats(
+    tokens: frozenset[str] | None, text: str
+) -> None:
+    words = tuple(_make_word(word, i * 400, i * 400 + 300) for i, word in enumerate(text.split()))
+    plan = plan_silence_tightening(words, 0, 1500, filler_tokens=tokens)
+    tightened, removed = tighten_silence(words, filler_tokens=tokens)
+    assert plan.excised_word_count == 0
+    assert plan.removed_intervals_ms == ()
+    assert tightened == words
+    assert removed == 0
+
+
+def test_restart_opt_in_does_not_treat_unmarked_morphology_as_a_partial_word() -> None:
+    words = (_make_word("من", 0, 300), _make_word("منداڵم.", 400, 700))
+    tightened, removed = tighten_silence(words, detect_restarts=True)
+    assert tightened == words
+    assert removed == 0

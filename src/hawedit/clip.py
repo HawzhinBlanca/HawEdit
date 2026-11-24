@@ -885,9 +885,9 @@ def _probe_ffmpeg_version() -> str:
                 line = proc.stdout.splitlines()[0].strip()
                 if line:
                     return line
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
-    return "7.1"
+    return "unknown"
 
 
 def _probe_revisions_digest() -> str:
@@ -898,9 +898,9 @@ def _probe_revisions_digest() -> str:
         if candidate.is_file():
             try:
                 return hashlib.sha256(candidate.read_bytes()).hexdigest()
-            except Exception:
+            except OSError:
                 pass
-    return "0" * 64
+    return "unknown"
 
 
 def _probe_git_commit() -> str:

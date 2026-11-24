@@ -427,7 +427,15 @@ def _extract_once(
         return dest
 
 
-def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
+def _threads_arg(threads: int) -> str:
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 0:
+        raise ValueError("Stage 0 ffmpeg threads must be a non-negative integer")
+    return str(threads)
+
+
+def extract_audio(
+    source: Path, dest: Path, ffmpeg: Path | None = None, *, threads: int = 1
+) -> Path:
     """§3 Stage 0's audio pass: 16 kHz mono PCM, loudness-normalised.
 
     `-threads 1` is deliberate (§3 Stage 0 / §6): parallelism belongs across files, not
@@ -443,7 +451,7 @@ def extract_audio(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-loglevel",
             "error",
             "-threads",
-            "1",
+            _threads_arg(threads),
             "-i",
             str(source),
             "-vn",
@@ -475,7 +483,9 @@ def _assert_audio_format(wav_path: Path) -> None:
         )
 
 
-def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
+def extract_proxy(
+    source: Path, dest: Path, ffmpeg: Path | None = None, *, threads: int = 1
+) -> Path:
     """§3 Stage 0's video proxy: 1 fps, 720p, CRF 28, no audio.
 
     One frame per second is right for keyframe and visual work and **wrong for shot
@@ -491,7 +501,7 @@ def extract_proxy(source: Path, dest: Path, ffmpeg: Path | None = None) -> Path:
             "-loglevel",
             "error",
             "-threads",
-            "1",
+            _threads_arg(threads),
             "-i",
             str(source),
             "-vf",
@@ -789,6 +799,8 @@ def ingest(
     work_dir: Path,
     media_id: str | None = None,
     ffmpeg: Path | None = None,
+    *,
+    threads: int | None = None,
 ) -> IngestResult:
     """Run §3 Stage 0 over one media file.
 
@@ -804,6 +816,8 @@ def ingest(
         IngestError: ffmpeg is unavailable, a pass failed, the audio is the wrong format, or
             a VAD segment exceeds the ASR ceiling.
     """
+    effective_threads = 1 if threads is None else threads
+    _threads_arg(effective_threads)
     try:
         source_size = source.stat().st_size
     except OSError as exc:
@@ -833,8 +847,8 @@ def ingest(
     identifier = media_id or source.stem
     source_sha256 = _source_digest(source)
 
-    audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary)
-    proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary)
+    audio = extract_audio(source, work_dir / "audio.wav", ffmpeg=binary, threads=effective_threads)
+    proxy = extract_proxy(source, work_dir / "proxy.mp4", ffmpeg=binary, threads=effective_threads)
     duration_ms = probe_duration_ms(source, ffmpeg=binary)
     speech = _clip_speech_to_media(detect_speech(audio), duration_ms)
     assert_within_asr_ceiling(speech)

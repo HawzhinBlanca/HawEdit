@@ -417,6 +417,7 @@ def reconcile_delivery(
     shot_cut_guard_ms: int = 1500,
     lufs_tolerance: float | None = None,
     min_face_share: float | None = None,
+    min_first_frame_face_share: float | None = None,
     for_review: bool = False,
     speaker_turns: Sequence[tuple[int, int, str]] = (),
 ) -> None:
@@ -497,7 +498,14 @@ def reconcile_delivery(
         for i in range(1, len(planned_punch_ins))
     )
     discrete_punch_ins = (
-        () if is_dense_schedule else tuple(p for p in planned_punch_ins if p[0] > tolerance_ms)
+        ()
+        if is_dense_schedule
+        else tuple(
+            planned_punch_ins[i]
+            for i in range(len(planned_punch_ins))
+            if planned_punch_ins[i][0] > tolerance_ms
+            and (i == 0 or abs(planned_punch_ins[i][1] - planned_punch_ins[i - 1][1]) > 1e-3)
+        )
     )
     for at_ms, _ in discrete_punch_ins:
         matched = any(abs(at_ms - cut_ms) <= tolerance_ms for cut_ms in measured_cuts)
@@ -547,10 +555,7 @@ def reconcile_delivery(
     tracked_crop_targets = ("face_tracked", "speaker_face")
     if (
         clip.output
-        and (
-            clip.output.crop_target == "face_tracked"
-            or (clip.output.crop_target == "speaker_face" and min_face_share is not None)
-        )
+        and clip.output.crop_target in tracked_crop_targets
         and round(measurement.faces.face_detected_share, 2) < round(required_face_share, 2)
     ):
         raise DeliveryRefused(
@@ -568,10 +573,7 @@ def reconcile_delivery(
     if (
         not for_review
         and clip.output
-        and (
-            clip.output.crop_target == "face_tracked"
-            or (clip.output.crop_target == "speaker_face" and min_face_share is not None)
-        )
+        and clip.output.crop_target in tracked_crop_targets
         and required_speaking_face_share > 0.0
         and measurement.faces.speaking_samples_count > 0
         and round(measurement.faces.speaking_face_share, 2) < round(required_speaking_face_share, 2)
@@ -583,17 +585,22 @@ def reconcile_delivery(
         )
 
     # Clause 7b: First-Frame Subject Face Gate (Task T2.3 / Task T04)
+    opening_floor = min_first_frame_face_share
+    if opening_floor is None and min_face_share is not None and min_face_share > 0:
+        opening_floor = 0.05  # Preserve the explicit legacy opening check.
     if (
         clip.output
         and clip.output.crop_target in tracked_crop_targets
-        and min_face_share is not None
-        and min_face_share > 0.0
-        and measurement.faces.first_frame_face_share is not None
-        and measurement.faces.first_frame_face_share < 0.05
+        and opening_floor is not None
+        and opening_floor > 0.0
+        and (
+            measurement.faces.first_frame_face_share is None
+            or measurement.faces.first_frame_face_share < opening_floor
+        )
     ):
         raise DeliveryRefused(
             "first_frame_lacks_subject",
-            expected=">= 0.05 face share in opening frame",
+            expected=f">= {opening_floor:.2f} face share in opening frame",
             measured=measurement.faces.first_frame_face_share,
         )
 

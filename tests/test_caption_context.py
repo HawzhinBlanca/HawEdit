@@ -46,7 +46,7 @@ def test_ass_pixel_wrapping_uses_selected_font_size(style: CaptionStyle) -> None
             max_line_width_px=_limit(),
             keyword_emphasis=False,
         )
-        events = [line for line in content.splitlines() if line.startswith("Dialogue:")]
+        events = [line for line in content.splitlines() if line.startswith("Dialogue: 0,")]
         assert len(events) == 1
         assert events[0].count("\\N") == breaks
 
@@ -87,7 +87,9 @@ def test_ass_generic_popup_width_uses_selected_font_size(style: CaptionStyle) ->
             max_popup_width_px=_limit(),
             keyword_emphasis=False,
         )
-        assert len([line for line in content.splitlines() if line.startswith("Dialogue:")]) == count
+        assert (
+            len([line for line in content.splitlines() if line.startswith("Dialogue: 0,")]) == count
+        )
 
 
 @pytest.mark.parametrize("style", list(CaptionStyle))

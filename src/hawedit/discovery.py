@@ -45,7 +45,7 @@ ignorant of either adapter and merges only validated ``Candidate`` values.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from hawedit.clip import DiscoveryPath, Sv6d
@@ -60,6 +60,7 @@ __all__ = [
     "Candidate",
     "MergedCandidate",
     "assert_discovery_inventory_independence",
+    "combine_verbal_candidates",
     "merge_candidates",
     "to_retrieved",
     "vote_candidate_spans",
@@ -435,3 +436,32 @@ def assert_discovery_inventory_independence(
         )
     if len(claimed_ids) != len(set(claimed_ids)):
         raise ValueError("Merged candidate sources contain duplicate candidate IDs across items.")
+
+
+def combine_verbal_candidates(*groups: Sequence[Candidate]) -> tuple[Candidate, ...]:
+    """Unite multiple `DiscoveryPath.VERBAL` producers without dropping wins or reordering ranks.
+
+    `merge_candidates` ties visual partner claiming by `(rank, candidate_id)`. Offsetting later
+    verbal groups past the maximum rank of earlier groups guarantees the primary producer keeps
+    claim precedence while retaining 100% of unique candidates from secondary sources (C4 / D-345).
+    """
+    combined: list[Candidate] = []
+    rank_offset = 0
+    seen_ids: set[str] = set()
+    for group in groups:
+        if not group:
+            continue
+        _assert_path(group, DiscoveryPath.VERBAL)
+        max_rank_in_group = 0
+        for cand in group:
+            if cand.candidate_id in seen_ids:
+                raise ValueError(
+                    f"duplicate candidate id {cand.candidate_id!r} across verbal sources"
+                )
+            seen_ids.add(cand.candidate_id)
+            max_rank_in_group = max(max_rank_in_group, cand.rank)
+            combined.append(
+                replace(cand, rank=rank_offset + cand.rank) if rank_offset > 0 else cand
+            )
+        rank_offset += max_rank_in_group
+    return tuple(combined)

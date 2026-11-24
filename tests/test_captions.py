@@ -22,15 +22,17 @@ captions."
 from __future__ import annotations
 
 import hashlib
+import re
 import unicodedata
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import cv2
 import pytest
 
 from hawedit.captions import (
     DEFAULT_BOTTOM_CAPTION_BAND,
+    DEFAULT_CAPTION_FONT,
     DEFAULT_MAX_CHARS_PER_LINE,
     DEFAULT_MAX_LINE_WIDTH_PX,
     DEFAULT_PLATE_COLOUR,
@@ -409,9 +411,42 @@ def test_our_line_breaks_appear_as_hard_ass_breaks() -> None:
 
 
 def test_word_highlight_style_emits_karaoke_timings_from_the_alignment() -> None:
-    """§5's `caption_style: word_highlight`, driven by §4.2's word timings."""
+    """§5 `caption_style: word_highlight`, driven by §4.2 word timings (RTL \\clip sweep, D-348)."""
     ass = build_ass((A_SENTENCE,), style=CaptionStyle.WORD_HIGHLIGHT)
-    assert "{\\kf40}" in ass, "400 ms word -> 40 centiseconds"
+    assert "\\kf" not in ass
+    assert "\\clip(" in ass
+    assert "\\t(0,400,\\clip(" in ass, "400 ms word -> 400 ms \\clip sweep"
+
+
+def test_word_highlight_style_emits_rtl_clip_karaoke_without_kf() -> None:
+    """D6 AC1: Layer 0 base in unspoken colour + Layer 4 \\clip highlight events, zero \\kf."""
+    ass = build_ass(
+        (_golden_sentence(),),
+        theme=VIRAL_THEME,
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        font_size=VIRAL_FONT_SIZE,
+        clip_in_ms=0,
+        clip_duration_ms=2000,
+    )
+    assert "\\kf" not in ass
+    assert "Style: KurdishHighlight," in ass
+    layer0 = [line for line in ass.splitlines() if line.startswith("Dialogue: 0,")]
+    layer4 = [line for line in ass.splitlines() if line.startswith("Dialogue: 4,")]
+    assert len(layer0) == 1
+    assert len(layer4) == len(_golden_sentence().words)
+    assert all("\\clip(" in line and "\\t(0," in line for line in layer4)
+
+
+def test_word_highlight_caps_silence_stretched_karaoke_sweep() -> None:
+    """A short word stretched across a 2.6 s pause must sweep crisply, not crawl for 2.6 s."""
+    stretched = Sentence(
+        words=words(("لێی", 0, 2_627), ("تێدەگات.", 2_700, 3_100)),
+        complete=True,
+    )
+    ass = build_ass((stretched,), style=CaptionStyle.WORD_HIGHLIGHT)
+    layer4 = [line for line in ass.splitlines() if line.startswith("Dialogue: 4,")]
+    assert any("\\t(0,600,\\clip(" in line for line in layer4)
+    assert not any("\\t(0,2627," in line for line in layer4)
 
 
 def test_the_plain_style_emits_no_karaoke_tags() -> None:
@@ -540,13 +575,13 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "kurdish-speech-3cuts.m
 # Task T1.8: Pinned SHA256 digests for all committed reference goldens (anti-cheat).
 # Altering a golden file without an explicit, reviewed change fails this check.
 GOLDEN_DIGESTS: Final[dict[str, str]] = {
-    "kurdish-caption.png": ("61a9c459f5e61fe2b45342f1ba966f33461ce7e6a1169c911f4ce7af8c154c16"),
+    "kurdish-caption.png": ("1ab54d7f83bceb8e3e3a69376da914ee10ae1cde14eb4e654ed4a07a52c8ab19"),
     "kurdish-viral-karaoke.png": (
-        "156c0258ac4325bfb4cf6bdee830b60041e33668696cfb767488a553b35d8abe"
+        "84f9e0607452983e5f4ca7bb9356a4f7d33880da3f7bfd3dbed2f635f5708a51"
     ),
-    "kurdish-hook-card.png": ("b64fae770d7e04e2778546a5afb3770f5ebb6756c3b03cfbee193e15fa28561d"),
+    "kurdish-hook-card.png": ("e51348b043ca44fc745ffe236503b99aa5d2f1c15eeca225ba333e8b1d1843e6"),
     "kurdish-caption-fixture.png": (
-        "a4d5ac1489128c95e4c7598753cef8fad42db5a2770b85a0140a36ef86b9ab08"
+        "ea7d413c53092467ae5c06903f2e10977548da60f37f006268b72a0c7084174e"
     ),
 }
 
@@ -853,11 +888,11 @@ def test_simple_shaping_fails_caption_over_fixture_video_golden(tmp_path: Path) 
 
 
 def _ink_bands(raw: bytes, width: int = 1080, height: int = 1920) -> list[tuple[int, int]]:
-    """Contiguous runs of rows containing ink — one band per rendered caption line."""
+    """Contiguous visual line bands containing ink — tolerates 2 px intra-line diacritic gaps."""
     rows = [y for y in range(height) if any(raw[(y * width + x) * 3] > 40 for x in range(width))]
     bands: list[tuple[int, int]] = []
     for y in rows:
-        if bands and y == bands[-1][1] + 1:
+        if bands and y <= bands[-1][1] + 6:
             bands[-1] = (bands[-1][0], y)
         else:
             bands.append((y, y))
@@ -1349,14 +1384,15 @@ def test_popup_events_never_put_a_paragraph_on_screen() -> None:
         max_words_per_event=3,
         max_chars_per_line=22,
     )
-    events = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    events = [line for line in ass.splitlines() if line.startswith("Dialogue: 0,")]
     assert len(events) == 2
     assert all("\\N" not in line for line in events), "a popup must never wrap"
 
 
 def test_popup_events_hold_across_a_short_hole_and_stop_at_the_sentence() -> None:
     ass = build_ass((_popup_sentence(),), style=CaptionStyle.WORD_HIGHLIGHT, max_words_per_event=3)
-    spans = parse_dialogue_times(ass)
+    base_ass = "\n".join(line for line in ass.splitlines() if not line.startswith("Dialogue: 4,"))
+    spans = parse_dialogue_times(base_ass)
     # The first popup is held open until the second begins: no blink between them.
     assert spans[0][1] == spans[1][0]
     # The last popup ends on its own last word, never past the sentence.
@@ -1392,13 +1428,14 @@ def test_the_viral_theme_sweeps_with_the_voice_rather_than_ahead_of_it() -> None
 def test_the_viral_theme_clears_the_platform_caption_bar() -> None:
     """140 px of a 1920-tall frame puts Kurdish text under the Reels/Shorts/TikTok UI."""
     assert REPORT_THEME.margin_v == 140
-    assert VIRAL_THEME.margin_v == 360
+    assert VIRAL_THEME.margin_v == 450
+    assert VIRAL_THEME.outline == 6.0
     assert VIRAL_THEME.bold and VIRAL_THEME.outline > REPORT_THEME.outline
 
 
 def test_a_theme_reaches_the_rendered_style_row() -> None:
     ass = build_ass((_popup_sentence(),), font_size=74, theme=VIRAL_THEME)
-    assert VIRAL_THEME.style_row("Kurdish", "Noto Naskh Arabic", 74) in ass
+    assert VIRAL_THEME.style_row("Kurdish", DEFAULT_CAPTION_FONT, 74) in ass
     assert ",140,-1" not in ass
 
 
@@ -1422,17 +1459,12 @@ def test_a_custom_theme_round_trips_every_field() -> None:
 
 
 def test_the_viral_font_size_is_set_from_measured_ink_not_from_the_point_number() -> None:
-    """A point size is an em, and Naskh sets a small face inside it.
+    """A point size is an em, and phone reels require >= 68 px of measured glyph height (D-350)."""
+    assert VIRAL_FONT_SIZE == 128
+    assert POPUP_MAX_CHARS == 20
 
-    Rendered a real 17-character Kurdish popup at each size and took the ink bounding box:
-    64 pt gave 38 px of height, 74 -> 43, 84 -> 49, 96 -> 56, 108 -> 63, 120 -> 70. A burned-in
-    social caption wants 60-90 px on a 1920-tall frame, so the 74 this shipped with was under
-    half the height it appeared to promise.
-    """
-    assert VIRAL_FONT_SIZE == 108
-
-    # The widest popup the chunker can emit must still fit between the margins. At 108 pt
-    # Kurdish measures about 28 px per character, and the theme leaves 1080 - 80 - 80 = 920.
+    # The widest popup the chunker can emit must still fit between the margins. At 128 pt
+    # Kurdish measures under 32 px per character on average, and 920 px leaves generous room.
     assert 1080 - VIRAL_THEME.margin_l - VIRAL_THEME.margin_r > POPUP_MAX_CHARS * 28
 
 
@@ -2437,7 +2469,7 @@ def test_mobile_caption_layout_preserves_canonical_sorani(tmp_path: Path) -> Non
     assert RESTRAINED_MOBILE_THEME.margin_l == 80 and RESTRAINED_MOBILE_THEME.margin_r == 80
     assert RESTRAINED_MOBILE_THEME.bold is True
     assert RESTRAINED_MOBILE_THEME.outline == 4.0
-    assert f"Style: Kurdish,Noto Naskh Arabic,{RESTRAINED_MOBILE_FONT_SIZE}" in ass_text
+    assert f"Style: Kurdish,{DEFAULT_CAPTION_FONT},{RESTRAINED_MOBILE_FONT_SIZE}" in ass_text
     assert ",80,80,380,-1" in ass_text
 
     # Explicit theme override equals default layout
@@ -2714,3 +2746,319 @@ def test_a_line_starting_with_a_latin_word_is_still_right_to_left(tmp_path: Path
         f"the Latin first word is centred at x={latin_x:.0f}, the last word at "
         f"x={sorani_x:.0f}: the line is drawn left-to-right"
     )
+
+
+def _word_region_highlight_stats(
+    png: Path, x0: int, y0: int, x1: int, y1: int
+) -> tuple[float, float, int, int]:
+    """Return (gold_mean_x, white_mean_x, gold_min_x, gold_max_x) inside a word crop."""
+    image = cv2.imread(str(png))
+    assert image is not None, f"could not read {png}"
+    crop = image[max(0, y0 - 8) : min(1920, y1 + 8), max(0, x0 - 4) : min(1080, x1 + 4)]
+    blue, green, red = (crop[..., ch].astype(int) for ch in range(3))
+    gold = (red > 180) & (green > 150) & (blue < 90)
+    white = (red > 200) & (green > 200) & (blue > 200)
+    assert gold.any(), f"no highlighted pixels in {png}"
+    assert white.any(), f"no unhighlighted pixels in {png}"
+    offset_x = max(0, x0 - 4)
+    gx = gold.nonzero()[1] + offset_x
+    wx = white.nonzero()[1] + offset_x
+    return float(gx.mean()), float(wx.mean()), int(gx.min()), int(gx.max())
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_word_highlight_sweeps_right_to_left_inside_each_sorani_word(tmp_path: Path) -> None:
+    """D6 AC3. Inside a Sorani word, gold pixels sweep monotonically from right to left."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    sentence = _golden_sentence()  # word 0 ("ڕۆژنامەوانی") spans 0..600 ms
+    ass_path = tmp_path / "rtl-sweep.ass"
+    ass_path.write_text(
+        build_ass(
+            (sentence,),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    # Inspect active word 0's horizontal span from the first Layer 4 \clip tag
+    layer4 = [
+        line
+        for line in ass_path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Dialogue: 4,")
+    ]
+    assert layer4
+    m = re.search(r"\\t\(0,\d+,\\clip\((\d+),(\d+),(\d+),(\d+)\)\)", layer4[0])
+    assert m is not None, f"expected animated \\clip in {layer4[0]!r}"
+    wx0, wy0, wx1, wy1 = (int(m.group(i)) for i in range(1, 5))
+
+    gold_lefts: list[int] = []
+    for idx, t_s in enumerate((0.15, 0.30, 0.45)):
+        png = _render_frame_at(ffmpeg, ass_path, tmp_path / f"sweep_{idx}.png", t_s)
+        g_mean, w_mean, g_min, _g_max = _word_region_highlight_stats(png, wx0, wy0, wx1, wy1)
+        assert g_mean > w_mean, (
+            f"t={t_s}s: gold mean x={g_mean:.1f} not right of white {w_mean:.1f}"
+        )
+        gold_lefts.append(g_min)
+    assert gold_lefts[0] > gold_lefts[1] > gold_lefts[2], (
+        f"left highlight boundary did not advance leftward: {gold_lefts}"
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_word_highlight_mixed_script_sweeps_each_word_in_its_script_direction(
+    tmp_path: Path,
+) -> None:
+    """D6 AC4. Latin word sweeps LTR while Sorani words sweep RTL inside the same line."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    sentence = Sentence(
+        words=words(("OpusClip", 0, 600), ("زۆر", 600, 1000), ("باشە.", 1000, 1600)),
+        complete=True,
+    )
+    ass_path = tmp_path / "mixed-sweep.ass"
+    ass_path.write_text(
+        build_ass(
+            (sentence,),
+            theme=VIRAL_THEME,
+            style=CaptionStyle.WORD_HIGHLIGHT,
+            font_size=VIRAL_FONT_SIZE,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        ),
+        encoding="utf-8",
+    )
+    layer4 = [
+        line
+        for line in ass_path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Dialogue: 4,")
+    ]
+    assert len(layer4) == 3
+    m_latin = re.search(r"\\t\(0,\d+,\\clip\((\d+),(\d+),(\d+),(\d+)\)\)", layer4[0])
+    m_sorani = re.search(r"\\t\(0,\d+,\\clip\((\d+),(\d+),(\d+),(\d+)\)\)", layer4[2])
+    assert m_latin is not None and m_sorani is not None
+    lx0, ly0, lx1, ly1 = (int(m_latin.group(i)) for i in range(1, 5))
+    sx0, sy0, sx1, sy1 = (int(m_sorani.group(i)) for i in range(1, 5))
+
+    p_lat1 = _render_frame_at(ffmpeg, ass_path, tmp_path / "lat1.png", 0.15)
+    p_lat2 = _render_frame_at(ffmpeg, ass_path, tmp_path / "lat2.png", 0.45)
+    lg1, lw1, _, _ = _word_region_highlight_stats(p_lat1, lx0, ly0, lx1, ly1)
+    lg2, lw2, _, _ = _word_region_highlight_stats(p_lat2, lx0, ly0, lx1, ly1)
+    assert lg1 < lw1 and lg2 > lg1, (
+        f"Latin word did not sweep LTR: t=0.15 ({lg1} vs {lw1}), t=0.45 ({lg2})"
+    )
+
+    p_sor = _render_frame_at(ffmpeg, ass_path, tmp_path / "sor.png", 1.30)
+    sg, sw, _, _ = _word_region_highlight_stats(p_sor, sx0, sy0, sx1, sy1)
+    assert sg > sw, f"Sorani word did not sweep RTL: gold={sg:.1f} <= white={sw:.1f}"
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_word_highlight_multiline_and_top_band_clip_bounds(tmp_path: Path) -> None:
+    """D6 AC5. Multi-line \\N and top-band (face_intervals) events keep per-line/band \\clip."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    sentence = Sentence(
+        words=words(
+            ("ڕۆژنامەوانی", 0, 400),
+            ("کوردی", 400, 800),
+            ("لە", 800, 1200),
+            ("هەولێر.", 1200, 1600),
+        ),
+        complete=True,
+    )
+    ass_top = build_ass(
+        (sentence,),
+        theme=VIRAL_THEME,
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        font_size=VIRAL_FONT_SIZE,
+        max_chars_per_line=18,
+        face_intervals=((0, 2000, 1350, 1550),),
+        clip_in_ms=0,
+        clip_duration_ms=2000,
+    )
+    assert "Style: KurdishTopHighlight," in ass_top
+    assert "\\N" in ass_top
+    layer4 = [line for line in ass_top.splitlines() if line.startswith("Dialogue: 4,")]
+    assert len(layer4) == 4
+    y_bounds = []
+    for line in layer4:
+        m = re.search(r"\\t\(0,\d+,\\clip\((\d+),(\d+),(\d+),(\d+)\)\)", line)
+        assert m is not None
+        y_bounds.append((int(m.group(2)), int(m.group(4))))
+    # Top band sits in upper third (< 650 px), and line 2 sits below line 1
+    assert all(y1 < 650 for _, y1 in y_bounds), f"expected top-band y bounds, got {y_bounds}"
+    assert y_bounds[-1][0] > y_bounds[0][0], f"second line did not step down in y: {y_bounds}"
+
+    ass_path = tmp_path / "top-multi.ass"
+    ass_path.write_text(ass_top, encoding="utf-8")
+    png = _render_frame_at(ffmpeg, ass_path, tmp_path / "top_multi.png", 1.4)
+    im = cv2.imread(str(png))
+    assert im is not None
+    # Verify gold ink rendered in the upper band (< 650 px)
+    b, g, r = (im[:650, :, c].astype(int) for c in range(3))
+    assert ((r > 180) & (g > 150) & (b < 90)).any()
+
+
+def test_word_highlight_clip_passes_caption_integrity() -> None:
+    """D6 AC6. verify_caption_integrity passes on two-layer WORD_HIGHLIGHT with repeated words."""
+    sentence = Sentence(
+        words=words(("ئەرێ", 0, 300), ("ئەرێ", 300, 600), ("باشە.", 600, 1000)),
+        complete=True,
+    )
+    ass = build_ass(
+        (sentence,),
+        theme=VIRAL_THEME,
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        font_size=VIRAL_FONT_SIZE,
+        max_words_per_event=1,
+        clip_in_ms=0,
+        clip_duration_ms=1500,
+    )
+    report = verify_caption_integrity(
+        ass, expected_text=[w.w for w in sentence.words], fonts_dir=FONTS_DIR
+    )
+    assert report.text_ok and report.joining_ok and report.glyphs_ok and report.geometry_ok
+
+
+def test_default_caption_font_is_vazirmatn_and_covers_kurdish_and_latin() -> None:
+    """D7 AC1. Default caption font is bundled Vazirmatn covering both Sorani and Latin glyphs."""
+    assert DEFAULT_CAPTION_FONT == "Vazirmatn"
+    vazir = FONTS_DIR / "Vazirmatn.ttf"
+    assert vazir.is_file()
+    mixed = Sentence(
+        words=words(("سڵاو", 0, 400), ("OpusClip", 400, 900), ("باشە.", 900, 1400)),
+        complete=True,
+    )
+    ass = build_ass((mixed,), style=CaptionStyle.LINE)
+    assert "Style: Kurdish,Vazirmatn," in ass
+    assert assert_ass_fonts_cover_kurdish(ass, FONTS_DIR) == (vazir,)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_mixed_sorani_and_latin_render_at_matched_height_and_weight(tmp_path: Path) -> None:
+    """D7 AC2. Mixed Sorani + Latin words render from Vazirmatn at matched height and weight."""
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    sorani_s = Sentence(words=words(("تاقیکردنەوەی", 0, 1000)), complete=True)
+    latin_s = Sentence(words=words(("OpusClip", 0, 1000)), complete=True)
+    p_sor = tmp_path / "sorani.png"
+    p_lat = tmp_path / "latin.png"
+    for sent, tag in ((sorani_s, "sorani"), (latin_s, "latin")):
+        ass_p = tmp_path / f"{tag}.ass"
+        ass_p.write_text(
+            build_ass((sent,), style=CaptionStyle.LINE, font_size=108, theme=VIRAL_THEME),
+            encoding="utf-8",
+        )
+        render_caption_png(ffmpeg, ass_p, FONTS_DIR, tmp_path / f"{tag}.png")
+
+    def _ink_height(png: Path) -> int:
+        im = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+        assert im is not None
+        ys, _ = (im > 128).nonzero()
+        assert ys.size > 0
+        return int(ys.max() - ys.min() + 1)
+
+    sor_h = _ink_height(p_sor)
+    lat_h = _ink_height(p_lat)
+    ratio = lat_h / sor_h
+    assert 0.75 <= ratio <= 1.25, (
+        f"Latin/Sorani height ratio {ratio:.3f} (latin={lat_h}px, sorani={sor_h}px) mismatched"
+    )
+
+
+def test_ass_font_binding_refuses_host_latin_fallback_for_mixed_text() -> None:
+    """D7 AC3. Binding fails closed on missing Latin glyphs; explicit Noto Sorani still passes."""
+    mixed = Sentence(
+        words=words(("کوردی", 0, 400), ("OpusClip", 400, 900)),
+        complete=True,
+    )
+    ass_mixed = build_ass((mixed,), font_name="Noto Naskh Arabic", style=CaptionStyle.LINE)
+    with pytest.raises(FontCoverageError, match="fallback"):
+        assert_ass_fonts_cover_kurdish(ass_mixed, FONTS_DIR)
+
+    pure_sorani = build_ass((_golden_sentence(),), font_name="Noto Naskh Arabic")
+    assert assert_ass_fonts_cover_kurdish(pure_sorani, FONTS_DIR) == (FONT,)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no ffmpeg — set HAWEDIT_FFMPEG")
+def test_viral_captions_reach_phone_readable_ink_size_outline_and_safe_zone(tmp_path: Path) -> None:
+    """D5 AC1. VIRAL_THEME + VIRAL_FONT_SIZE reach >= 68px ink height, >= 6px outline, <= 20 ch."""
+    from hawedit.captions import POPUP_MAX_WORDS
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    assert VIRAL_FONT_SIZE >= 120
+    assert VIRAL_THEME.outline >= 6.0
+    assert VIRAL_THEME.margin_v >= 440
+    assert POPUP_MAX_WORDS == 3
+    assert POPUP_MAX_CHARS == 20
+
+    s = Sentence(
+        words=words(("ژیری", 0, 500), ("دەستکرد", 500, 1000), ("داهاتووە.", 1000, 1600)),
+        complete=True,
+    )
+    ass = build_ass(
+        (s,),
+        theme=VIRAL_THEME,
+        font_size=VIRAL_FONT_SIZE,
+        style=CaptionStyle.WORD_HIGHLIGHT,
+        max_chars_per_line=POPUP_MAX_CHARS,
+        max_words_per_event=POPUP_MAX_WORDS,
+        max_popup_width_px=POPUP_MAX_WIDTH_PX,
+        clip_in_ms=0,
+        clip_duration_ms=2000,
+    )
+    ass_p = tmp_path / "viral_d5.ass"
+    ass_p.write_text(ass, encoding="utf-8")
+    png = _render_frame_at(ffmpeg, ass_p, tmp_path / "viral_d5.png", 0.75)
+    im = cv2.imread(str(png))
+    assert im is not None
+    # Active glyphs are white/gold (>180 on red/green channels)
+    ink = (im[:, :, 2] > 180) & (im[:, :, 1] > 150)
+    ys, _ = ink.nonzero()
+    assert ys.size > 0
+    ink_h = int(ys.max() - ys.min() + 1)
+    assert ink_h >= 68, f"expected >= 68px ink height at 1080x1920, measured {ink_h}px"
+    assert ys.max() <= 1500, f"caption dropped into lower teaser/UI zone: y_max={ys.max()}"
+
+
+def test_assembled_reel_and_pipeline_emit_phone_readable_popup_captions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D5 AC2. render_assembled_reel emits VIRAL_FONT_SIZE / VIRAL_THEME popup ASS instead of 64."""
+    import subprocess
+
+    from hawedit.assembly import assemble_cold_open, render_assembled_reel
+
+    payoff = Sentence(words=words(("ئەنجامی", 2000, 2600), ("گرنگ", 2600, 3200)), complete=True)
+    setup = Sentence(words=words(("دەستپێک", 200, 1000)), complete=True)
+    reel = assemble_cold_open([setup], payoff)
+
+    src = tmp_path / "dummy.mp4"
+    src.write_bytes(b"mp4")
+    out_mp4 = tmp_path / "out.mp4"
+    orig_run = subprocess.run
+
+    def _stub_render(*args: Any, **kwargs: Any) -> Any:
+        cmd = args[0] if args else kwargs.get("args", ())
+        if isinstance(cmd, list | tuple) and str(out_mp4) in [str(x) for x in cmd]:
+            out_mp4.write_bytes(b"mp4")
+            return subprocess.CompletedProcess(cmd, 0)
+        return orig_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _stub_render)
+    render_assembled_reel(
+        reel=reel,
+        source_video_path=src,
+        output_path=out_mp4,
+        work_dir=tmp_path / "work",
+        fonts_dir=FONTS_DIR,
+    )
+    ass_text = (tmp_path / "work" / "assembled.ass").read_text(encoding="utf-8")
+    assert f",{VIRAL_FONT_SIZE}," in ass_text
+    assert f",{VIRAL_THEME.margin_v},-1" in ass_text
+    assert ",64," not in ass_text

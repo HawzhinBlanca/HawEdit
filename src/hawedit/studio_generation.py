@@ -81,8 +81,8 @@ def _option_argv(options: Mapping[str, object]) -> list[str]:
             else:
                 argv.append(f"--{'' if value else 'no-'}{key.replace('_', '-')}")
         else:
-            if type(value) is not int or value not in {1, 2, 3, 5}:
-                raise GenerationError("max_clips must be one of 1, 2, 3 or 5")
+            if type(value) is not int or value not in {1, 2, 3, 5, 10}:
+                raise GenerationError("max_clips must be one of 1, 2, 3, 5 or 10")
             argv[1] = f"--max-clips={value}"
     return argv
 

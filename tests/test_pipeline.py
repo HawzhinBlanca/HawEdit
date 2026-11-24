@@ -56,7 +56,12 @@ from hawedit.clip import (
 from hawedit.diarization import Segment
 from hawedit.discovery import Candidate, MergedCandidate
 from hawedit.ingest import DiarizationUnavailable, IngestError
-from hawedit.judge import MAX_PERSISTED_VERDICT_BYTES, JudgeRequest, JudgeVerdict
+from hawedit.judge import (
+    KURDISH_EDITORIAL_JUDGE,
+    MAX_PERSISTED_VERDICT_BYTES,
+    JudgeRequest,
+    JudgeVerdict,
+)
 from hawedit.pipeline import (
     DEFAULT_JUDGE_TOP_N,
     MAX_INTERNAL_SILENCE_MS,
@@ -83,6 +88,7 @@ from hawedit.render import Encoder, Reframe, RenderResult
 from hawedit.sentences import Sentence
 from hawedit.transcripts import (
     AsrProvenance,
+    NormalizedTranscript,
     RawTranscript,
     UnalignedSpeech,
     Word,
@@ -164,7 +170,7 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
         title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
         description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
         hashtags_ckb=("#کوردی",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=clip_in_ms,
         clip_out_ms=clip_out_ms,
     )
@@ -1099,7 +1105,7 @@ def test_supplying_a_judge_scores_the_top_candidate(tmp_path: Path) -> None:
     seen: list[JudgeRequest] = []
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             seen.append(request)
@@ -1136,7 +1142,7 @@ def test_the_judge_gets_rank_one_not_the_earliest_candidate(tmp_path: Path) -> N
     seen: list[JudgeRequest] = []
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             seen.append(request)
@@ -1315,7 +1321,7 @@ def test_automatic_selection_uses_complete_sentences_inside_the_best_survivor(
     from hawedit.discovery import Candidate
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             return replace(
@@ -1354,7 +1360,7 @@ def test_multimodal_judge_receives_real_source_keyframes_from_runner(tmp_path: P
     seen: list[JudgeRequest] = []
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
         requires_keyframes = True
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
@@ -1562,7 +1568,16 @@ def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifac
     tmp_path: Path,
 ) -> None:
     from hawedit.reframe import FocusPoint, SpeakerFocusPoint
+
+    face_fixture = FIXTURE.with_name("camera-face-mechanics.mp4")
+    face_sha = hashlib.sha256(face_fixture.read_bytes()).hexdigest()
     from hawedit.render import Reframe
+
+    class FaceDiarizer:
+        def diarize(self, audio: Path) -> tuple[Segment, ...]:
+            assert audio.name == "audio.wav"
+            # The face-bearing fixture has a measured 104-frame / 25 fps clock.
+            return (Segment(0, 1950, "SPEAKER_00"), Segment(1950, 4160, "SPEAKER_01"))
 
     class SpeakerTracker:
         def track_speakers(
@@ -1572,7 +1587,7 @@ def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifac
             out_ms: int,
             turns: Sequence[Segment],
         ) -> tuple[SpeakerFocusPoint, ...]:
-            assert source == FIXTURE
+            assert source == face_fixture
             assert (in_ms, out_ms) == (0, 1_950)
             assert turns == (Segment(0, 1_950, "SPEAKER_00"),)
             return (
@@ -1591,14 +1606,14 @@ def test_speaker_tracking_receives_only_overlapping_turns_and_labels_the_artifac
             pytest.fail("validated speaker evidence must win before the face-only fallback")
 
     run = run_pipeline(
-        FIXTURE,
+        face_fixture,
         tmp_path / "work",
         media_id="speaker-tracked",
-        transcript=a_transcript("speaker-tracked"),
-        diarizer=_MeasuredDiarizer(),
+        transcript=a_transcript("speaker-tracked", media_sha256=face_sha),
+        diarizer=FaceDiarizer(),
         select_sentences=(0,),
         verdict=replace(a_verdict(100, 1_700), candidate_id="speaker-tracked-0"),
-        qc=_test_qc(True, reviewed_sha256=SPEAKER_TRACKED_RENDER_SHA256),
+        qc=None,
         speaker_tracker=SpeakerTracker(),
         subject_tracker=FaceFallback(),
     )
@@ -1990,7 +2005,7 @@ def test_an_overwriting_run_refuses_before_the_billed_judge_call(tmp_path: Path)
     calls: list[JudgeRequest] = []
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             calls.append(request)
@@ -2035,7 +2050,7 @@ def test_an_overwriting_auto_selected_run_also_refuses_before_the_judge(tmp_path
     calls: list[JudgeRequest] = []
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             calls.append(request)
@@ -2075,7 +2090,7 @@ def test_a_clean_work_directory_still_reaches_the_judge(tmp_path: Path) -> None:
     calls: list[JudgeRequest] = []
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             calls.append(request)
@@ -2780,7 +2795,7 @@ def _a_stub_judge() -> Any:
     """Stage 4 without Gemini. `BLOCKED.md` #3 is the real judge; this only lets Stage 4 run."""
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: Any) -> JudgeVerdict:
             return replace(
@@ -3052,7 +3067,7 @@ def test_a_judge_that_does_not_want_keyframes_is_sent_none(tmp_path: Path) -> No
     seen: list[JudgeRequest] = []
 
     class TextOnlyJudge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
         # No `requires_keyframes` at all — the attribute is read with a `False` default, and a
         # judge that never heard of it is the case that default exists for.
 
@@ -3120,7 +3135,7 @@ def whole_run(
             return VisualDiscoveryResult(media_id, query, len(windows), len(windows), (), ())
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             return replace(
@@ -3617,6 +3632,33 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "--omni-asr-runtime, --wsl-distro and --omni-asr-adapter require --omni-asr",
     ),
     (
+        "validator toggle without OmniASR",
+        ["--validate-asr"],
+        "--validate-asr and --no-validate-asr need --omni-asr",
+    ),
+    (
+        "clip-scoped ASR without both OmniASR and draft transcript",
+        ["--clip-scoped-asr"],
+        "--clip-scoped-asr requires both --omni-asr and a --transcript draft source",
+    ),
+    (
+        "clip-asr-pad-ms without clip-scoped ASR",
+        ["--clip-asr-pad-ms", "4000"],
+        "--clip-asr-pad-ms requires --clip-scoped-asr",
+    ),
+    (
+        "clip-asr-pad-ms out of bounds",
+        [
+            "--transcript",
+            "x.json",
+            "--omni-asr",
+            "--clip-scoped-asr",
+            "--clip-asr-pad-ms",
+            "2000",
+        ],
+        "--clip-asr-pad-ms must be between 3000 and 5000",
+    ),
+    (
         "both cloud routes",
         ["--transcript", "x.json", "--gemini", "--vertex-project", "p"],
         "--gemini and --vertex-project are mutually exclusive cloud routes",
@@ -3732,6 +3774,11 @@ _REFUSAL_CASES: tuple[tuple[str, list[str], str], ...] = (
         "max text similarity out of bounds",
         ["--max-text-similarity", "1.5"],
         "--max-text-similarity must be between 0.0 and 1.0",
+    ),
+    (
+        "topic candidates without a Stage 1 source",
+        ["--topic-candidates"],
+        "--topic-candidates requires --transcript or --omni-asr",
     ),
 )
 
@@ -4154,7 +4201,7 @@ def _run_with_judge_returning(
     from hawedit.discovery import Candidate
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             return make_verdict(request)
@@ -4779,7 +4826,7 @@ def test_automatic_selection_with_no_complete_sentence_never_extracts_frames_or_
         return ()
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
         requires_keyframes = True
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
@@ -4830,7 +4877,7 @@ def test_keyframe_operational_failure_is_an_editorial_skip_before_judging(
         raise KeyframeError("ffmpeg decoder refused the slice")
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
         requires_keyframes = True
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
@@ -4942,7 +4989,7 @@ def test_keyframe_cleanup_privacy_note_survives_into_json_stage_skip(
         raise error
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
         requires_keyframes = True
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
@@ -4990,7 +5037,7 @@ def test_unsafe_candidate_id_is_rejected_before_stage4_touches_its_work_path(
         return ()
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
         requires_keyframes = True
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
@@ -5049,7 +5096,7 @@ def test_known_judge_operational_failures_are_editorial_skips(
     }[failure_kind]
 
     class Judge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             raise failure
@@ -5446,6 +5493,11 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ),
     ("distro without OmniASR", ("--wsl-distro", "Ubuntu"), "require --omni-asr"),
     (
+        "validator toggle without OmniASR",
+        ("--validate-asr",),
+        "--validate-asr and --no-validate-asr need --omni-asr",
+    ),
+    (
         "two cloud routes",
         ("--gemini", "--vertex-project", "project"),
         "mutually exclusive cloud routes",
@@ -5565,6 +5617,33 @@ _CLI_PREFLIGHT_CASES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "max text similarity out of bounds",
         ("--max-text-similarity", "1.5"),
         "--max-text-similarity must be between 0.0 and 1.0",
+    ),
+    (
+        "clip-scoped ASR without both OmniASR and draft transcript",
+        ("--clip-scoped-asr",),
+        "--clip-scoped-asr requires both --omni-asr and a --transcript draft source",
+    ),
+    (
+        "clip-asr-pad-ms without clip-scoped ASR",
+        ("--clip-asr-pad-ms", "4000"),
+        "--clip-asr-pad-ms requires --clip-scoped-asr",
+    ),
+    (
+        "clip-asr-pad-ms out of bounds",
+        (
+            "--transcript",
+            "x.json",
+            "--omni-asr",
+            "--clip-scoped-asr",
+            "--clip-asr-pad-ms",
+            "2000",
+        ),
+        "--clip-asr-pad-ms must be between 3000 and 5000",
+    ),
+    (
+        "topic candidates without transcript or ASR",
+        ("--topic-candidates",),
+        "--topic-candidates requires --transcript or --omni-asr",
     ),
 )
 
@@ -5891,7 +5970,7 @@ def _verbal(candidate_id: str, in_ms: int, out_ms: int, rank: int) -> Candidate:
 class _RecordingJudge:
     """A judge that records every request and answers each one on its own span."""
 
-    model_id = "gemini-2.5-pro"
+    model_id = KURDISH_EDITORIAL_JUDGE
 
     def __init__(self) -> None:
         self.seen: list[JudgeRequest] = []
@@ -5996,7 +6075,7 @@ def test_every_verdict_is_persisted_even_when_render_is_refused(tmp_path: Path) 
         f"{len(persisted)} on disk"
     )
     stored = json.loads(next((work / "stage4").rglob("verdict.json")).read_text(encoding="utf-8"))
-    assert stored["judge"] == "gemini-2.5-pro"
+    assert stored["judge"] == KURDISH_EDITORIAL_JUDGE
 
 
 # --- judge-top-n T3: the best passing verdict ships ----------------------------------------
@@ -6005,7 +6084,7 @@ def test_every_verdict_is_persisted_even_when_render_is_refused(tmp_path: Path) 
 class _ScoringJudge:
     """Answers each candidate with the hook score its id is mapped to."""
 
-    model_id = "gemini-2.5-pro"
+    model_id = KURDISH_EDITORIAL_JUDGE
 
     def __init__(self, hooks: dict[str, float]) -> None:
         self.hooks = hooks
@@ -7328,12 +7407,15 @@ def test_run_pipeline_two_person_split_validation_errors(tmp_path: Path) -> None
 def test_run_pipeline_two_person_split_triggered_on_rapid_exchange(tmp_path: Path) -> None:
     from hawedit.reframe import SpeakerFocusPoint
 
+    face_fixture = FIXTURE.with_name("camera-face-mechanics.mp4")
+    face_sha = hashlib.sha256(face_fixture.read_bytes()).hexdigest()
+
     class RapidDiarizer:
         def diarize(self, audio: Path) -> tuple[Segment, ...]:
             return (
                 Segment(0, 1_200, "SPEAKER_00"),
                 Segment(1_200, 2_500, "SPEAKER_01"),
-                Segment(2_500, 4_162, "SPEAKER_00"),
+                Segment(2_500, 4_160, "SPEAKER_00"),
             )
 
     class RapidSpeakerTracker:
@@ -7351,16 +7433,15 @@ def test_run_pipeline_two_person_split_triggered_on_rapid_exchange(tmp_path: Pat
             )
 
     # auto triggers two_person_split
-    auto_sha = "e14aeb5fec53989568a095062bb2ede2228e8ccf65ff8731810b5aadba494427"
     run_auto = run_pipeline(
-        FIXTURE,
+        face_fixture,
         tmp_path / "work_auto",
         media_id="rapid-auto",
-        transcript=a_transcript("rapid-auto"),
+        transcript=a_transcript("rapid-auto", media_sha256=face_sha),
         diarizer=RapidDiarizer(),
         select_sentences=(0, 1),
         verdict=a_verdict(100, 4_100),
-        qc=_test_qc(True, reviewed_sha256=auto_sha),
+        qc=None,
         speaker_tracker=RapidSpeakerTracker(),
         two_person_split="auto",
     )
@@ -7371,16 +7452,15 @@ def test_run_pipeline_two_person_split_triggered_on_rapid_exchange(tmp_path: Pat
     assert Path(run_auto.render.path).is_file()
 
     # never keeps speaker_tracked single pane
-    never_sha = "c027f3c415a9caafb84df1d9efe369ca3e6670b443eb1ed6f6450fd51f914a4a"
     run_never = run_pipeline(
-        FIXTURE,
+        face_fixture,
         tmp_path / "work_never",
         media_id="rapid-never",
-        transcript=a_transcript("rapid-never"),
+        transcript=a_transcript("rapid-never", media_sha256=face_sha),
         diarizer=RapidDiarizer(),
         select_sentences=(0, 1),
         verdict=a_verdict(100, 4_100),
-        qc=_test_qc(True, reviewed_sha256=never_sha),
+        qc=None,
         speaker_tracker=RapidSpeakerTracker(),
         two_person_split="never",
     )
@@ -7540,3 +7620,85 @@ def test_cli_assemble_flag_registered() -> None:
     parser = build_parser()
     args = parser.parse_args([str(FIXTURE), "--assemble"])
     assert args.assemble is True
+
+
+def test_pipeline_passes_segmented_sentences_to_path_a(tmp_path: Path) -> None:
+    """C1 AC7: run_pipeline passes its segmented `sentences` through to PathADiscovery.discover."""
+    received: list[tuple[Sentence, ...]] = []
+
+    def fake_discover(
+        transcript: NormalizedTranscript,
+        *,
+        sentences: Sequence[Sentence] | None = None,
+    ) -> tuple[Candidate, ...]:
+        assert sentences is not None
+        received.append(tuple(sentences))
+        return (
+            Candidate(
+                candidate_id=f"{transcript.media_id}-verbal-1",
+                media_id=transcript.media_id,
+                in_ms=sentences[0].start_ms,
+                out_ms=sentences[-1].end_ms,
+                path=DiscoveryPath.VERBAL,
+                rank=1,
+                score=0.9,
+            ),
+        )
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work_c1",
+        media_id="c1-pass",
+        transcript=a_transcript("c1-pass"),
+        discover=fake_discover,
+    )
+    assert len(received) == 1
+    assert received[0] == run.sentences
+    assert len(run.candidates) == 1
+
+
+def test_pipeline_discovers_topic_candidates_without_api(tmp_path: Path) -> None:
+    """C4 AC7: --topic-candidates / topic_candidates=True discovers Stage 3 clips offline."""
+    specs = [
+        (["پەرەپێدانی", "ژیری", "دەستکرد", "گرنگە."], 0, 10_000),
+        (["مۆدێلی", "ژیری", "دەستکرد", "خێرایە."], 11_000, 22_000),
+        (["پڕۆگرامسازی", "ئەمڕۆ", "ژیری", "دەوێت."], 23_000, 34_000),
+        (["ئامرازی", "تازەی", "ژیری", "دروستکرا."], 35_000, 45_000),
+        (["چێشتخانەی", "کوردی", "خواردنی", "بەتامە."], 46_000, 58_000),
+        (["برنج", "و", "کەباب", "خۆشە."], 59_000, 70_000),
+        (["چێشتلێنان", "هونەرێکی", "کۆنە."], 71_000, 82_000),
+        (["خواردنی", "نیوەڕۆ", "ئامادەیە."], 83_000, 95_000),
+    ]
+    words: list[Word] = []
+    texts: list[str] = []
+    for tokens, s_ms, e_ms in specs:
+        step = (e_ms - s_ms) // len(tokens)
+        cur = s_ms
+        for idx, tok in enumerate(tokens):
+            w_end = e_ms if idx == len(tokens) - 1 else cur + step
+            words.append(Word(w=tok, start_ms=cur, end_ms=w_end, conf=0.95))
+            cur = w_end
+        texts.append(" ".join(tokens))
+    raw = RawTranscript(
+        media_id="c4-offline",
+        text_ckb=" ".join(texts),
+        words=tuple(words),
+        asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+        media_sha256=FIXTURE_SHA256,
+    )
+
+    parser = build_parser()
+    parsed = parser.parse_args([str(FIXTURE), "--transcript", "t.json", "--topic-candidates"])
+    assert parsed.topic_candidates is True
+
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "work_c4",
+        media_id="c4-offline",
+        transcript=raw,
+        topic_candidates=True,
+    )
+    assert len(run.candidates) == 2
+    assert all(c.discovery_path is DiscoveryPath.VERBAL for c in run.candidates)
+    assert run.discovery is None
+    assert run.billed_calls == ()

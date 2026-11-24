@@ -69,7 +69,13 @@ def test_web_handler_serves_dashboard() -> None:
     assert b"HawEdit" in body
 
 
-def test_web_handler_serves_status_json() -> None:
+def test_web_handler_serves_status_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hawedit.web as web
+
+    # A status-200 response requires readable history storage. Use a real empty
+    # store instead of depending on an untracked work/jobs directory in the checkout.
+    monkeypatch.setattr(web, "JOB_MANAGER", web.JobManager(tmp_path / "jobs"))
+    monkeypatch.setenv("HAWEDIT_PROTECTED_STUDIO", "1")
     req = b"GET /api/status HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
     status_code, headers, body = _handle_request(req)
     assert status_code == 200
@@ -78,7 +84,27 @@ def test_web_handler_serves_status_json() -> None:
     assert data["status"] == "unavailable" and data["runner_ready"] is False
     assert data["latest_reel"] is None and data["active_job"] is None
     assert data["code"] == "studio_runner_unavailable"
+    assert data["history_available"] is True and data["historical_job_count"] == 0
     assert "audit_passed" not in body.decode("utf-8")
+
+
+def test_web_handler_status_refuses_missing_history_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hawedit.web as web
+
+    jobs = tmp_path / "missing-jobs"
+    monkeypatch.setattr(web, "JOB_MANAGER", web.JobManager(jobs, create_dir=False))
+    monkeypatch.setenv("HAWEDIT_PROTECTED_STUDIO", "1")
+    req = b"GET /api/status HTTP/1.1\r\nHost: localhost:8080\r\n\r\n"
+    status_code, headers, body = _handle_request(req)
+    assert status_code == 503
+    assert "application/json" in headers.get("content-type", "")
+    data = json.loads(body.decode("utf-8"))
+    assert data["history_available"] is False and data["historical_job_count"] is None
+    assert data["history_diagnostics"][0]["code"] == "history_storage_unavailable"
+    assert data["runner_ready"] is False and data["code"] == "studio_runner_unavailable"
+    assert not jobs.exists()  # Inspection must not silently create/repair missing storage.
 
 
 def test_web_handler_post_repurpose_creates_job() -> None:

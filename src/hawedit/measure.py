@@ -14,9 +14,10 @@ import math
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from fractions import Fraction
+from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Final
@@ -34,6 +35,7 @@ from hawedit.studio_private import PrivateDirectory, StudioStorageError
 
 __all__ = [
     "AudioMeasurement",
+    "BroadcastScorecard",
     "CaptionMeasurement",
     "ClipMeasurement",
     "FaceSample",
@@ -44,6 +46,7 @@ __all__ = [
     "VideoMeasurement",
     "VmafMeasurement",
     "detect_caption_ink_in_band",
+    "evaluate_broadcast_scorecard",
     "measure_caption_events_contrast",
     "measure_clip",
     "probe_caption_ink",
@@ -172,6 +175,86 @@ class VmafMeasurement:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class BroadcastScorecard:
+    """Deterministic broadcast quality scorecard derived from clip measurements (D-359)."""
+
+    double_cuts_count: int
+    zero_double_cuts: bool
+    loudness_ok: bool
+    contrast_ok: bool
+    face_framing_ok: bool
+    all_passed: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "double_cuts_count": self.double_cuts_count,
+            "zero_double_cuts": self.zero_double_cuts,
+            "loudness_ok": self.loudness_ok,
+            "contrast_ok": self.contrast_ok,
+            "face_framing_ok": self.face_framing_ok,
+            "all_passed": self.all_passed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BroadcastScorecard:
+        return cls(
+            double_cuts_count=int(data["double_cuts_count"]),
+            zero_double_cuts=bool(data["zero_double_cuts"]),
+            loudness_ok=bool(data["loudness_ok"]),
+            contrast_ok=bool(data["contrast_ok"]),
+            face_framing_ok=bool(data["face_framing_ok"]),
+            all_passed=bool(data["all_passed"]),
+        )
+
+
+def evaluate_broadcast_scorecard(measured: ClipMeasurement) -> BroadcastScorecard:
+    """Evaluate deterministic broadcast delivery quality checks on a measured clip (D-359)."""
+    cuts = sorted(int(c) for c in measured.scenes.get("cuts_ms", ()))
+    double_cuts_count = sum(1 for a, b in pairwise(cuts) if (b - a) <= 80)
+    zero_double_cuts = double_cuts_count == 0
+
+    has_audio = measured.audio.channels > 0 and measured.audio.codec.lower() != "none"
+    if has_audio:
+        lufs = measured.audio.integrated_lufs
+        peak = measured.audio.true_peak_db
+        loudness_ok = (
+            math.isfinite(lufs)
+            and math.isfinite(peak)
+            and (-16.0 <= lufs <= -12.5)
+            and (peak <= -0.5)
+        )
+    else:
+        loudness_ok = False
+
+    if measured.captions.events_count > 0:
+        contrast_ok = (
+            measured.captions.median_contrast_ratio is not None
+            and math.isfinite(measured.captions.median_contrast_ratio)
+            and measured.captions.median_contrast_ratio >= 12.0
+        )
+    else:
+        contrast_ok = True
+
+    faces = measured.faces
+    if faces.samples_count <= 0 or faces.face_detected_frames_count <= 0:
+        face_framing_ok = True
+    elif faces.speaking_samples_count > 0:
+        face_framing_ok = faces.speaking_face_share >= 0.90 or faces.face_detected_share >= 0.90
+    else:
+        face_framing_ok = faces.face_detected_share >= 0.90
+
+    all_passed = zero_double_cuts and loudness_ok and contrast_ok and face_framing_ok
+    return BroadcastScorecard(
+        double_cuts_count=double_cuts_count,
+        zero_double_cuts=zero_double_cuts,
+        loudness_ok=loudness_ok,
+        contrast_ok=contrast_ok,
+        face_framing_ok=face_framing_ok,
+        all_passed=all_passed,
+    )
+
+
 @dataclass(frozen=True)
 class ClipMeasurement:
     schema: int
@@ -183,9 +266,10 @@ class ClipMeasurement:
     captions: CaptionMeasurement
     vmaf: VmafMeasurement | None
     tool_metadata: dict[str, str]
+    broadcast_scorecard: BroadcastScorecard | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema": self.schema,
             "file": self.file.to_dict(),
             "video": self.video.to_dict(),
@@ -196,6 +280,9 @@ class ClipMeasurement:
             "vmaf": self.vmaf.to_dict() if self.vmaf else None,
             "tool_metadata": self.tool_metadata,
         }
+        if self.broadcast_scorecard is not None:
+            payload["broadcast_scorecard"] = self.broadcast_scorecard.to_dict()
+        return payload
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
@@ -203,6 +290,7 @@ class ClipMeasurement:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ClipMeasurement:
         vmaf_data = data.get("vmaf")
+        scorecard_data = data.get("broadcast_scorecard")
         audio_data = data["audio"]
         silences = [
             SilenceInterval(
@@ -271,6 +359,11 @@ class ClipMeasurement:
             if vmaf_data
             else None,
             tool_metadata=data.get("tool_metadata", {}),
+            broadcast_scorecard=(
+                BroadcastScorecard.from_dict(scorecard_data)
+                if isinstance(scorecard_data, dict)
+                else None
+            ),
         )
 
     @classmethod
@@ -1174,7 +1267,7 @@ def measure_clip(
     )
     first_line = proc.stdout.splitlines()[0] if proc.stdout else "unknown"
 
-    return ClipMeasurement(
+    measurement = ClipMeasurement(
         schema=1,
         file=file_summary,
         video=video_meas,
@@ -1188,6 +1281,7 @@ def measure_clip(
             "measured_at": datetime.now(UTC).isoformat(),
         },
     )
+    return replace(measurement, broadcast_scorecard=evaluate_broadcast_scorecard(measurement))
 
 
 def main(argv: list[str] | None = None) -> int:

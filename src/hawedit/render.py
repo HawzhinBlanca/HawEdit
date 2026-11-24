@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
     from hawedit.assembly import AssemblySpan
     from hawedit.edit_plan import VisualEditPlan
 
-from hawedit.brand import BrandKit, logo_overlay_coordinates, progress_bar_filter
+from hawedit.brand import BrandKit, logo_overlay_coordinates
 from hawedit.captions import (
     FontCoverageError,
     assert_ass_fonts_cover_kurdish,
@@ -62,7 +63,12 @@ from hawedit.captions import (
 from hawedit.clip import Clip
 from hawedit.ingest import IngestError, probe_duration_ms, probe_stream
 from hawedit.measure import AudioMeasurement
-from hawedit.silence import SilencePlan, remap_timestamp, silence_trim_filter
+from hawedit.silence import (
+    SilencePlan,
+    audio_cut_fade_filters,
+    silence_trim_filter,
+)
+from hawedit.sound_design import write_cinema_sfx_wav
 from hawedit.transcripts import Word
 
 __all__ = [
@@ -78,6 +84,7 @@ __all__ = [
     "VERTICAL_HEIGHT",
     "VERTICAL_WIDTH",
     "BRollItem",
+    "CinemaMotionPlan",
     "Encoder",
     "LoudnessStats",
     "ProvenanceViolation",
@@ -88,6 +95,8 @@ __all__ = [
     "assert_encoded_span",
     "audio_filter",
     "blurred_fill_filter",
+    "build_cinema_motion_filter",
+    "content_aware_push_schedule",
     "crop_filter",
     "decide_wide_shot_layout",
     "deliverable_video_args",
@@ -100,6 +109,7 @@ __all__ = [
     "measure_final_audio",
     "quality_args",
     "render_clip",
+    "resolve_encoder",
     "shot_spans",
     "two_person_split_filter",
     "verify_final_audio_contract",
@@ -155,14 +165,17 @@ DELIVERY_TRUE_PEAK_DB: Final = -1.0
 DELIVERY_AUDIO_RATE: Final = 48_000
 DELIVERY_AUDIO_BITRATE: Final = "192k"
 
-# Task T3.2 / D-264: Native speech conditioning chain for pro Kurdish social reels.
+# Task T3.2 / D-264 / D-360 / D-364: Native speech conditioning and broadcast mastering chain.
 # Order: Highpass rumble cut (80 Hz) -> Adaptive FFT denoiser (-25 dB) ->
-# Sibilance de-esser (6 kHz) -> Presence EQ (+1.5 dB @ 3 kHz).
+# Sibilance de-esser (6 kHz) -> Presence EQ (+1.5 dB @ 3 kHz) ->
+# Natural-dynamics speech compressor (-18 dB, 2.2:1, +3.5 dB) -> Lookahead peak limiter (-5 dB).
 SPEECH_CHAIN_FILTERS: Final = (
     "highpass=f=80:p=2,"
     "afftdn=nf=-25:tn=1,"
     "deesser=i=0.4:m=0.5:f=0.5:s=o,"
-    "equalizer=f=3000:t=q:w=1.5:g=1.5"
+    "equalizer=f=3000:t=q:w=1.5:g=1.5,"
+    "acompressor=threshold=-18dB:ratio=2.2:attack=10:release=120:makeup=3.5,"
+    "alimiter=limit=-5dB:attack=5:release=50:level=disabled"
 )
 
 
@@ -321,6 +334,7 @@ def measure_audio_loudness(
     binary: Path | None = None,
     speech_chain: bool = False,
     retained_intervals_ms: Sequence[tuple[int, int]] = (),
+    assembly_spans: Sequence[AssemblySpan] | None = None,
 ) -> LoudnessStats:
     """Pass 1 of two-pass EBU R128 loudness measurement (Task T3.1 / T3.2).
 
@@ -328,6 +342,7 @@ def measure_audio_loudness(
     integrated loudness, true peak, loudness range, input threshold, and target offset.
     If `speech_chain=True`, conditioning filters (highpass, afftdn, deesser, EQ)
     are applied so measurement reflects the final conditioned signal.
+    If `assembly_spans` is non-empty, measures the exact spliced source spans.
     If `retained_intervals_ms` has multiple segments, dead air is excised before measurement.
     """
     if binary is None:
@@ -344,19 +359,31 @@ def measure_audio_loudness(
         else f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:print_format=json"
     )
 
-    if len(retained_intervals_ms) > 1:
+    has_assembly = assembly_spans is not None and len(assembly_spans) > 0
+    if has_assembly and assembly_spans is not None:
+        intervals_for_trim = tuple((sp.source_in_ms, sp.source_out_ms) for sp in assembly_spans)
+        input_cut_args: list[str] = []
+    elif len(retained_intervals_ms) > 1:
+        intervals_for_trim = tuple(retained_intervals_ms)
+        input_cut_args = ["-ss", f"{in_ms / 1000:.3f}", "-t", f"{duration_ms / 1000:.3f}"]
+    else:
+        intervals_for_trim = ()
+        input_cut_args = ["-ss", f"{in_ms / 1000:.3f}", "-t", f"{duration_ms / 1000:.3f}"]
+
+    if intervals_for_trim:
         atrim_parts: list[str] = []
         concat_in: list[str] = []
-        for idx, (s_ms, e_ms) in enumerate(retained_intervals_ms):
+        n = len(intervals_for_trim)
+        for idx, (s_ms, e_ms) in enumerate(intervals_for_trim):
             s_sec = s_ms / 1000.0
             e_sec = e_ms / 1000.0
-            atrim_parts.append(
-                f"[0:a]atrim=start={s_sec:.3f}:end={e_sec:.3f},asetpts=PTS-STARTPTS[a{idx}]"
-            )
+            fades = audio_cut_fade_filters(e_ms - s_ms, fade_in=(idx > 0), fade_out=(idx < n - 1))
+            a_seg = ",".join(["asetpts=PTS-STARTPTS", *fades])
+            atrim_parts.append(f"[0:a]atrim=start={s_sec:.3f}:end={e_sec:.3f},{a_seg}[a{idx}]")
             concat_in.append(f"[a{idx}]")
         atrim_graph = (
             f"{';'.join(atrim_parts)};"
-            f"{''.join(concat_in)}concat=n={len(retained_intervals_ms)}:v=0:a=1[a_tightened];"
+            f"{''.join(concat_in)}concat=n={n}:v=0:a=1[a_tightened];"
             f"[a_tightened]{af_chain}"
         )
         audio_stream_args = ["-filter_complex", atrim_graph]
@@ -369,10 +396,7 @@ def measure_audio_loudness(
         "-loglevel",
         "info",
         "-nostats",
-        "-ss",
-        f"{in_ms / 1000:.3f}",
-        "-t",
-        f"{duration_ms / 1000:.3f}",
+        *input_cut_args,
         "-i",
         str(source),
         "-vn",
@@ -383,7 +407,12 @@ def measure_audio_loudness(
         "null",
         "-",
     ]
-    timeout_s = max(30.0, (duration_ms / 1000.0) * 5.0)
+    effective_dur_ms = (
+        sum(sp.source_out_ms - sp.source_in_ms for sp in assembly_spans)
+        if (has_assembly and assembly_spans is not None)
+        else duration_ms
+    )
+    timeout_s = max(30.0, (effective_dur_ms / 1000.0) * 5.0)
     try:
         proc = subprocess.run(
             cmd,
@@ -410,6 +439,9 @@ def audio_filter(
     measured: LoudnessStats | None = None,
     linear: bool = False,
     speech_chain: bool = False,
+    *,
+    boundary_fade_ms: tuple[int, int] | None = None,
+    duration_ms: int | None = None,
 ) -> str:
     """EBU R128 normalisation to the delivery target, with optional speech conditioning.
 
@@ -417,10 +449,12 @@ def audio_filter(
     If `measured` is provided and `linear=True`, applies two-pass linear normalisation
     with static gain scaling and True Peak ceiling, eliminating dynamic volume pumping.
     If `measured` is None, falls back to single-pass dynamic normalisation for working renders.
+    When `boundary_fade_ms=(in_ms, out_ms)` and `duration_ms` are supplied, appends gentle
+    quadratic-sine start/end micro-fades so social-feed loops never pop on DC offsets (D-368).
     """
     prefix = f"{SPEECH_CHAIN_FILTERS}," if speech_chain else ""
     if measured is not None and linear:
-        return (
+        chain = (
             f"{prefix}"
             f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11:"
             f"measured_I={measured.input_i:.2f}:measured_TP={measured.input_tp:.2f}:"
@@ -428,11 +462,26 @@ def audio_filter(
             f"offset={measured.target_offset:.2f}:linear=true:print_format=json,"
             f"aresample={DELIVERY_AUDIO_RATE}"
         )
-    return (
-        f"{prefix}"
-        f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11,"
-        f"aresample={DELIVERY_AUDIO_RATE}"
-    )
+    else:
+        chain = (
+            f"{prefix}"
+            f"loudnorm=I={DELIVERY_LUFS:g}:TP={DELIVERY_TRUE_PEAK_DB:g}:LRA=11,"
+            f"aresample={DELIVERY_AUDIO_RATE}"
+        )
+
+    if boundary_fade_ms is not None and duration_ms is not None and duration_ms >= 500:
+        fade_in_ms, fade_out_ms = boundary_fade_ms
+        fade_terms: list[str] = []
+        if fade_in_ms > 0:
+            fade_terms.append(f"afade=t=in:st=0:d={fade_in_ms / 1000.0:.3f}:curve=qsin")
+        if fade_out_ms > 0 and duration_ms > fade_out_ms + fade_in_ms:
+            out_st = (duration_ms - fade_out_ms) / 1000.0
+            fade_terms.append(
+                f"afade=t=out:st={out_st:.3f}:d={fade_out_ms / 1000.0:.3f}:curve=qsin"
+            )
+        if fade_terms:
+            chain = f"{chain},{','.join(fade_terms)}"
+    return chain
 
 
 def measure_final_audio(
@@ -615,6 +664,46 @@ def encoder_available(encoder: Encoder, ffmpeg: Path) -> bool:
         # ffmpeg can exit 0 having written nothing when the encoder fails to initialise, so
         # the exit code alone is not the answer either.
         return result.returncode == 0 and probe.exists() and probe.stat().st_size > 0
+
+
+def resolve_encoder(choice: str | Encoder, ffmpeg: Path | None = None) -> Encoder:
+    """Resolve an explicit or automatic encoder choice without silent fallback (D-357).
+
+    - ``"libx264"`` / ``Encoder.X264`` -> ``Encoder.X264``.
+    - ``"h264_nvenc"`` / ``Encoder.NVENC`` -> probes ``encoder_available(Encoder.NVENC, binary)``;
+      raises :class:`RenderError` if unavailable (strict fail-stop, zero silent fallback).
+    - ``"auto"`` -> probes ``encoder_available(Encoder.NVENC, binary)`` once and returns
+      ``Encoder.NVENC`` when available or ``Encoder.X264`` otherwise.
+    - Any unknown string -> raises ``ValueError``.
+    """
+    if isinstance(choice, Encoder):
+        normalized = choice.value
+    elif isinstance(choice, str):
+        normalized = choice.strip().lower()
+    else:
+        raise TypeError(f"encoder choice must be a string or Encoder, got {type(choice).__name__}")
+
+    if normalized == Encoder.X264.value:
+        return Encoder.X264
+
+    if normalized in (Encoder.NVENC.value, "auto"):
+        binary = ffmpeg or find_ffmpeg()
+        if binary is None:
+            raise RenderError(
+                "no ffmpeg available — run hawedit-ffmpeg-setup or set HAWEDIT_FFMPEG"
+            )
+        if encoder_available(Encoder.NVENC, binary):
+            return Encoder.NVENC
+        if normalized == Encoder.NVENC.value:
+            raise RenderError(
+                f"{binary} has no {Encoder.NVENC.value} encoder — explicit NVENC request "
+                "refuses silent fallback to libx264."
+            )
+        return Encoder.X264
+
+    raise ValueError(
+        f"unknown encoder choice {choice!r}; expected 'auto', 'h264_nvenc', or 'libx264'"
+    )
 
 
 def linked_libraries(ffmpeg: Path) -> str:
@@ -871,6 +960,80 @@ def eased_push_schedule(
     return tuple(deduped)
 
 
+def content_aware_push_schedule(
+    spans: Sequence[tuple[int, int]],
+    *,
+    excitement_by_span: Sequence[float] = (),
+    payoff_at_ms: int | None = None,
+    step_ms: int = 80,
+    min_push_span_ms: int = 0,
+) -> tuple[tuple[int, float], ...]:
+    """Generate acoustic- and payoff-driven eased push-in keyframes per shot span (D-360 / D-364).
+
+    Scales smoothstep push depth per span by acoustic excitement and narrative payoff:
+    - High-excitement spans (`excitement >= 0.65`) or the span covering `payoff_at_ms`:
+      stronger eased push-in up to `1.12x` (`1.12x` on payoff; `1.09x`..`1.12x` on excited).
+    - Mid-energy spans (`0.35 <= excitement < 0.65`, or default when omitted): `1.06x`.
+    - Low-energy spans (`excitement < 0.35`): steady `1.00x` hold (`< 0.15`) or subtle
+      `1.03x` drift (`0.15 <= excitement < 0.35`).
+    - When `min_push_span_ms > 0`, dynamic multi-cam shots shorter than `min_push_span_ms`
+      hold rock-steady at `1.00x` (avoiding discrete integer `sendcmd` micro-stepping on shots
+      that already have natural multi-camera pacing, D-364).
+
+    All zoom factors are clamped within `[1.0, MAX_VERTICAL_ZOOM]`. Reuses
+    `eased_push_schedule` for smoothstep interpolation and boundary resets.
+    """
+    if step_ms <= 0:
+        raise ValueError(f"step_ms must be positive, got {step_ms}")
+    if min_push_span_ms < 0:
+        raise ValueError(f"min_push_span_ms cannot be negative, got {min_push_span_ms}")
+    if not spans:
+        return ()
+
+    keyframes: list[tuple[int, float]] = []
+    last_idx = len(spans) - 1
+    for idx, (start_ms, end_ms) in enumerate(spans):
+        if end_ms <= start_ms:
+            continue
+        raw_excitement = float(excitement_by_span[idx]) if idx < len(excitement_by_span) else 0.5
+        if not math.isfinite(raw_excitement):
+            raise ValueError(f"excitement score must be finite, got {raw_excitement!r}")
+        excitement = max(0.0, min(1.0, raw_excitement))
+        covers_payoff = payoff_at_ms is not None and (
+            start_ms <= payoff_at_ms < end_ms or (idx == last_idx and payoff_at_ms == end_ms)
+        )
+        if min_push_span_ms > 0 and (end_ms - start_ms) < min_push_span_ms:
+            target_zoom = 1.0
+        elif covers_payoff:
+            target_zoom = 1.12
+        elif excitement >= 0.65:
+            target_zoom = 1.09 + 0.03 * ((excitement - 0.65) / 0.35)
+        elif excitement >= 0.35:
+            target_zoom = 1.06
+        elif excitement >= 0.15:
+            target_zoom = 1.03
+        else:
+            target_zoom = 1.0
+
+        target_zoom = max(1.0, min(MAX_VERTICAL_ZOOM, round(target_zoom, 4)))
+        if target_zoom == 1.0:
+            span_frames: Sequence[tuple[int, float]] = ((start_ms, 1.0), (end_ms, 1.0))
+        else:
+            span_frames = eased_push_schedule(
+                ((start_ms, end_ms),),
+                push_zoom=target_zoom,
+                step_ms=step_ms,
+            )
+        for at_ms, factor in span_frames:
+            clamped = round(max(1.0, min(MAX_VERTICAL_ZOOM, factor)), 4)
+            if keyframes and keyframes[-1][0] == at_ms:
+                keyframes[-1] = (at_ms, clamped)
+            else:
+                keyframes.append((at_ms, clamped))
+
+    return tuple(keyframes)
+
+
 def vertical_framing(
     source_height: int,
     crop_w: int,
@@ -961,10 +1124,33 @@ def _interpolated(points: Sequence[tuple[float, int]], fallback: int) -> str:
         if ordered and t <= ordered[-1][0]:
             t = round(ordered[-1][0] + 0.001, 3)
         ordered.append((t, val))
-    expression = str(ordered[-1][1])
-    for index in range(len(ordered) - 2, -1, -1):
+
+    # Collapse instantaneous shot-cut steps (<= 2 ms apart with a position change, emitted by
+    # `reframe.stabilize` as `(cut_ms, old_x), (cut_ms + 1, new_x)`) into a hard switch placed
+    # 2 ms before `cut_ms`. Without this, the first frame of a new camera shot (`t == cut_ms`)
+    # falls inside `[cut_ms, cut_ms + 1 ms)` and evaluates `old_x`, flashing 1 frame of wrong crop.
+    segments: list[tuple[float, int, float, int]] = []
+    index = 0
+    while index < len(ordered) - 1:
         start_s, here = ordered[index]
         end_s, there = ordered[index + 1]
+        span = end_s - start_s
+        if 0 < span <= 0.002 and here != there:
+            prev_limit = segments[-1][0] + 0.001 if segments else 0.0
+            step_s = max(prev_limit, start_s - 0.002)
+            if segments:
+                p_start, p_here, _p_end, p_there = segments[-1]
+                segments[-1] = (p_start, p_here, step_s, p_there)
+            else:
+                segments.append((0.0, here, step_s, here))
+            ordered[index + 1] = (step_s, there)
+            index += 1
+            continue
+        segments.append((start_s, here, end_s, there))
+        index += 1
+
+    expression = str(ordered[-1][1])
+    for start_s, here, end_s, there in reversed(segments):
         span = end_s - start_s
         segment = (
             str(here)
@@ -972,7 +1158,7 @@ def _interpolated(points: Sequence[tuple[float, int]], fallback: int) -> str:
             else f"({here}+({there - here})*(t-{start_s:.3f})/{span:.3f})"
         )
         expression = f"if(lt(t\\,{end_s:.3f})\\,{segment}\\,{expression})"
-    if ordered[0][0] > 0:
+    if ordered[0][0] > 0 and (not segments or segments[0][0] > 0):
         expression = f"if(lt(t\\,{ordered[0][0]:.3f})\\,{ordered[0][1]}\\,{expression})"
     return expression
 
@@ -1092,7 +1278,9 @@ def crop_filter(
     if len(shot_dims) > 1 and len({d[2] for d in shot_dims}) > 1:
         expr = str(shot_dims[-1][2])
         for idx in range(len(shot_dims) - 2, -1, -1):
-            cut_t = max(0.0, (per_shot_boxes[idx + 1][0] - clip_in_ms) / 1000.0)
+            # Snap 2 ms early matching _interpolated() (D-360) so x, y, w, and h
+            # transition on the exact same video frame under fractional -ss timebase rounding.
+            cut_t = max(0.0, (per_shot_boxes[idx + 1][0] - clip_in_ms - 2) / 1000.0)
             expr = f"if(lt(t\\,{cut_t:.3f})\\,{shot_dims[idx][2]}\\,{expr})"
         y_center_expr = expr
     else:
@@ -1106,11 +1294,6 @@ def crop_filter(
 
     commands_dict: dict[int, tuple[int, int]] = {}
 
-    if len(per_shot_boxes) > 1:
-        for idx in range(1, len(per_shot_boxes)):
-            cut_ms = max(0, per_shot_boxes[idx][0] - clip_in_ms)
-            commands_dict[cut_ms] = (shot_dims[idx][0], shot_dims[idx][1])
-
     for at_ms, factor in punch_ins:
         covering_idx = 0
         if per_shot_boxes:
@@ -1123,6 +1306,15 @@ def crop_filter(
         pw = max(2, int(base_w / factor)) // 2 * 2
         ph = max(2, int(base_h / factor)) // 2 * 2
         commands_dict[at_ms] = (pw, ph)
+
+    if len(per_shot_boxes) > 1:
+        for idx in range(1, len(per_shot_boxes)):
+            raw_cut_ms = max(0, per_shot_boxes[idx][0] - clip_in_ms)
+            # Snap 2 ms early matching _interpolated() and y_center_expr (D-360).
+            cut_ms = max(0, raw_cut_ms - 2)
+            for stale_ms in [k for k in commands_dict if cut_ms <= k < raw_cut_ms]:
+                del commands_dict[stale_ms]
+            commands_dict[cut_ms] = (shot_dims[idx][0], shot_dims[idx][1])
 
     sorted_cmds = sorted(commands_dict.items(), key=lambda item: item[0])
     commands = ";".join(
@@ -1438,6 +1630,171 @@ class BRollItem:
             raise ValueError(f"position must be 'upper', 'center', or 'top', got {self.position!r}")
 
 
+@dataclass(frozen=True, slots=True)
+class CinemaMotionPlan:
+    """Sub-pixel floating-point camera motion & editorial color grade plan (D-370 / D-372)."""
+
+    filter_str: str
+    jump_cuts_ms: tuple[int, ...]
+    beats: tuple[tuple[int, int, float, float], ...]
+
+
+def build_cinema_motion_filter(
+    duration_ms: int,
+    *,
+    shot_cuts_ms: Sequence[int] = (),
+    jump_cuts_ms: Sequence[int] = (),
+    excitement_intervals_ms: Sequence[tuple[int, int]] = (),
+    payoff_at_ms: int | None = None,
+    fps: float = 25.0,
+    width: int = VERTICAL_WIDTH,
+    height: int = VERTICAL_HEIGHT,
+    anchor_y: float = 0.34,
+    cinema_grade: bool = True,
+) -> CinemaMotionPlan:
+    """Build a silky sub-pixel FFmpeg ``zoompan`` director motion filter + studio grade (D-370).
+
+    Unlike integer ``sendcmd crop`` (which rounds crop dimensions to even pixels and strobes),
+    ``zoompan=d=1`` evaluates floating-point zoom and motorized-slider gimbal offsets per frame
+    with exact 0.000 ms AV sync and zero even/odd strobe:
+
+    - Beat 0 (0..~4-5 s hook): smooth ``1.00x -> 1.11x`` push-in pulling into the speaker's eyes.
+    - Silence/filler jump-cuts & long-hold beats (> 5.5 s): crisp ``1.00x <-> 1.12x`` A/B cam
+      scale toggles masking jump-cuts like a two-camera studio switch.
+    - Source camera cuts: alternating smooth push-ins (``1.00 -> 1.10x``) and breathing pull-backs
+      (``1.10 -> 1.01x``).
+    - Payoff beat: tight ``1.12 -> 1.15x`` dramatic lock-in anchored to the speaker's real face
+      vertical centre (``anchor_y`` clamped to ``[0.24, 0.46]``) with subtle motorized-slider drift.
+    """
+    if duration_ms <= 0:
+        raise ValueError(f"duration_ms must be positive, got {duration_ms}")
+    if fps <= 0:
+        raise ValueError(f"fps must be positive, got {fps}")
+    eff_anchor_y = max(0.24, min(0.46, float(anchor_y)))
+
+    min_edge_ms = 1_500
+    max_edge_ms = duration_ms - 1_200
+    raw_edges: list[tuple[int, str]] = []
+    for t in shot_cuts_ms:
+        if min_edge_ms < t < max_edge_ms:
+            raw_edges.append((int(t), "shot"))
+    for t in jump_cuts_ms:
+        if min_edge_ms < t < max_edge_ms:
+            raw_edges.append((int(t), "jump"))
+    raw_edges.sort(key=lambda item: (item[0], 0 if item[1] == "shot" else 1))
+
+    # Deduplicate boundaries closer than 1.8 s so the camera never stutters on adjacent cuts.
+    merged_edges: list[tuple[int, str]] = []
+    for t, kind in raw_edges:
+        if not merged_edges or (t - merged_edges[-1][0]) >= 1_800:
+            merged_edges.append((t, kind))
+        elif kind == "shot" and merged_edges[-1][1] != "shot":
+            merged_edges[-1] = (t, kind)
+
+    # Subdivide any static hold longer than 5.5 s into ~4-5 s director beats aligned to
+    # vocal excitement or payoff moments when available.
+    split_points: list[tuple[int, str]] = [(0, "hook"), *merged_edges]
+    final_edges: list[tuple[int, str]] = []
+    for idx, (seg_start, seg_kind) in enumerate(split_points):
+        seg_end = split_points[idx + 1][0] if idx + 1 < len(split_points) else duration_ms
+        final_edges.append((seg_start, seg_kind))
+        span = seg_end - seg_start
+        if span > 5_500:
+            preferred: list[int] = [
+                int(ex_s)
+                for ex_s, _ in excitement_intervals_ms
+                if seg_start + 2_200 <= ex_s <= seg_end - 2_000
+            ]
+            if payoff_at_ms is not None and seg_start + 2_200 <= payoff_at_ms <= seg_end - 2_000:
+                preferred.append(int(payoff_at_ms))
+            cursor = seg_start
+            while seg_end - cursor > 5_500:
+                window_lo = cursor + 2_500
+                window_hi = min(seg_end - 2_000, cursor + 5_200)
+                cands = [p for p in preferred if window_lo <= p <= window_hi]
+                if cands:
+                    cut_t = cands[0]
+                else:
+                    remaining = seg_end - cursor
+                    n_chunks = max(2, math.ceil(remaining / 4_800))
+                    cut_t = cursor + remaining // n_chunks
+                if cut_t <= cursor + 1_500 or cut_t >= seg_end - 1_500:
+                    break
+                final_edges.append((cut_t, "director"))
+                cursor = cut_t
+
+    beats: list[tuple[int, int, float, float]] = []
+    planned_jumps: list[int] = []
+    for idx, (b_start, b_kind) in enumerate(final_edges):
+        b_end = final_edges[idx + 1][0] if idx + 1 < len(final_edges) else duration_ms
+        if b_end <= b_start:
+            continue
+        is_payoff = payoff_at_ms is not None and b_start <= payoff_at_ms < b_end
+        if idx == 0:
+            z0, z1 = 1.00, 1.14
+        else:
+            prev_end = beats[-1][3]
+            if is_payoff and b_end - b_start >= 1_800:
+                z0, z1 = (1.14, 1.19) if prev_end < 1.10 else (1.02, 1.15)
+            elif b_kind in ("jump", "director"):
+                if prev_end >= 1.10:
+                    z0, z1 = 1.00, 1.09
+                else:
+                    z0, z1 = 1.14, 1.18
+            else:
+                if prev_end >= 1.10 and idx % 2 == 1:
+                    z0, z1 = 1.12, 1.01
+                else:
+                    z0, z1 = 1.00, 1.12
+            if abs(z0 - prev_end) >= 0.05:
+                planned_jumps.append(b_start)
+        z0 = max(1.00, min(1.20, z0))
+        z1 = max(1.00, min(1.20, z1))
+        beats.append((b_start, b_end, z0, z1))
+
+    if not beats:
+        beats = [(0, duration_ms, 1.00, 1.12)]
+
+    beat_exprs: list[str] = []
+    beat_end_frames: list[int] = []
+    for b_start, b_end, z0, z1 in beats:
+        f0 = round(b_start * fps / 1000.0)
+        f1 = max(f0 + 1, round(b_end * fps / 1000.0))
+        span_f = f1 - f0
+        dz = z1 - z0
+        if abs(dz) < 1e-4:
+            expr = f"{z0:.4f}"
+        else:
+            sign = "+" if dz >= 0 else "-"
+            # D-374: Cosine ease-in-out S-curve (0 -> 1 with zero start/stop velocity)
+            # eliminates robotic linear zoom stops while staying 100% sub-pixel silky.
+            expr = f"{z0:.4f}{sign}{abs(dz):.4f}*(0.5-0.5*cos(PI*min(1,max(0,(in-{f0})/{span_f}))))"
+        beat_exprs.append(expr)
+        beat_end_frames.append(f1)
+
+    z_expr = beat_exprs[-1]
+    for f1, expr in reversed(list(zip(beat_end_frames[:-1], beat_exprs[:-1], strict=True))):
+        z_expr = f"if(lt(in,{f1}),{expr},{z_expr})"
+
+    zp = (
+        f"zoompan=z='{z_expr}'"
+        f":x='iw/2-(iw/zoom/2)+(iw-iw/zoom)*0.08*sin(in*0.022)'"
+        f":y='ih*{eff_anchor_y:.3f}-(ih/zoom*{eff_anchor_y:.3f})'"
+        f":d=1:s={width}x{height}:fps={fps:g},setsar=1"
+    )
+    if cinema_grade:
+        zp = (
+            f"{zp},eq=contrast=1.05:saturation=1.09:brightness=0.01,"
+            f"unsharp=3:3:0.35:3:3:0.0,vignette=PI/7:eval=init"
+        )
+
+    return CinemaMotionPlan(
+        filter_str=zp,
+        jump_cuts_ms=tuple(planned_jumps),
+        beats=tuple(beats),
+    )
+
+
 def render_clip(
     clip: Clip,
     source: Path,
@@ -1459,6 +1816,7 @@ def render_clip(
     fps: float | None = None,
     deliverable: bool = False,
     speech_chain: bool | None = None,
+    two_pass_loudness: bool = False,
     silence_plan: SilencePlan | None = None,
     split_crops: tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None = None,
     brand_kit: BrandKit | None = None,
@@ -1470,6 +1828,9 @@ def render_clip(
     plan: VisualEditPlan | None = None,
     per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = (),
     target_face_height_share: float = TARGET_FACE_HEIGHT_SHARE,
+    cinema_motion: str | None = None,
+    cinema_sfx_events_ms: Sequence[int] | None = None,
+    subtitle_overlay_path: Path | None = None,
 ) -> RenderResult:
     """Cut, reframe, burn in Kurdish captions and encode one clip.
 
@@ -1499,7 +1860,16 @@ def render_clip(
     if plan is not None:
         if plan.clip_id != clip.clip_id:
             raise ValueError(f"plan clip_id {plan.clip_id!r} does not match clip {clip.clip_id!r}")
-        if (
+        if assembly_spans:
+            for sp in assembly_spans:
+                if (
+                    sp.source_in_ms < plan.time_mapping.clip_in_ms
+                    or sp.source_out_ms > plan.time_mapping.clip_out_ms
+                ):
+                    raise ValueError(
+                        "assembly_spans interval lies outside plan time_mapping interval"
+                    )
+        elif (
             plan.time_mapping.clip_in_ms != clip.in_ms
             or plan.time_mapping.clip_out_ms != clip.out_ms
         ):
@@ -1624,16 +1994,6 @@ def render_clip(
             unsharp=deliverable,
         )
     else:
-        eff_per_shot_boxes: Sequence[tuple[int, int, int | None, int | None]] = per_shot_boxes
-        if per_shot_boxes and silence_plan is not None and silence_plan.total_removed_ms > 0:
-            remapped_boxes: list[tuple[int, int, int | None, int | None]] = []
-            for sin, sout, sy, sh in per_shot_boxes:
-                rin = remap_timestamp(sin, silence_plan) + clip.in_ms
-                rout = remap_timestamp(sout, silence_plan) + clip.in_ms
-                if rout > rin:
-                    remapped_boxes.append((rin, rout, sy, sh))
-            eff_per_shot_boxes = remapped_boxes
-
         video_filter = crop_filter(
             source_width,
             source_height,
@@ -1642,7 +2002,7 @@ def render_clip(
             face_center_y=face_center_y,
             face_height=face_height,
             punch_ins=punch_ins,
-            per_shot_boxes=eff_per_shot_boxes,
+            per_shot_boxes=per_shot_boxes,
             clip_in_ms=clip.in_ms,
             lanczos=deliverable,
             unsharp=deliverable,
@@ -1659,21 +2019,27 @@ def render_clip(
     ) as staging_file:
         staging = Path(staging_file.name)
 
-    decode_threads = [] if deliverable else ["-threads", "1"]
+    decode_threads = [] if (deliverable or has_assembly) else ["-threads", "1"]
     color_metadata = list(DELIVERY_COLOR_ARGS) if deliverable else []
     clip_fps = fps if fps is not None else frame_rate(source, binary)
     video_args = deliverable_video_args(encoder, crf, fps=clip_fps, deliverable=deliverable)
 
     effective_duration_ms = (
-        (duration_ms - silence_plan.total_removed_ms)
-        if (silence_plan is not None and silence_plan.total_removed_ms > 0)
-        else duration_ms
+        sum(sp.source_out_ms - sp.source_in_ms for sp in assembly_spans)
+        if (has_assembly and assembly_spans is not None)
+        else (
+            (duration_ms - silence_plan.total_removed_ms)
+            if (silence_plan is not None and silence_plan.total_removed_ms > 0)
+            else duration_ms
+        )
     )
 
     loudness_p1: LoudnessStats | None = None
     loudness_p2: LoudnessStats | None = None
     use_speech_chain = deliverable if speech_chain is None else speech_chain
-    if deliverable:
+    use_two_pass = deliverable or two_pass_loudness
+    fade_cfg = (15, 60) if use_speech_chain and effective_duration_ms >= 500 else None
+    if use_two_pass:
         loudness_p1 = measure_audio_loudness(
             source=source,
             in_ms=clip.in_ms,
@@ -1681,30 +2047,34 @@ def render_clip(
             binary=binary,
             speech_chain=use_speech_chain,
             retained_intervals_ms=silence_plan.retained_intervals_ms if silence_plan else (),
+            assembly_spans=assembly_spans if has_assembly else None,
         )
-        af_chain = audio_filter(measured=loudness_p1, linear=True, speech_chain=use_speech_chain)
+        af_chain = audio_filter(
+            measured=loudness_p1,
+            linear=True,
+            speech_chain=use_speech_chain,
+            boundary_fade_ms=fade_cfg,
+            duration_ms=effective_duration_ms,
+        )
         loglevel_args = ["-loglevel", "info"]
     else:
-        af_chain = audio_filter(speech_chain=use_speech_chain)
+        af_chain = audio_filter(
+            speech_chain=use_speech_chain,
+            boundary_fade_ms=fade_cfg,
+            duration_ms=effective_duration_ms,
+        )
         loglevel_args = ["-loglevel", "error"]
 
-    pb_f: str | None = None
-    if brand_kit is not None and brand_kit.progress_bar.enabled:
-        pb_f = progress_bar_filter(
-            duration_s=effective_duration_ms / 1000.0,
-            color=brand_kit.progress_bar.color,
-            height_px=brand_kit.progress_bar.height_px,
-            position=brand_kit.progress_bar.position,
-            canvas_height=VERTICAL_HEIGHT,
-        )
-
+    has_pb = brand_kit is not None and brand_kit.progress_bar.enabled
     sub_f = subtitle_filter(ass_path, fonts_dir)
     extra_inputs: list[str] = []
     has_logo = brand_kit is not None and brand_kit.logo_path is not None
     has_b_roll = len(b_roll) > 0
     has_silence = silence_plan is not None and silence_plan.total_removed_ms > 0
     has_music = music_bed_path is not None
+    has_sfx = cinema_sfx_events_ms is not None and not has_music and effective_duration_ms >= 3_000
     has_assembly = assembly_spans is not None and len(assembly_spans) > 0
+    has_sub_overlay = subtitle_overlay_path is not None
 
     current_input_idx = 1
     logo_input_idx: int | None = None
@@ -1728,19 +2098,65 @@ def render_clip(
         music_input_idx = current_input_idx
         current_input_idx += 1
 
-    if has_logo or has_silence or has_music or has_assembly or has_b_roll:
+    sfx_wav_path: Path | None = None
+    sfx_input_idx: int | None = None
+    if has_sfx and cinema_sfx_events_ms is not None:
+        sfx_wav_path = staging.with_suffix(".sfx.wav")
+        write_cinema_sfx_wav(
+            sfx_wav_path,
+            effective_duration_ms,
+            transition_ms=cinema_sfx_events_ms,
+            sample_rate=DELIVERY_AUDIO_RATE,
+        )
+        extra_inputs.extend(["-i", str(sfx_wav_path)])
+        sfx_input_idx = current_input_idx
+        current_input_idx += 1
+
+    sub_overlay_input_idx: int | None = None
+    if has_sub_overlay and subtitle_overlay_path is not None:
+        if not subtitle_overlay_path.is_file():
+            raise RenderError(f"subtitle overlay file not found: {subtitle_overlay_path}")
+        extra_inputs.extend(["-i", str(subtitle_overlay_path)])
+        sub_overlay_input_idx = current_input_idx
+        current_input_idx += 1
+
+    filter_script: Path | None = None
+    filter_script_content: str | None = None
+    if (
+        has_logo
+        or has_pb
+        or has_silence
+        or has_music
+        or has_sfx
+        or has_assembly
+        or has_b_roll
+        or has_sub_overlay
+    ):
+        framed_before_silence = False
         if has_assembly and assembly_spans is not None:
             from hawedit.assembly import assembled_splice_filter
 
-            trim_prefix = f"{assembled_splice_filter(assembly_spans)};"
-            v_in = "[v_concat]"
+            trim_prefix = (
+                f"{assembled_splice_filter(assembly_spans)};[v_concat]fps={clip_fps}[v_cfr];"
+            )
+            v_in = "[v_cfr]"
             a_in = "[a_concat]"
         elif has_silence and silence_plan is not None:
-            stf = silence_trim_filter(silence_plan.retained_intervals_ms)
+            # Frame on the native pre-trim PTS timeline BEFORE silence_trim_filter resets
+            # per-segment PTS via setpts=PTS-STARTPTS. Otherwise fractional -ss offsets and
+            # concat frame rounding shift camera cuts by up to 1 frame relative to crop_filter,
+            # producing 1-frame double-cut flashes on every source shot boundary.
+            stf = silence_trim_filter(
+                silence_plan.retained_intervals_ms,
+                video_in="[v_framed]",
+            )
             if stf:
-                trim_prefix = f"{stf};[v_tightened]fps={clip_fps}[v_cfr];"
+                trim_prefix = (
+                    f"[0:v]{video_filter}[v_framed];{stf};[v_tightened]fps={clip_fps}[v_cfr];"
+                )
                 v_in = "[v_cfr]"
                 a_in = "[a_tightened]"
+                framed_before_silence = True
             else:
                 trim_prefix = ""
                 v_in = "[0:v]"
@@ -1751,8 +2167,22 @@ def render_clip(
             a_in = "[0:a]"
 
         if has_b_roll:
-            v_base = f"{v_in}{video_filter}[v_cut]"
-            v_current = "[v_cut]"
+            if framed_before_silence:
+                if cinema_motion:
+                    v_base = f"{v_in}{cinema_motion}[v_cinema];"
+                    v_current = "[v_cinema]"
+                else:
+                    v_base = ""
+                    v_current = v_in
+            else:
+                if cinema_motion:
+                    if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                        v_base = f"{v_in}{video_filter}[v_pre_cm];[v_pre_cm]{cinema_motion}[v_cut];"
+                    else:
+                        v_base = f"{v_in}{video_filter},{cinema_motion}[v_cut];"
+                else:
+                    v_base = f"{v_in}{video_filter}[v_cut];"
+                v_current = "[v_cut]"
             broll_steps = ""
             for idx, (b_in_idx, b_item) in enumerate(b_roll_inputs):
                 b_dur_s = b_item.duration_ms / 1000.0
@@ -1778,13 +2208,56 @@ def render_clip(
                 )
                 broll_steps += f"{broll_prep}{broll_overlay}"
                 v_current = v_next
-            v_sub_chain = f"{v_current}{sub_f}[v_sub]"
-            full_video = f"{v_base};{broll_steps}{v_sub_chain}"
-        else:
-            if effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
-                v_base = f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+            if has_sub_overlay and sub_overlay_input_idx is not None:
+                v_sub_chain = (
+                    f"[{sub_overlay_input_idx}:v]format=rgba[v_sub_ov];"
+                    f"{v_current}[v_sub_ov]overlay=0:0:eof_action=pass:shortest=0[v_sub]"
+                )
             else:
-                v_base = f"{v_in}{video_filter},{sub_f}[v_sub]"
+                v_sub_chain = f"{v_current}{sub_f}[v_sub]"
+            full_video = f"{v_base}{broll_steps}{v_sub_chain}"
+        else:
+            if has_sub_overlay and sub_overlay_input_idx is not None:
+                ov_prep = f"[{sub_overlay_input_idx}:v]format=rgba[v_sub_ov];"
+                ov_op = "[v_sub_ov]overlay=0:0:eof_action=pass:shortest=0[v_sub]"
+                ov_end = f"[v_pre_sub]{ov_op}"
+                if framed_before_silence:
+                    v_base = (
+                        f"{v_in}{cinema_motion}[v_pre_sub];{ov_prep}{ov_end}"
+                        if cinema_motion
+                        else f"{ov_prep}{v_in}{ov_op}"
+                    )
+                elif effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                    v_base = (
+                        f"{v_in}{video_filter}[v_split];"
+                        f"[v_split]{cinema_motion}[v_pre_sub];{ov_prep}{ov_end}"
+                        if cinema_motion
+                        else f"{v_in}{video_filter}[v_split];{ov_prep}[v_split]{ov_op}"
+                    )
+                else:
+                    v_base = (
+                        f"{v_in}{video_filter},{cinema_motion}[v_pre_sub];{ov_prep}{ov_end}"
+                        if cinema_motion
+                        else f"{v_in}{video_filter}[v_pre_sub];{ov_prep}{ov_end}"
+                    )
+            elif framed_before_silence:
+                v_base = (
+                    f"{v_in}{cinema_motion},{sub_f}[v_sub]"
+                    if cinema_motion
+                    else f"{v_in}{sub_f}[v_sub]"
+                )
+            elif effective_reframe in (Reframe.BLURRED_FILL, Reframe.TWO_PERSON_SPLIT):
+                v_base = (
+                    f"{v_in}{video_filter}[v_split];[v_split]{cinema_motion},{sub_f}[v_sub]"
+                    if cinema_motion
+                    else f"{v_in}{video_filter}[v_split];[v_split]{sub_f}[v_sub]"
+                )
+            else:
+                v_base = (
+                    f"{v_in}{video_filter},{cinema_motion},{sub_f}[v_sub]"
+                    if cinema_motion
+                    else f"{v_in}{video_filter},{sub_f}[v_sub]"
+                )
             full_video = v_base
 
         v_current = "[v_sub]"
@@ -1804,7 +2277,26 @@ def render_clip(
             logo_steps = f"{logo_prep}{logo_overlay}"
             v_current = "[v_branded]"
 
-        v_pb = f"{v_current}{pb_f}[v_out]" if pb_f is not None else f"{v_current}null[v_out]"
+        if has_pb and brand_kit is not None:
+            pb_dur_s = max(0.05, effective_duration_ms / 1000.0)
+            pb_h = brand_kit.progress_bar.height_px
+            pb_y = VERTICAL_HEIGHT - pb_h if brand_kit.progress_bar.position == "bottom" else 0
+            pb_c = brand_kit.progress_bar.color
+            v_pb = (
+                f"color=c={pb_c}:s={VERTICAL_WIDTH}x{pb_h}:r={clip_fps:g}:d={pb_dur_s + 1.0:.3f}"
+                f"[pb_bar];"
+                f"{v_current}[pb_bar]overlay=x='-W+W*min(t/{pb_dur_s:.3f},1.0)'"
+                f":y={pb_y}:eof_action=repeat[v_out]"
+            )
+        else:
+            v_pb = f"{v_current}null[v_out]"
+        outer_span_ms = (
+            sum(sp.source_out_ms - sp.source_in_ms for sp in assembly_spans)
+            if (has_assembly and assembly_spans is not None)
+            else effective_duration_ms
+        )
+        outer_fades = ",".join(audio_cut_fade_filters(outer_span_ms, fade_in=True, fade_out=True))
+        speech_af = f"{af_chain},{outer_fades}" if outer_fades else af_chain
 
         if has_music:
             assert music_input_idx is not None
@@ -1817,33 +2309,70 @@ def render_clip(
                 f"{a_in}asplit=2[dia_mix][dia_sc];"
                 f"[music_in][dia_sc]{sc_filter}[ducked_music];"
                 f"[dia_mix][ducked_music]{mix_filter}[a_mixed];"
-                f"[a_mixed]{af_chain}[a_out]"
+                f"[a_mixed]{speech_af}[a_out]"
+            )
+        elif has_sfx and sfx_input_idx is not None:
+            a_chain = (
+                f"[{sfx_input_idx}:a]aformat=channel_layouts=stereo[sfx_st];"
+                f"{a_in}aformat=channel_layouts=stereo[dia_st];"
+                f"[dia_st][sfx_st]amix=inputs=2:duration=first:dropout_transition=0:normalize=0"
+                f"[a_sfx];[a_sfx]{speech_af}[a_out]"
             )
         else:
-            a_chain = f"{a_in}{af_chain}[a_out]"
+            a_chain = f"{a_in}{speech_af}[a_out]"
 
         full_complex = f"{trim_prefix}{full_video};{logo_steps}{v_pb};{a_chain}"
-        stream_filter_args = [
-            "-filter_complex",
-            full_complex,
-            "-map",
-            "[v_out]",
-            "-map",
-            "[a_out]",
-        ]
+        if len(full_complex) > 8_000:
+            filter_script = staging.with_suffix(".filtergraph.txt")
+            filter_script_content = full_complex
+            stream_filter_args = [
+                "-filter_complex_script",
+                str(filter_script),
+                "-map",
+                "[v_out]",
+                "-map",
+                "[a_out]",
+            ]
+        else:
+            stream_filter_args = [
+                "-filter_complex",
+                full_complex,
+                "-map",
+                "[v_out]",
+                "-map",
+                "[a_out]",
+            ]
     else:
-        v_filters = [video_filter, sub_f]
-        if pb_f:
-            v_filters.append(pb_f)
-        stream_filter_args = [
-            "-vf",
-            ",".join(v_filters),
-            "-af",
-            af_chain,
-        ]
+        v_filters = [video_filter]
+        if cinema_motion:
+            v_filters.append(cinema_motion)
+        v_filters.append(sub_f)
+        outer_fades = ",".join(
+            audio_cut_fade_filters(effective_duration_ms, fade_in=True, fade_out=True)
+        )
+        speech_af = f"{af_chain},{outer_fades}" if outer_fades else af_chain
+        vf_chain = ",".join(v_filters)
+        if len(vf_chain) > 8_000:
+            filter_script = staging.with_suffix(".filtergraph.txt")
+            filter_script_content = vf_chain
+            stream_filter_args = [
+                "-filter_script:v",
+                str(filter_script),
+                "-af",
+                speech_af,
+            ]
+        else:
+            stream_filter_args = [
+                "-vf",
+                vf_chain,
+                "-af",
+                speech_af,
+            ]
 
     timeout_s = max(60.0, (duration_ms / 1000.0) * 10.0)
     try:
+        if filter_script is not None and filter_script_content is not None:
+            filter_script.write_text(filter_script_content, encoding="utf-8")
         try:
             input_cut_args = (
                 []
@@ -1905,7 +2434,7 @@ def render_clip(
                 f"{result.stderr.decode('utf-8', 'replace')[-800:]}"
             )
 
-        if deliverable and loudness_p1 is not None:
+        if use_two_pass and loudness_p1 is not None:
             stderr_text = result.stderr.decode("utf-8", "replace")
             try:
                 loudness_p2 = _parse_loudnorm_stats(stderr_text, default_norm_type="linear")
@@ -1920,6 +2449,10 @@ def render_clip(
         _publish_render(staging, output)
     finally:
         staging.unlink(missing_ok=True)
+        if filter_script is not None:
+            filter_script.unlink(missing_ok=True)
+        if sfx_wav_path is not None:
+            sfx_wav_path.unlink(missing_ok=True)
 
     return RenderResult(
         clip_id=clip.clip_id,

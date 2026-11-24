@@ -40,6 +40,7 @@ from typing import Final
 
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.http_transport import open_without_redirects
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 
 __all__ = [
     "ENV_FILE",
@@ -574,7 +575,7 @@ def credential_status(
 
 # --- the panel ----------------------------------------------------------------------------
 
-_PINNED_JUDGE = "gemini-2.5-pro"
+_PINNED_JUDGE = KURDISH_EDITORIAL_JUDGE
 
 
 def main(argv: list[str] | None = None) -> int:

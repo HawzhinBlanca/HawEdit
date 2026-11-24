@@ -37,6 +37,7 @@ from hawedit.clip import (
     Sv6d,
     assert_sv6d_within_window,
 )
+from hawedit.judge import JUDGE_SHADOW, KURDISH_EDITORIAL_JUDGE
 from hawedit.registry import ModelNotInRegistry
 from hawedit.transcripts import AsrProvenance, Word
 
@@ -83,7 +84,7 @@ def an_editorial(**overrides: object) -> Editorial:
         "misleading_edit_risk": 0.03,
         "cultural_landing": 0.86,
         "narrative_role": "payoff",
-        "judge": "gemini-2.5-pro",
+        "judge": KURDISH_EDITORIAL_JUDGE,
         "sv6d": an_sv6d(),
     }
     payload.update(overrides)
@@ -254,7 +255,7 @@ def test_the_judge_must_be_a_routable_model() -> None:
     """§4: the shadow is "evaluated, not routed". Recording it as the judge would mean a
     clip was scored by a model the blueprint says must not be in the path."""
     with pytest.raises(ValueError, match="routable"):
-        an_editorial(judge="gemini-3.1-pro")
+        an_editorial(judge=JUDGE_SHADOW)
 
 
 def test_an_unregistered_judge_is_refused() -> None:

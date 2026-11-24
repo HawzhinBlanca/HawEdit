@@ -17,9 +17,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
-from hawedit.clip import MAX_MISLEADING_EDIT_RISK, MIN_MEANING_FIDELITY
 from hawedit.discovery import MergedCandidate
-from hawedit.judge import JudgeVerdict, tournament_score
+from hawedit.judge import (
+    JudgeVerdict,
+    PairwiseComparator,
+    PairwiseMatch,
+    _unweighted_tiebreak,
+    is_verdict_eligible,
+    pairwise_rank_verdicts,
+)
 from hawedit.normalize import normalize_sorani
 from hawedit.transcripts import NormalizedTranscript
 
@@ -275,6 +281,8 @@ def plan_episode(
     normalized_transcript: NormalizedTranscript | None = None,
     *,
     require_eligible: bool = True,
+    comparator: PairwiseComparator | None = None,
+    matches_out: list[PairwiseMatch] | None = None,
 ) -> tuple[
     list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]],
     list[EpisodeItemRecord],
@@ -295,11 +303,7 @@ def plan_episode(
         cand, indices, verdict = item
         in_ms, out_ms = cand.span
         duration_ms = out_ms - in_ms
-        if require_eligible and (
-            verdict.meaning_fidelity < MIN_MEANING_FIDELITY
-            or verdict.misleading_edit_risk > MAX_MISLEADING_EDIT_RISK
-            or not verdict.self_contained
-        ):
+        if require_eligible and not is_verdict_eligible(verdict):
             reason = (
                 f"Failed editorial thresholds (fidelity={verdict.meaning_fidelity:.2f}, "
                 f"risk={verdict.misleading_edit_risk:.2f}, "
@@ -323,32 +327,6 @@ def plan_episode(
     if not candidates:
         return [], item_records
 
-    hook_priority = {
-        "question": 5,
-        "claim": 4,
-        "contrast": 3,
-        "confession": 2,
-        "story_open": 1,
-    }
-
-    # Rank shippable items by composite tournament quality matching single-clip mode
-    def _rank_key(
-        item: tuple[MergedCandidate, tuple[int, ...], JudgeVerdict],
-    ) -> tuple[float, int, float, float, bool]:
-        _cand, _indices, verdict = item
-        return (
-            tournament_score(verdict),
-            hook_priority.get(getattr(verdict, "hook_type", ""), 0),
-            verdict.hook_score,
-            getattr(verdict, "payoff_strength", 0.0),
-            getattr(verdict, "ends_on_a_beat", False),
-        )
-
-    ranked = sorted(candidates, key=_rank_key, reverse=True)
-
-    selected: list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]] = []
-    selected_texts: list[str] = []
-
     def _get_text(cand: MergedCandidate) -> str:
         if normalized_transcript is not None:
             words = [
@@ -359,6 +337,36 @@ def plan_episode(
             if words:
                 return " ".join(words)
         return ""
+
+    # Rank eligible items identically to single-clip mode via pairwise Swiss tournament (D-346)
+    candidate_texts = {
+        verdict.candidate_id: _get_text(cand) for cand, _indices, verdict in candidates
+    }
+    ranked_verdicts = pairwise_rank_verdicts(
+        [verdict for _cand, _indices, verdict in candidates],
+        comparator=comparator,
+        candidate_texts=candidate_texts,
+        require_eligible=require_eligible,
+        matches_out=matches_out,
+    )
+    rank_index = {
+        verdict.candidate_id: idx for idx, (verdict, _score) in enumerate(ranked_verdicts)
+    }
+
+    max_rank = len(ranked_verdicts)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            max_rank - rank_index[item[2].candidate_id]
+            if item[2].candidate_id in rank_index
+            else -1,
+            _unweighted_tiebreak(item[2]),
+        ),
+        reverse=True,
+    )
+
+    selected: list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]] = []
+    selected_texts: list[str] = []
 
     for candidate, sentence_indices, verdict in ranked:
         in_ms, out_ms = candidate.span
@@ -480,6 +488,8 @@ def select_episode_plan(
     normalized_transcript: NormalizedTranscript | None = None,
     *,
     require_eligible: bool = True,
+    comparator: PairwiseComparator | None = None,
+    matches_out: list[PairwiseMatch] | None = None,
 ) -> list[tuple[MergedCandidate, tuple[int, ...], JudgeVerdict]]:
     """Select up to N diverse, non-overlapping winners satisfying episode constraints.
 
@@ -493,6 +503,8 @@ def select_episode_plan(
         require_eligible: If True (default), only candidates passing hard editorial
             eligibility (meaning_fidelity >= 0.70, misleading_edit_risk <= 0.10,
             self_contained == True) are eligible. Quotas are never filled with weak clips.
+        comparator: Optional pairwise comparator for head-to-head ranking.
+        matches_out: Optional list populated with executed PairwiseMatch records.
 
     Returns:
         List of selected (candidate, sentence_indices, verdict) tuples in ranked order.
@@ -502,6 +514,8 @@ def select_episode_plan(
         config,
         normalized_transcript=normalized_transcript,
         require_eligible=require_eligible,
+        comparator=comparator,
+        matches_out=matches_out,
     )
     return selected
 

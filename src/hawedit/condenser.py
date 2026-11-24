@@ -21,10 +21,13 @@ from enum import Enum
 from typing import Any, Final, Protocol
 
 from hawedit.credentials import CredentialError
+from hawedit.http_transport import open_without_redirects
 from hawedit.screener import TYPESAFE_API_KEY_ENV, TYPESAFE_API_URL
 from hawedit.sentences import DANGLING_CONJUNCTIONS_CKB, Sentence
 from hawedit.silence import KURDISH_FILLER_TOKENS
 from hawedit.transcripts import Word
+
+_MAX_HTTP_RESPONSE_BYTES: Final[int] = 4 * 1024 * 1024
 
 __all__ = [
     "BeatKind",
@@ -39,7 +42,9 @@ __all__ = [
     "StorySummary",
     "condense_multiple_arcs",
     "condense_story",
+    "interval_overlap_ms",
     "remap_words_to_condensed_timeline",
+    "score_interior_sentence",
 ]
 
 # Conversational Kurdish filler tokens and hesitation markers that add zero semantic value
@@ -181,9 +186,11 @@ class GeminiStoryEvaluator:
 
     @staticmethod
     def _default_transport(req: urllib.request.Request) -> bytes:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data: bytes = resp.read()
-            return data
+        with open_without_redirects(req, timeout=30) as resp:
+            data: bytes = resp.read(_MAX_HTTP_RESPONSE_BYTES + 1)
+        if len(data) > _MAX_HTTP_RESPONSE_BYTES:
+            raise StoryCondensationError("Gemini evaluation response exceeds byte bound")
+        return data
 
     def evaluate_story(
         self,
@@ -227,7 +234,7 @@ class GeminiStoryEvaluator:
 
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model_id}:generateContent?key={self.api_key}"
+            f"{self.model_id}:generateContent"
         )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -241,18 +248,31 @@ class GeminiStoryEvaluator:
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
             method="POST",
         )
 
         raw_bytes = self._transport(req)
         response_json = json.loads(raw_bytes.decode("utf-8"))
-        text_content = (
-            response_json.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "{}")
-        )
+        if not isinstance(response_json, dict):
+            raise StoryCondensationError("Gemini evaluation response must be a JSON object")
+        candidates = response_json.get("candidates")
+        if (
+            not isinstance(candidates, list)
+            or not candidates
+            or not isinstance(candidates[0], dict)
+        ):
+            raise StoryCondensationError("Gemini evaluation response returned no candidates")
+        content = candidates[0].get("content")
+        parts = content.get("parts") if isinstance(content, dict) else None
+        if not isinstance(parts, list) or not parts or not isinstance(parts[0], dict):
+            raise StoryCondensationError("Gemini evaluation response returned no content parts")
+        text_content = parts[0].get("text")
+        if not isinstance(text_content, str) or not text_content.strip():
+            raise StoryCondensationError("Gemini evaluation response returned empty text")
         parsed = json.loads(text_content)
         if not isinstance(parsed, dict):
             raise StoryCondensationError("Gemini evaluation response must be a JSON object")
@@ -337,9 +357,11 @@ class JevStoryEvaluator:
 
     @staticmethod
     def _default_transport(req: urllib.request.Request) -> bytes:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data: bytes = resp.read()
-            return data
+        with open_without_redirects(req, timeout=30) as resp:
+            data: bytes = resp.read(_MAX_HTTP_RESPONSE_BYTES + 1)
+        if len(data) > _MAX_HTTP_RESPONSE_BYTES:
+            raise StoryCondensationError("Gemini evaluation response exceeds byte bound")
+        return data
 
     def evaluate_story(
         self,
@@ -566,6 +588,87 @@ def _calculate_sentence_importance(s: Sentence, idx: int, total_sentences: int) 
         score -= 0.15  # Drawling / rambling pace
 
     return max(0.0, min(1.0, score))
+
+
+def interval_overlap_ms(
+    start_ms: int,
+    end_ms: int,
+    intervals_ms: Sequence[tuple[int, int]],
+) -> int:
+    """Return merged millisecond overlap between [start_ms, end_ms] and intervals_ms."""
+    if end_ms <= start_ms or not intervals_ms:
+        return 0
+    clipped: list[tuple[int, int]] = []
+    for iv_start, iv_end in intervals_ms:
+        if iv_end <= iv_start:
+            raise ValueError(f"Invalid interval ({iv_start}, {iv_end}): end must exceed start")
+        lo = max(start_ms, iv_start)
+        hi = min(end_ms, iv_end)
+        if hi > lo:
+            clipped.append((lo, hi))
+    if not clipped:
+        return 0
+    clipped.sort()
+    merged_start, merged_end = clipped[0]
+    total = 0
+    for lo, hi in clipped[1:]:
+        if lo <= merged_end:
+            merged_end = max(merged_end, hi)
+        else:
+            total += merged_end - merged_start
+            merged_start, merged_end = lo, hi
+    total += merged_end - merged_start
+    return total
+
+
+def score_interior_sentence(
+    sentence: Sentence,
+    *,
+    clip_in_ms: int,
+    clip_out_ms: int,
+    payoff_at_ms: int | None = None,
+    excited_intervals_ms: Sequence[tuple[int, int]] = (),
+) -> float:
+    """Score an interior sentence in [0.0, 1.0] for viral middle-tangent condensation (D-378).
+
+    Combines vocal excitement overlap (0.35), payoff proximity (0.30), and speech density /
+    anti-filler quality (0.35). Lower scores are dropped first when a clip exceeds target_max_ms.
+    """
+    if clip_out_ms <= clip_in_ms:
+        raise ValueError(f"clip_out_ms ({clip_out_ms}) must be > clip_in_ms ({clip_in_ms})")
+    if not sentence.words:
+        raise ValueError("Cannot score an empty sentence")
+
+    sent_dur_ms = max(1, sentence.end_ms - sentence.start_ms)
+    clip_dur_ms = clip_out_ms - clip_in_ms
+
+    # 1. Vocal excitement overlap ratio (0..1)
+    overlap = interval_overlap_ms(sentence.start_ms, sentence.end_ms, excited_intervals_ms)
+    excitement_score = min(1.0, overlap / sent_dur_ms)
+
+    # 2. Payoff proximity (0..1): 1.0 if payoff falls inside sentence, else decays with distance
+    anchor_ms = payoff_at_ms if payoff_at_ms is not None else clip_out_ms
+    if sentence.start_ms <= anchor_ms <= sentence.end_ms:
+        payoff_score = 1.0
+    else:
+        midpoint_ms = (sentence.start_ms + sentence.end_ms) / 2.0
+        dist_ms = abs(anchor_ms - midpoint_ms)
+        payoff_score = max(0.0, 1.0 - (dist_ms / clip_dur_ms))
+
+    # 3. Information density & anti-filler / anti-ramble score (0..1)
+    words = sentence.words
+    wps = len(words) / max(0.5, sent_dur_ms / 1000.0)
+    wps_norm = min(1.0, wps / 3.5)
+    filler_ratio = sum(1 for w in words if w.w in KURDISH_FILLER_TOKENS) / len(words)
+    ramble_penalty = 0.25 if sent_dur_ms > 25_000 else (0.10 if sent_dur_ms > 18_000 else 0.0)
+    dangling_penalty = 0.25 if words[-1].w in DANGLING_CONJUNCTIONS else 0.0
+    density_score = max(
+        0.0,
+        min(1.0, wps_norm - 0.6 * filler_ratio - ramble_penalty - dangling_penalty),
+    )
+
+    total = 0.35 * excitement_score + 0.30 * payoff_score + 0.35 * density_score
+    return max(0.0, min(1.0, total))
 
 
 def _condense_story_with_evaluator(

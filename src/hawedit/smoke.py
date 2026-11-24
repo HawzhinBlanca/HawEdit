@@ -14,9 +14,9 @@ Stage 4 on the top candidate with actual keyframes from a matching sample video 
 what came back, including the Kurdish title. Roughly a thousand tokens; a fraction of a cent.
 
 What it is checking is not "did the HTTP request succeed". It is the set of things that only
-break against a real model: whether `gemini-2.5-pro` is enabled on this key's project, whether
-the structured-output schema survives a real response, whether the model actually answers in
-Kurdish when asked to, and whether the spans it returns land inside the transcript.
+break against a real model: whether `KURDISH_EDITORIAL_JUDGE` is enabled on this key's project,
+whether the structured-output schema survives a real response, whether the model actually answers
+in Kurdish when asked to, and whether the spans it returns land inside the transcript.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 
 from hawedit.credentials import GEMINI_API_KEY, mask, read_credential
 from hawedit.gemini import GeminiJudge, GeminiUnavailable, JudgeUnusable
-from hawedit.judge import InputMode, JudgeRequest, estimate_cost_usd
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, InputMode, JudgeRequest, estimate_cost_usd
 from hawedit.keyframes import KeyframeError, extract_judge_frames
 from hawedit.path_a import PathADiscovery
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word, normalize_transcript
@@ -191,8 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  hashtags        {' '.join(verdict.hashtags_ckb) or '(none)'}")
 
     print(
-        "\n✓ live path works: the key is valid, gemini-2.5-pro is enabled on it, the schema "
-        "survived a real response, and the model answered in Kurdish."
+        f"\n✓ live path works: the key is valid, {KURDISH_EDITORIAL_JUDGE} is enabled on it, "
+        "the schema survived a real response, and the model answered in Kurdish."
     )
     print(
         "  Still required before a client job: the §3 zero-data-retention answer for "

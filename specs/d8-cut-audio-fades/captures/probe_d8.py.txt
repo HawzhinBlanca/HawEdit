@@ -1,0 +1,169 @@
+# Probe D8 (read-only against repo and D:\HawEdit-media):
+# Measure audio cut discontinuity (click/pop step amplitude) with current atrim+concat
+# vs 30ms boundary afade (qsin/tri) in silence_trim_filter and assembled_splice_filter.
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+
+from hawedit.assembly import AssemblySpan, assembled_splice_filter
+from hawedit.captions import find_ffmpeg
+from hawedit.ingest import probe_duration_ms
+from hawedit.sentences import Sentence
+from hawedit.silence import silence_trim_filter
+from hawedit.transcripts import Word
+
+OUT = Path(sys.argv[1])
+OUT.mkdir(parents=True, exist_ok=True)
+FF = find_ffmpeg()
+assert FF is not None
+
+FIXTURE = Path("tests/fixtures/kurdish-speech-3cuts.mp4")
+EXCERPT = Path(r"D:\HawEdit-media\excerpts\zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4")
+
+
+def extract_pcm(src: Path, filter_complex: str, out_map: str = "[a_out]") -> tuple[np.ndarray, int]:
+    res = subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v_out]",
+            "-f",
+            "null",
+            "-",
+            "-map",
+            out_map,
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    return np.frombuffer(res.stdout, dtype=np.float32), 48000
+
+
+def render_mp4(src: Path, filter_complex: str, out_mp4: Path) -> int:
+    subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v_out]",
+            "-map",
+            "[a_out]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            "-ar",
+            "48000",
+            str(out_mp4),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    return probe_duration_ms(out_mp4, FF)
+
+
+def cut_metrics(pcm: np.ndarray, sr: int, cut_s: float) -> dict[str, float]:
+    cut_idx = int(round(cut_s * sr))
+    win = int(0.05 * sr)  # +/- 50ms around cut
+    lo = max(1, cut_idx - win)
+    hi = min(len(pcm) - 1, cut_idx + win)
+    # Also inspect the +/- 5ms right at the cut
+    tight_lo = max(1, cut_idx - int(0.005 * sr))
+    tight_hi = min(len(pcm) - 1, cut_idx + int(0.005 * sr))
+    step_tight = float(np.max(np.abs(np.diff(pcm[tight_lo:tight_hi]))))
+    rms_5ms_before = float(np.sqrt(np.mean(pcm[cut_idx - int(0.005 * sr) : cut_idx] ** 2)))
+    rms_5ms_after = float(np.sqrt(np.mean(pcm[cut_idx : cut_idx + int(0.005 * sr)] ** 2)))
+    # Peak at exact boundary (+/- 1ms = 48 samples)
+    b_lo = max(0, cut_idx - 48)
+    b_hi = min(len(pcm), cut_idx + 48)
+    boundary_peak = float(np.max(np.abs(pcm[b_lo:b_hi])))
+    return {
+        "duration_ms": round(len(pcm) * 1000.0 / sr, 2),
+        "tight_max_step": round(step_tight, 5),
+        "boundary_1ms_peak": round(boundary_peak, 5),
+        "rms_5ms_before": round(rms_5ms_before, 5),
+        "rms_5ms_after": round(rms_5ms_after, 5),
+    }
+
+
+def make_faded_splice_filter(intervals_ms: list[tuple[int, int]], fade_ms: int = 30) -> str:
+    v_parts = []
+    a_parts = []
+    concat_in = []
+    n = len(intervals_ms)
+    for i, (s_ms, e_ms) in enumerate(intervals_ms):
+        s_s = s_ms / 1000.0
+        e_s = e_ms / 1000.0
+        dur_s = (e_ms - s_ms) / 1000.0
+        fade_s = min(fade_ms / 1000.0, dur_s / 2.0)
+        fades = []
+        if i > 0 and fade_s > 0:
+            fades.append(f"afade=t=in:st=0:d={fade_s:.3f}:curve=qsin")
+        if i < n - 1 and fade_s > 0:
+            out_st = max(0.0, dur_s - fade_s)
+            fades.append(f"afade=t=out:st={out_st:.3f}:d={fade_s:.3f}:curve=qsin")
+        fade_chain = ("," + ",".join(fades)) if fades else ""
+        v_parts.append(f"[0:v]trim=start={s_s:.3f}:end={e_s:.3f},setpts=PTS-STARTPTS[v{i}]")
+        a_parts.append(f"[0:a]atrim=start={s_s:.3f}:end={e_s:.3f},asetpts=PTS-STARTPTS{fade_chain}[a{i}]")
+        concat_in.append(f"[v{i}][a{i}]")
+    concat = f"{''.join(concat_in)}concat=n={n}:v=1:a=1[v_out][a_out]"
+    return ";".join(v_parts + a_parts + [concat])
+
+
+# Test 1: Synthetic fixture (mid-speech splice: 2000..3200 + 200..1200, cut at 1.200s)
+s_pay = Sentence(words=(Word("a", 2000, 3200, 0.9),), complete=True)
+s_set = Sentence(words=(Word("b", 200, 1200, 0.9),), complete=True)
+spans = [
+    AssemblySpan(0, 2000, 3200, 1200, (s_pay,)),
+    AssemblySpan(1, 200, 1200, 1000, (s_set,)),
+]
+base_asm = assembled_splice_filter(spans).replace("[v_concat][a_concat]", "[v_out][a_out]")
+fade_asm = make_faded_splice_filter([(2000, 3200), (200, 1200)], fade_ms=30)
+
+pcm_base, sr = extract_pcm(FIXTURE, base_asm)
+pcm_fade, _ = extract_pcm(FIXTURE, fade_asm)
+dur_base_mp4 = render_mp4(FIXTURE, base_asm, OUT / "fixture_base.mp4")
+dur_fade_mp4 = render_mp4(FIXTURE, fade_asm, OUT / "fixture_fade30ms.mp4")
+
+print("=== Fixture splice (2000..3200 + 200..1200, cut at 1.200s) ===")
+print("  base:", cut_metrics(pcm_base, sr, 1.200), f"mp4_ms={dur_base_mp4}")
+print("  fade:", cut_metrics(pcm_fade, sr, 1.200), f"mp4_ms={dur_fade_mp4}")
+
+# Test 2: Real Zar AI excerpt (mid-speech jump cut: 5000..8500 + 18000..21500, cut at 3.500s)
+if EXCERPT.is_file():
+    base_real = silence_trim_filter([(5000, 8500), (18000, 21500)]).replace("[v_tightened][a_tightened]", "[v_out][a_out]")
+    fade_real = make_faded_splice_filter([(5000, 8500), (18000, 21500)], fade_ms=30)
+    pcm_r_base, _ = extract_pcm(EXCERPT, base_real)
+    pcm_r_fade, _ = extract_pcm(EXCERPT, fade_real)
+    print("\n=== Real Zar excerpt splice (5.0..8.5s + 18.0..21.5s, cut at 3.500s) ===")
+    print("  base:", cut_metrics(pcm_r_base, sr, 3.500))
+    print("  fade:", cut_metrics(pcm_r_fade, sr, 3.500))

@@ -286,6 +286,7 @@ def test_studio_valid_source_request_refuses_missing_runner_not_fake_queue(
 ) -> None:
     import hawedit.web as web
 
+    monkeypatch.setenv("HAWEDIT_PROTECTED_STUDIO", "1")
     store, source_id = uploaded
     manager = web.JobManager(tmp_path / "jobs")
     monkeypatch.setattr(web, "UPLOAD_STORE", store)

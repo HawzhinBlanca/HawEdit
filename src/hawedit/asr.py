@@ -31,13 +31,16 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import wave
+from array import array
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, replace
+from itertools import accumulate
 from pathlib import Path
 from typing import Any, BinaryIO, Final, Protocol, runtime_checkable
 
@@ -46,6 +49,7 @@ from hawedit.asr_completion import (
     BEAM_RETRY_NBEST,
     COMPLETION_POLICY_ID,
     DecodeIncomplete,
+    DecoderContractError,
     NoNaturalEos,
     loop_suspect,
     transcribe_completed,
@@ -94,7 +98,12 @@ from hawedit.wsl_setup import (
 __all__ = [
     "CHAMPION_ADAPTER_ENV",
     "CHAMPION_CHECKPOINT_ENV",
+    "CLIP_ASR_DEFAULT_PAD_MS",
+    "CLIP_ASR_MAX_PAD_MS",
+    "CLIP_ASR_MIN_PAD_MS",
+    "DEFAULT_CHAMPION_CHECKPOINT_PATHS",
     "LONG_AUDIO_THRESHOLD_S",
+    "STRICT_RUNTIME_ENV",
     "ASRAdapter",
     "ASRResult",
     "AsrProductionFailure",
@@ -112,11 +121,58 @@ __all__ = [
     "SoraniValidator",
     "WslOmniAsrProducer",
     "create_omni_asr_producer",
+    "discover_default_champion_checkpoint",
     "long_audio_failure_rate",
     "resolve_champion_adapter",
     "resolve_champion_checkpoint",
+    "select_contextual_regions_for_spans",
+    "strict_runtime_enabled",
     "validate_adapter",
 ]
+
+STRICT_RUNTIME_ENV: Final = "HAWEDIT_STRICT_RUNTIME"
+PLAIN_WSL_PYTHON_CANDIDATES: Final = (
+    "/home/ai/.cache/hawedit-plain-wsl-venv/bin/python",
+    "/home/ai/.venv-wsl-whisper/bin/python",
+    "/home/ai/.venv-wsl-whisper/bin/python3",
+)
+
+
+def strict_runtime_enabled(
+    env: Mapping[str, str] | None = None,
+    *,
+    strict: bool | None = None,
+) -> bool:
+    """Return True when sealed receipt/admission runtime controls are requested (A3, D-337)."""
+    if strict is not None:
+        return bool(strict)
+    environ = os.environ if env is None else env
+    raw = environ.get(STRICT_RUNTIME_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _discover_plain_wsl_python(
+    *,
+    distro: str | None = None,
+    executable: str = "wsl.exe",
+) -> str:
+    """Locate the plain WSL virtualenv interpreter without requiring a sealed .ready receipt."""
+    prefix = wsl_prefix(distro, executable)
+    for candidate in PLAIN_WSL_PYTHON_CANDIDATES:
+        probe = subprocess.run(
+            [*prefix, "test", "-x", candidate],
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+        if probe.returncode == 0:
+            return candidate
+    raise RuntimeError(
+        "plain OmniASR WSL Python interpreter was not found "
+        f"(tried {', '.join(PLAIN_WSL_PYTHON_CANDIDATES)}). Set HAWEDIT_WSL_PYTHON or pass "
+        "--strict-runtime after hawedit-asr-setup"
+    )
+
 
 # §3 Stage 1: OmniASR's interface ceiling. Stage 0's VAD uses max_speech_duration_s=38 to
 # stay under it, so anything past this is by definition outside the designed operating range
@@ -128,6 +184,9 @@ DEFAULT_ASR_DEVICE: Final = "cuda:1"
 VALIDATOR_MODEL_ID: Final = "rzgar/qwen3-asr-sorani-kurdish-ckb-v1"
 _CONTEXT_MAX_GAP_MS: Final = 1_000
 _CONTEXT_MAX_SPAN_MS: Final = 18_000
+CLIP_ASR_MIN_PAD_MS: Final = 3_000
+CLIP_ASR_DEFAULT_PAD_MS: Final = 4_000
+CLIP_ASR_MAX_PAD_MS: Final = 5_000
 ASR_COMPLETION_POLICY_ID: Final = COMPLETION_POLICY_ID + "+" + QWEN_COMPLETION_POLICY_ID
 CONTEXT_GROUPING_POLICY_ID: Final = (
     f"vad-context-v1-gap{_CONTEXT_MAX_GAP_MS}-span{_CONTEXT_MAX_SPAN_MS}"
@@ -258,6 +317,12 @@ CHAMPION_ADAPTER_CANDIDATES: Final = (
 CHAMPION_ADAPTER_ENV: Final = "HAWEDIT_CHAMPION_ADAPTER"
 # A fused champion checkpoint (D-331). Unset means the LoRA champion above stays the default.
 CHAMPION_CHECKPOINT_ENV: Final = "HAWEDIT_CHAMPION_CHECKPOINT"
+DEFAULT_CHAMPION_CHECKPOINT_PATHS: Final = (
+    Path(
+        r"F:\Kurdish Sorani Dataset\omni_7b_v3_continuation"
+        r"\runs\champion_v12_lora64_750_fused\kurdish_omniasr_7b_v12_c750.pt"
+    ),
+)
 
 
 class ChampionUnavailable(RuntimeError):
@@ -390,6 +455,19 @@ def resolve_champion_checkpoint(env: Mapping[str, str] | None = None) -> Path | 
     checkpoint = Path(raw)
     fused_checkpoint_asset(checkpoint)
     return checkpoint
+
+
+def discover_default_champion_checkpoint(
+    candidates: Sequence[Path] = DEFAULT_CHAMPION_CHECKPOINT_PATHS,
+) -> Path | None:
+    """Return the default fused champion v12 checkpoint if present and allowlisted."""
+    for candidate in candidates:
+        path = Path(candidate)
+        if not path.is_file():
+            continue
+        fused_checkpoint_asset(path)
+        return path
+    return None
 
 
 def adapter_fingerprint(adapter_dir: Path) -> str:
@@ -1142,7 +1220,7 @@ class OmniAsrBackend:
             try:
                 self._restore_ctc(ctc)
             except Exception as exc:
-                raise DecodeIncomplete(
+                raise DecoderContractError(
                     f"CTC-3B could not return to {self.ctc_device} after the beam-5 retry; "
                     "halting rather than continuing with CTC off its device"
                 ) from exc
@@ -1253,9 +1331,12 @@ class OmniAsrProducer:
         lora_adapter: Path | None = None,
         context_grouping: bool = False,
         fused_checkpoint: Path | None = None,
+        validate_hard_segments: bool = True,
     ) -> None:
         if type(context_grouping) is not bool:
             raise ValueError("ASR context grouping must be a boolean")
+        if type(validate_hard_segments) is not bool:
+            raise ValueError("ASR validator toggle must be a boolean")
         if backend is not None and (lora_adapter is not None or fused_checkpoint is not None):
             raise ValueError(
                 "pass the adapter to the backend, not to both: a supplied backend already "
@@ -1263,12 +1344,20 @@ class OmniAsrProducer:
             )
         if validator is not None and validator_model_dir is not None:
             raise ValueError("provide a validator or validator_model_dir, not both")
+        if not validate_hard_segments and (
+            validator is not None or validator_model_dir is not None
+        ):
+            raise ValueError(
+                "cannot pass a validator or validator_model_dir when "
+                "validate_hard_segments is False"
+            )
         self.backend = backend or OmniAsrBackend(
             lora_adapter=lora_adapter, fused_checkpoint=fused_checkpoint
         )
         self.validator = validator
         self.validator_model_dir = validator_model_dir
         self.context_grouping = context_grouping
+        self.validate_hard_segments = validate_hard_segments
 
     @property
     def model_identity(self) -> str | None:
@@ -1283,14 +1372,11 @@ class OmniAsrProducer:
     @property
     def admission_policy(self) -> str | None:
         """Cache binding for the real canonical backend, not a fidelity attestation."""
-        completion = ASR_COMPLETION_POLICY_ID if type(self.backend) is OmniAsrBackend else None
-        if self.context_grouping:
-            return (
-                f"{completion}+{CONTEXT_GROUPING_POLICY_ID}"
-                if completion is not None
-                else CONTEXT_GROUPING_POLICY_ID
-            )
-        return completion
+        return _producer_admission_policy(
+            type(self.backend) is OmniAsrBackend,
+            self.context_grouping,
+            self.validate_hard_segments,
+        )
 
     def _validator(self) -> SoraniValidator:
         if self.validator is not None:
@@ -1320,7 +1406,11 @@ class OmniAsrProducer:
         if type(self.backend) is OmniAsrBackend:
             self.backend.release_draft_model()
         results, validated_by, rejected_corrections, origins = _validate_hard_segments(
-            initial, self.backend, self._validator, stop_on_failure=True
+            initial,
+            self.backend,
+            self._validator,
+            stop_on_failure=True,
+            enabled=self.validate_hard_segments,
         )
         if self.model_identity != expected_identity:
             raise RuntimeError("Native ASR adapter identity changed during inference")
@@ -1342,6 +1432,7 @@ class _PreparedSpeechSegment:
     path: Path
     start_ms: int
     end_ms: int
+    sub_segments: tuple[tuple[int, int], ...] = ()
 
     @property
     def duration_s(self) -> float:
@@ -1352,6 +1443,7 @@ class _PreparedSpeechSegment:
 class _ContextSpeechRegion:
     start_ms: int
     end_ms: int
+    constituents: tuple[tuple[int, int], ...] = ()
 
 
 def _contextual_speech_regions(
@@ -1371,16 +1463,60 @@ def _contextual_speech_regions(
             raise ValueError(f"speech region {index} has invalid interval bounds")
         if previous_end is not None and start < previous_end:
             raise ValueError(f"speech region {index} overlaps or precedes the previous interval")
+        seg_constituents = tuple(getattr(segment, "constituents", ())) or ((start, end),)
         if (
             windows
             and start - windows[-1].end_ms <= _CONTEXT_MAX_GAP_MS
             and end - windows[-1].start_ms <= _CONTEXT_MAX_SPAN_MS
         ):
-            windows[-1] = _ContextSpeechRegion(windows[-1].start_ms, end)
+            prev = windows[-1]
+            merged = (*(prev.constituents or ((prev.start_ms, prev.end_ms),)), *seg_constituents)
+            windows[-1] = _ContextSpeechRegion(prev.start_ms, end, merged)
         else:
-            windows.append(_ContextSpeechRegion(start, end))
+            windows.append(
+                _ContextSpeechRegion(
+                    start,
+                    end,
+                    seg_constituents if len(seg_constituents) >= 2 else (),
+                )
+            )
         previous_end = end
     return tuple(windows)
+
+
+def select_contextual_regions_for_spans(
+    speech_segments: Sequence[SpeechSegment],
+    clip_spans_ms: Sequence[tuple[int, int]],
+    *,
+    duration_ms: int,
+    pad_ms: int = CLIP_ASR_DEFAULT_PAD_MS,
+) -> tuple[SpeechSegment, ...]:
+    """Select ordered episode-aligned `_ContextSpeechRegion`s overlapping padded clip spans."""
+    if type(pad_ms) is not int or not CLIP_ASR_MIN_PAD_MS <= pad_ms <= CLIP_ASR_MAX_PAD_MS:
+        raise ValueError(
+            f"clip ASR pad_ms must be between {CLIP_ASR_MIN_PAD_MS} and {CLIP_ASR_MAX_PAD_MS} ms"
+        )
+    if type(duration_ms) is not int or duration_ms <= 0:
+        raise ValueError("clip ASR duration_ms must be a positive integer")
+    if not clip_spans_ms:
+        raise ValueError("clip ASR requires at least one clip span")
+    windows: list[tuple[int, int]] = []
+    for index, (in_ms, out_ms) in enumerate(clip_spans_ms):
+        if (
+            type(in_ms) is not int
+            or type(out_ms) is not int
+            or not 0 <= in_ms < out_ms <= duration_ms
+        ):
+            raise ValueError(
+                f"clip span {index} ({in_ms}..{out_ms}) is invalid for duration {duration_ms}"
+            )
+        windows.append((max(0, in_ms - pad_ms), min(duration_ms, out_ms + pad_ms)))
+    grouped = _contextual_speech_regions(speech_segments)
+    return tuple(
+        region
+        for region in grouped
+        if any(region.end_ms > win_in and region.start_ms < win_out for win_in, win_out in windows)
+    )
 
 
 class AsrProductionFailure(RuntimeError):
@@ -1468,10 +1604,149 @@ def _cut_speech_regions(
                 f"ffmpeg emitted {actual_duration_ms}ms for ASR segment {index}, longer than "
                 f"the requested {requested_duration_ms}ms"
             )
+        actual_end_ms = start_ms + actual_duration_ms
+        raw_subs = tuple(
+            (s_start, min(s_end, actual_end_ms))
+            for s_start, s_end in getattr(segment, "constituents", ())
+            if s_start >= start_ms and min(s_end, actual_end_ms) > s_start
+        )
         prepared.append(
-            _PreparedSpeechSegment(segment_path, start_ms, start_ms + actual_duration_ms)
+            _PreparedSpeechSegment(
+                segment_path,
+                start_ms,
+                actual_end_ms,
+                sub_segments=raw_subs if len(raw_subs) >= 2 else (),
+            )
         )
     return tuple(prepared)
+
+
+SINGLETON_DIP_MIN_DURATION_MS: Final = 8_000
+SINGLETON_DIP_EDGE_GUARD_MS: Final = 3_000
+SINGLETON_DIP_WINDOW_MS: Final = 200
+SINGLETON_DIP_HOP_MS: Final = 10
+SINGLETON_DIP_MAX_RMS_RATIO: Final = 0.15
+
+
+def _read_pcm16_wav(path: Path) -> tuple[int, bytes]:
+    """Read frame count and raw PCM16 frames from a 16 kHz mono WAV."""
+    with wave.open(str(path), "rb") as stream:
+        channels = stream.getnchannels()
+        sample_width = stream.getsampwidth()
+        sample_rate = stream.getframerate()
+        compression = stream.getcomptype()
+        total_frames = stream.getnframes()
+        if (channels, sample_width, sample_rate, compression) != (1, 2, 16_000, "NONE"):
+            raise RuntimeError(
+                f"cannot split {path.name}: expected 16 kHz mono PCM16, got "
+                f"{channels}ch/{sample_width * 8}-bit/{sample_rate}Hz/{compression}"
+            )
+        return total_frames, stream.readframes(total_frames)
+
+
+def silence_dip_split_ms(path: Path) -> int | None:
+    """Find a deterministic min-RMS breath/pause center in a long singleton WAV (D-343)."""
+    total_frames, raw_frames = _read_pcm16_wav(path)
+    duration_ms = round(total_frames * 1_000 / 16_000)
+    if duration_ms < SINGLETON_DIP_MIN_DURATION_MS or total_frames <= 0:
+        return None
+    samples = array("h")
+    samples.frombytes(raw_frames)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if len(samples) != total_frames:
+        raise RuntimeError(f"ASR segment has truncated PCM frames: {path}")
+    sq_prefix = [0, *accumulate(sample * sample for sample in samples)]
+    overall_sq = sq_prefix[total_frames]
+    if overall_sq <= 0:
+        return None
+    overall_rms = math.sqrt(overall_sq / total_frames)
+    lo_frame = round(SINGLETON_DIP_EDGE_GUARD_MS * 16)
+    hi_frame = min(total_frames, round((duration_ms - SINGLETON_DIP_EDGE_GUARD_MS) * 16))
+    win_frames = SINGLETON_DIP_WINDOW_MS * 16
+    hop_frames = SINGLETON_DIP_HOP_MS * 16
+    if hi_frame - lo_frame < win_frames:
+        return None
+    best_start = lo_frame
+    best_win_sq = sq_prefix[lo_frame + win_frames] - sq_prefix[lo_frame]
+    for start in range(lo_frame + hop_frames, hi_frame - win_frames + 1, hop_frames):
+        win_sq = sq_prefix[start + win_frames] - sq_prefix[start]
+        if win_sq < best_win_sq:
+            best_win_sq = win_sq
+            best_start = start
+    min_window_rms = math.sqrt(best_win_sq / win_frames)
+    if min_window_rms > SINGLETON_DIP_MAX_RMS_RATIO * overall_rms:
+        return None
+    split_ms = round((best_start + win_frames / 2.0) / 16.0)
+    if not 0 < split_ms < duration_ms:
+        return None
+    return split_ms
+
+
+def _write_pcm_slices(
+    segment: _PreparedSpeechSegment,
+    intervals: Sequence[tuple[int, int]],
+    tag: str,
+    *,
+    contiguous_to_end: bool = False,
+) -> tuple[_PreparedSpeechSegment, ...]:
+    """Atomically slice sub-intervals from a cut 16 kHz mono PCM16 WAV."""
+    total_frames, raw_frames = _read_pcm16_wav(segment.path)
+    bytes_per_frame = 2
+    sub_prepared: list[_PreparedSpeechSegment] = []
+    for idx, (sub_start, sub_end) in enumerate(intervals):
+        start_frame = max(0, min(total_frames, round((sub_start - segment.start_ms) * 16)))
+        end_frame = (
+            total_frames
+            if contiguous_to_end and idx == len(intervals) - 1
+            else max(0, min(total_frames, round((sub_end - segment.start_ms) * 16)))
+        )
+        if end_frame <= start_frame:
+            raise RuntimeError(
+                f"{tag} sub-segment {idx} ({sub_start}..{sub_end} ms) produced no PCM frames"
+            )
+        sub_path = segment.path.with_name(f"{segment.path.stem}-{tag}-{idx:02d}.wav")
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{sub_path.name}.", suffix=".tmp", dir=str(sub_path.parent)
+        )
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            with wave.open(str(tmp_path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(16_000)
+                out.writeframes(
+                    raw_frames[start_frame * bytes_per_frame : end_frame * bytes_per_frame]
+                )
+            os.replace(tmp_path, sub_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        actual_ms = _pcm_duration_ms(sub_path)
+        sub_prepared.append(_PreparedSpeechSegment(sub_path, sub_start, sub_start + actual_ms))
+    return tuple(sub_prepared)
+
+
+def _cut_pcm_subsegments(segment: _PreparedSpeechSegment) -> tuple[_PreparedSpeechSegment, ...]:
+    """Slice constituent raw VAD sub-segments from a cut 16 kHz mono PCM16 WAV (D-342)."""
+    return _write_pcm_slices(segment, segment.sub_segments, "sub")
+
+
+def _cut_pcm_dip_halves(segment: _PreparedSpeechSegment) -> tuple[_PreparedSpeechSegment, ...]:
+    """Slice a long failing singleton into two contiguous WAVs at a silence dip (D-343)."""
+    if segment.end_ms - segment.start_ms < SINGLETON_DIP_MIN_DURATION_MS:
+        return ()
+    split_ms = silence_dip_split_ms(segment.path)
+    if split_ms is None:
+        return ()
+    split_media_ms = segment.start_ms + split_ms
+    return _write_pcm_slices(
+        segment,
+        ((segment.start_ms, split_media_ms), (split_media_ms, segment.end_ms)),
+        "dip",
+        contiguous_to_end=True,
+    )
 
 
 def _pcm_duration_ms(path: Path) -> int:
@@ -1495,6 +1770,41 @@ def _pcm_duration_ms(path: Path) -> int:
     if duration_ms <= 0:
         raise RuntimeError(f"ASR segment contains no audio frames: {path}")
     return duration_ms
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    """Return True when ``exc`` is a PyTorch CUDA out-of-memory error."""
+    return type(exc).__name__ == "OutOfMemoryError" or "CUDA out of memory" in str(exc)
+
+
+def _clear_cuda_cache() -> None:
+    """Release cached CUDA allocator blocks after an OOM before retrying smaller halves."""
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _cut_pcm_oom_halves(
+    segment: _PreparedSpeechSegment,
+) -> tuple[_PreparedSpeechSegment, ...]:
+    """Split an oversized (>20 s) segment into two contiguous halves for 24 GiB VRAM fit."""
+    if segment.end_ms - segment.start_ms <= 20_000:
+        return ()
+    if len(segment.sub_segments) >= 2:
+        return _cut_pcm_subsegments(segment)
+    dip_halves = _cut_pcm_dip_halves(segment)
+    if dip_halves:
+        return dip_halves
+    mid_ms = segment.start_ms + (segment.end_ms - segment.start_ms) // 2
+    return _write_pcm_slices(
+        segment,
+        ((segment.start_ms, mid_ms), (mid_ms, segment.end_ms)),
+        "oom",
+        contiguous_to_end=True,
+    )
 
 
 def transcribe_prepared_segments(
@@ -1523,7 +1833,65 @@ def transcribe_prepared_segments(
     for segment in prepared:
         try:
             item = backend.transcribe_segment(segment.path, segment.duration_s)
+        except DecodeIncomplete as exc:
+            split_segments: tuple[_PreparedSpeechSegment, ...] = ()
+            if not isinstance(exc, DecoderContractError):
+                split_segments = (
+                    _cut_pcm_subsegments(segment)
+                    if len(segment.sub_segments) >= 2
+                    else _cut_pcm_dip_halves(segment)
+                )
+            if not split_segments:
+                failure = UnalignedSpeech(
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    reason=_failure_reason(exc),
+                )
+                if stop_on_failure:
+                    raise AsrProductionFailure(
+                        "draft/alignment", results, unaligned=(failure,)
+                    ) from exc
+                failures.append(failure)
+                continue
+            for sub in split_segments:
+                try:
+                    sub_item = backend.transcribe_segment(sub.path, sub.duration_s)
+                except Exception as sub_exc:
+                    failure = UnalignedSpeech(
+                        start_ms=sub.start_ms,
+                        end_ms=sub.end_ms,
+                        reason=_failure_reason(sub_exc),
+                    )
+                    if stop_on_failure:
+                        raise AsrProductionFailure(
+                            "draft/alignment", results, unaligned=(failure,)
+                        ) from sub_exc
+                    failures.append(failure)
+                    continue
+                results.append((sub, sub_item))
         except Exception as exc:
+            oom_halves: tuple[_PreparedSpeechSegment, ...] = ()
+            if _is_cuda_oom(exc):
+                _clear_cuda_cache()
+                oom_halves = _cut_pcm_oom_halves(segment)
+            if oom_halves:
+                for sub in oom_halves:
+                    try:
+                        sub_item = backend.transcribe_segment(sub.path, sub.duration_s)
+                    except Exception as sub_exc:
+                        failure = UnalignedSpeech(
+                            start_ms=sub.start_ms,
+                            end_ms=sub.end_ms,
+                            reason=_failure_reason(sub_exc),
+                        )
+                        if stop_on_failure:
+                            raise AsrProductionFailure(
+                                "draft/alignment", results, unaligned=(failure,)
+                            ) from sub_exc
+                        failures.append(failure)
+                        continue
+                    results.append((sub, sub_item))
+                continue
             failure = UnalignedSpeech(
                 start_ms=segment.start_ms,
                 end_ms=segment.end_ms,
@@ -1534,8 +1902,8 @@ def transcribe_prepared_segments(
                     "draft/alignment", results, unaligned=(failure,)
                 ) from exc
             failures.append(failure)
-            continue
-        results.append((segment, item))
+        else:
+            results.append((segment, item))
     return tuple(results), tuple(failures)
 
 
@@ -1619,6 +1987,22 @@ def _failure_reason(exc: Exception, *, limit: int = 1_024) -> str:
     return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
 
 
+def _producer_admission_policy(
+    has_real_backend: bool,
+    context_grouping: bool,
+    validate_hard_segments: bool,
+) -> str | None:
+    """Shared cache-key policy ensuring validated and validator-off runs stay isolated."""
+    parts: list[str] = []
+    if has_real_backend:
+        parts.append(ASR_COMPLETION_POLICY_ID if validate_hard_segments else COMPLETION_POLICY_ID)
+    if context_grouping:
+        parts.append(CONTEXT_GROUPING_POLICY_ID)
+    if not validate_hard_segments:
+        parts.append("validator-off")
+    return "+".join(parts) if parts else None
+
+
 def _segment_origin(
     segment: _PreparedSpeechSegment,
     draft: SegmentTranscript,
@@ -1652,7 +2036,7 @@ def _segment_origin(
             )
             for word in selected.words
         ),
-        escalated=decision.escalate,
+        escalated=False if outcome == "validator-disabled" else decision.escalate,
         route_reason=decision.reason,
         outcome=outcome,
         validator=validator,
@@ -1667,6 +2051,7 @@ def _validate_hard_segments(
     validator_factory: Callable[[], SoraniValidator],
     *,
     stop_on_failure: bool = False,
+    enabled: bool = True,
 ) -> tuple[
     tuple[tuple[_PreparedSpeechSegment, SegmentTranscript], ...],
     str | None,
@@ -1685,6 +2070,16 @@ def _validate_hard_segments(
         for index, (segment, item) in enumerate(results)
     )
     decisions = select_for_validation(scores)
+    if not enabled:
+        return (
+            tuple(results),
+            None,
+            (),
+            tuple(
+                _segment_origin(segment, item, item, decision, "validator-disabled")
+                for (segment, item), decision in zip(results, decisions, strict=True)
+            ),
+        )
     if not any(decision.escalate for decision in decisions):
         return (
             tuple(results),
@@ -1787,13 +2182,21 @@ class WslOmniAsrProducer:
         validator_model_dir: Path | None = None,
         context_grouping: bool = False,
         fused_checkpoint: Path | None = None,
+        strict_runtime: bool = True,
+        validate_hard_segments: bool = True,
     ) -> None:
         if type(context_grouping) is not bool:
             raise ValueError("ASR context grouping must be a boolean")
+        if type(validate_hard_segments) is not bool:
+            raise ValueError("ASR validator toggle must be a boolean")
         if lora_adapter is not None and fused_checkpoint is not None:
             raise ValueError(
                 "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, "
                 "not both"
+            )
+        if not validate_hard_segments and validator_model_dir is not None:
+            raise ValueError(
+                "cannot pass a validator_model_dir when validate_hard_segments is False"
             )
         self.distro = distro
         self.interpreter = interpreter
@@ -1802,6 +2205,8 @@ class WslOmniAsrProducer:
         self.fused_checkpoint = Path(fused_checkpoint) if fused_checkpoint is not None else None
         self.validator_model_dir = validator_model_dir
         self.context_grouping = context_grouping
+        self.strict_runtime = strict_runtime
+        self.validate_hard_segments = validate_hard_segments
         self._receipt_distro: str | None = None
 
     @property
@@ -1822,11 +2227,11 @@ class WslOmniAsrProducer:
     @property
     def admission_policy(self) -> str:
         """The source-bound worker uses the same canonical completion contract."""
-        return (
-            f"{ASR_COMPLETION_POLICY_ID}+{CONTEXT_GROUPING_POLICY_ID}"
-            if self.context_grouping
-            else ASR_COMPLETION_POLICY_ID
+        policy = _producer_admission_policy(
+            True, self.context_grouping, self.validate_hard_segments
         )
+        assert policy is not None
+        return policy
 
     def _prefix(self) -> list[str]:
         selected_distro = self._receipt_distro or self.distro
@@ -1858,6 +2263,21 @@ class WslOmniAsrProducer:
                 )
             return configured_python, self._wsl_path(source)
 
+        if not self.strict_runtime:
+            if configured_source:
+                source = Path(configured_source)
+            elif (checkout_source / "hawedit").is_dir():
+                source = checkout_source
+            else:
+                raise RuntimeError(
+                    "HAWEDIT_WSL_SOURCE must be set outside a source checkout for plain WSL"
+                )
+            discovered_python = _discover_plain_wsl_python(
+                distro=self.distro,
+                executable=self.wsl_executable,
+            )
+            return discovered_python, self._wsl_path(source)
+
         try:
             receipt = load_wsl_runtime_receipt(
                 distro=self.distro,
@@ -1886,42 +2306,58 @@ class WslOmniAsrProducer:
         if self.context_grouping:
             speech_segments = _contextual_speech_regions(speech_segments)
         prepared = _cut_speech_regions(audio_path, speech_segments, work_dir, ffmpeg)
-        if self.validator_model_dir is not None:
-            validator_model_dir = self.validator_model_dir
+        validator_access: Any
+        if self.validate_hard_segments:
+            if self.validator_model_dir is not None:
+                validator_model_dir = self.validator_model_dir
+            else:
+                # `assert_available()` includes loader importability in the *calling* runtime.
+                # That is correct for QwenSoraniValidator's local path, but this producer loads
+                # qwen-asr inside the receipt-verified WSL generation. On Windows the checkpoint
+                # can therefore be exact and runnable in WSL while intentionally not importable
+                # on the host. Resolve only the registered host checkpoint path here; the held
+                # access context below still verifies every byte before the WSL worker sees it.
+                validator_entry = resolve_role(
+                    VALIDATOR_MODEL_ID,
+                    frozenset({"asr_validator"}),
+                    "the WSL ASR validator",
+                )
+                validator_model_dir = ModelStore().path_for(validator_entry)
+            validator_access = verified_checkpoint_access(VALIDATOR_MODEL_ID, validator_model_dir)
         else:
-            # `assert_available()` includes loader importability in the *calling* runtime.
-            # That is correct for QwenSoraniValidator's local path, but this producer loads
-            # qwen-asr inside the receipt-verified WSL generation. On Windows the checkpoint
-            # can therefore be exact and runnable in WSL while intentionally not importable
-            # on the host. Resolve only the registered host checkpoint path here; the held
-            # access context below still verifies every byte before the WSL worker sees it.
-            validator_entry = resolve_role(
-                VALIDATOR_MODEL_ID,
-                frozenset({"asr_validator"}),
-                "the WSL ASR validator",
-            )
-            validator_model_dir = ModelStore().path_for(validator_entry)
+            validator_access = nullcontext(None)
         # Windows msvcrt locks and Linux fcntl locks do not interoperate on DrvFS. Hold the host
         # shared lease for the complete WSL subprocess so the host fetcher's exclusive publisher
         # cannot rename this checkpoint while the worker independently verifies and constructs it.
-        with verified_checkpoint_access(
-            VALIDATOR_MODEL_ID, validator_model_dir
-        ) as verified_validator_dir:
+        with validator_access as verified_validator_dir:
             request_path = work_dir / "omni-asr-request.json"
             output_path = work_dir / "omni-asr-worker-output.json"
-            request = {
+            request: dict[str, Any] = {
                 "schema_version": 2,
                 "media_id": media_id,
-                "validator_model_dir": self._wsl_path(verified_validator_dir),
                 "segments": [
                     {
                         "path": segment.path.name,
                         "start_ms": segment.start_ms,
                         "end_ms": segment.end_ms,
+                        **(
+                            {
+                                "sub_segments": [
+                                    {"start_ms": sub_start, "end_ms": sub_end}
+                                    for sub_start, sub_end in segment.sub_segments
+                                ]
+                            }
+                            if len(segment.sub_segments) >= 2
+                            else {}
+                        ),
                     }
                     for segment in prepared
                 ],
             }
+            if verified_validator_dir is not None:
+                request["validator_model_dir"] = self._wsl_path(verified_validator_dir)
+            else:
+                request["validate_hard_segments"] = False
             if self.lora_adapter is not None:
                 # Only present for an adapted run, so an unadapted request stays
                 # byte-identical to the one D-136's resume check compares against. Its
@@ -1962,11 +2398,15 @@ class WslOmniAsrProducer:
             wsl_request = self._wsl_path(request_path)
             wsl_output = self._wsl_path(output_path)
             env_args = ["env", "PYTHONDONTWRITEBYTECODE=1", f"PYTHONPATH={wsl_source}"]
-            for var in (
+            forwarded_vars = [
                 "HAWEDIT_ASR_LLM_DEVICE",
                 "HAWEDIT_ASR_CTC_DEVICE",
                 "HAWEDIT_ASR_VALIDATOR_DEVICE",
-            ):
+                "HAWEDIT_ASR_MIN_FREE_GPU_GIB",
+            ]
+            if not self.strict_runtime:
+                forwarded_vars.append("CUDA_VISIBLE_DEVICES")
+            for var in forwarded_vars:
                 val = os.environ.get(var)
                 if val:
                     env_args.append(f"{var}={val}")
@@ -2018,10 +2458,14 @@ def create_omni_asr_producer(
     distro: str | None = None,
     lora_adapter: Path | None = None,
     fused_checkpoint: Path | None = None,
+    strict_runtime: bool | None = None,
+    validate_hard_segments: bool = False,
 ) -> CanonicalTranscriptProducer:
     """Choose direct Linux inference or the WSL bridge without hiding that decision."""
     if runtime not in {"auto", "local", "wsl"}:
         raise ValueError("OmniASR runtime must be one of: auto, local, wsl")
+    if type(validate_hard_segments) is not bool:
+        raise ValueError("ASR validator toggle must be a boolean")
     if lora_adapter is not None and fused_checkpoint is not None:
         raise ValueError(
             "a fused checkpoint already contains its fine-tune; pass it or a LoRA adapter, not both"
@@ -2034,18 +2478,37 @@ def create_omni_asr_producer(
         # Same early refusal for a missing or non-allowlisted .pt (D-331).
         fused_checkpoint_asset(Path(fused_checkpoint))
     use_wsl = runtime == "wsl" or (runtime == "auto" and os.name == "nt")
+    use_strict = strict_runtime_enabled(strict=strict_runtime)
     if fused_checkpoint is not None:
         return (
             WslOmniAsrProducer(
-                distro=distro, fused_checkpoint=fused_checkpoint, context_grouping=True
+                distro=distro,
+                fused_checkpoint=fused_checkpoint,
+                context_grouping=True,
+                strict_runtime=use_strict,
+                validate_hard_segments=validate_hard_segments,
             )
             if use_wsl
-            else OmniAsrProducer(fused_checkpoint=fused_checkpoint, context_grouping=True)
+            else OmniAsrProducer(
+                fused_checkpoint=fused_checkpoint,
+                context_grouping=True,
+                validate_hard_segments=validate_hard_segments,
+            )
         )
     return (
-        WslOmniAsrProducer(distro=distro, lora_adapter=lora_adapter, context_grouping=True)
+        WslOmniAsrProducer(
+            distro=distro,
+            lora_adapter=lora_adapter,
+            context_grouping=True,
+            strict_runtime=use_strict,
+            validate_hard_segments=validate_hard_segments,
+        )
         if use_wsl
-        else OmniAsrProducer(lora_adapter=lora_adapter, context_grouping=True)
+        else OmniAsrProducer(
+            lora_adapter=lora_adapter,
+            context_grouping=True,
+            validate_hard_segments=validate_hard_segments,
+        )
     )
 
 

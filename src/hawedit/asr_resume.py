@@ -8,19 +8,23 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import sys
+import wave
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
 
 from hawedit.asr import (
+    _FUSED_HELD_ASSETS,
     DEFAULT_ASR_DEVICE,
     VALIDATOR_MODEL_ID,
     OmniSegmentBackend,
     SegmentTranscript,
     SoraniValidator,
     _PreparedSpeechSegment,
+    silence_dip_split_ms,
 )
 from hawedit.asr_completion import COMPLETION_POLICY_ID
 from hawedit.models import ModelStore
@@ -159,11 +163,16 @@ class OperationJournal:
         audio_inputs = self.binding["inputs"].get("audio")
         if audio_inputs is not None:
             matches = [item for item in audio_inputs if item["path"] == resolved_path]
-            if (
-                len(matches) != 1
-                or matches[0]["sha256"] != audio_sha256
-                or matches[0]["end_ms"] - matches[0]["start_ms"] != round(duration_s * 1000)
-            ):
+            if len(matches) == 1:
+                if matches[0]["sha256"] != audio_sha256 or matches[0]["end_ms"] - matches[0][
+                    "start_ms"
+                ] != round(duration_s * 1000):
+                    raise RuntimeError(
+                        "ASR checkpoint bound audio changed; recovery reconciliation required"
+                    )
+            elif not matches:
+                self._assert_bound_subsegment(path, duration_s, audio_inputs)
+            else:
                 raise RuntimeError(
                     "ASR checkpoint bound audio changed; recovery reconciliation required"
                 )
@@ -175,6 +184,99 @@ class OperationJournal:
             "text": text,
             "binding_sha256": self.binding_sha256,
         }
+
+    def _assert_bound_subsegment(
+        self,
+        path: Path,
+        duration_s: float,
+        audio_inputs: list[Mapping[str, Any]],
+    ) -> None:
+        match = re.fullmatch(r"(.+)-(sub|dip)-(\d+)\.wav", path.name)
+        if match is None:
+            raise RuntimeError(
+                "ASR checkpoint bound audio changed; recovery reconciliation required"
+            )
+        parent_stem, kind, sub_idx = match.group(1), match.group(2), int(match.group(3))
+        resolved_dir = path.resolve().parent
+        parent_matches = [
+            item
+            for item in audio_inputs
+            if Path(str(item["path"])).parent == resolved_dir
+            and Path(str(item["path"])).stem == parent_stem
+        ]
+        if len(parent_matches) != 1:
+            raise RuntimeError(
+                "ASR checkpoint bound audio changed; recovery reconciliation required"
+            )
+        parent = parent_matches[0]
+        parent_path = Path(str(parent["path"]))
+        if _file_digest(parent_path) != parent["sha256"]:
+            raise RuntimeError(
+                "ASR checkpoint bound audio changed; recovery reconciliation required"
+            )
+        split_ms = silence_dip_split_ms(parent_path) if kind == "dip" else None
+        if kind == "dip" and (
+            split_ms is None or parent.get("sub_segments") or sub_idx not in (0, 1)
+        ):
+            raise RuntimeError(
+                "ASR checkpoint bound audio changed; recovery reconciliation required"
+            )
+        with wave.open(str(parent_path), "rb") as parent_wav, wave.open(str(path), "rb") as sub_wav:
+            params = (
+                parent_wav.getnchannels(),
+                parent_wav.getsampwidth(),
+                parent_wav.getframerate(),
+                parent_wav.getcomptype(),
+            )
+            sub_params = (
+                sub_wav.getnchannels(),
+                sub_wav.getsampwidth(),
+                sub_wav.getframerate(),
+                sub_wav.getcomptype(),
+            )
+            if params != (1, 2, 16_000, "NONE") or params != sub_params:
+                raise RuntimeError(
+                    "ASR checkpoint bound audio changed; recovery reconciliation required"
+                )
+            total_frames = parent_wav.getnframes()
+            if kind == "sub":
+                sub_segments = parent.get("sub_segments")
+                if not isinstance(sub_segments, list) or not 0 <= sub_idx < len(sub_segments):
+                    raise RuntimeError(
+                        "ASR checkpoint bound audio changed; recovery reconciliation required"
+                    )
+                sub = sub_segments[sub_idx]
+                if not isinstance(sub, Mapping) or int(sub["end_ms"]) - int(
+                    sub["start_ms"]
+                ) != round(duration_s * 1_000):
+                    raise RuntimeError(
+                        "ASR checkpoint bound audio changed; recovery reconciliation required"
+                    )
+                start_frame = max(
+                    0,
+                    round((int(sub["start_ms"]) - int(parent["start_ms"])) * 16_000 / 1_000),
+                )
+                end_frame = min(
+                    total_frames,
+                    round((int(sub["end_ms"]) - int(parent["start_ms"])) * 16_000 / 1_000),
+                )
+            else:
+                assert split_ms is not None
+                split_frame = max(0, min(total_frames, round(split_ms * 16)))
+                start_frame, end_frame = (
+                    (0, split_frame) if sub_idx == 0 else (split_frame, total_frames)
+                )
+                if round((end_frame - start_frame) * 1_000 / 16_000) != round(duration_s * 1_000):
+                    raise RuntimeError(
+                        "ASR checkpoint bound audio changed; recovery reconciliation required"
+                    )
+            parent_wav.setpos(start_frame)
+            expected_pcm = parent_wav.readframes(max(0, end_frame - start_frame))
+            actual_pcm = sub_wav.readframes(sub_wav.getnframes())
+        if actual_pcm != expected_pcm:
+            raise RuntimeError(
+                "ASR checkpoint bound audio changed; recovery reconciliation required"
+            )
 
     def load(self, operation: Mapping[str, object]) -> Any:
         if self._lease is None:
@@ -291,7 +393,7 @@ def worker_journal(
     root: Path,
     request_path: Path,
     prepared: Sequence[_PreparedSpeechSegment],
-    validator_path: Path,
+    validator_path: Path | None,
     model_identity: str | None,
 ) -> OperationJournal:
     """Production cache binding verifies current bytes before any cached operation is used."""
@@ -300,15 +402,23 @@ def worker_journal(
     parent = PrivateDirectory(root)
     freeze_fairseq2_asset_overrides()
     canonical_card = assert_omni_card_integrity()
+    is_fused = isinstance(model_identity, str) and model_identity.startswith("fused:")
     request_identity = hashlib.sha256(str(request_path.resolve()).encode("utf-8")).hexdigest()
     directory = parent.child(request_identity, create=True)
+    runtime_packages = (
+        ("torch", "qwen-asr", "omnilingual-asr", "fairseq2", "peft", "transformers")
+        if validator_path is not None
+        else ("torch", "omnilingual-asr", "fairseq2", "peft", "transformers")
+    )
     binding: dict[str, object] = {
         "request_path": str(request_path.resolve()),
         "request_sha256": _file_digest(request_path),
         "source_package_sha256": package_digest(),
         "adapter": model_identity,
         "completion_policy": COMPLETION_POLICY_ID,
-        "validator_completion_policy": QWEN_COMPLETION_POLICY_ID,
+        "validator_completion_policy": (
+            QWEN_COMPLETION_POLICY_ID if validator_path is not None else None
+        ),
         "canonical_card_sha256": _file_digest(canonical_card),
         "python": platform.python_version(),
         "runtime_prefix": sys.prefix,
@@ -326,10 +436,7 @@ def worker_journal(
             )
             for name in ("beamsearch.py", "model.py")
         },
-        "runtime": {
-            name: importlib.metadata.version(name)
-            for name in ("torch", "qwen-asr", "omnilingual-asr", "fairseq2", "peft", "transformers")
-        },
+        "runtime": {name: importlib.metadata.version(name) for name in runtime_packages},
         "devices": {
             name: os.environ.get(name, default)
             for name, default in (
@@ -344,12 +451,35 @@ def worker_journal(
                 "start_ms": item.start_ms,
                 "end_ms": item.end_ms,
                 "sha256": _file_digest(item.path),
+                **(
+                    {
+                        "sub_segments": [
+                            {"start_ms": s_start, "end_ms": s_end}
+                            for s_start, s_end in item.sub_segments
+                        ]
+                    }
+                    if len(item.sub_segments) >= 2
+                    else {}
+                ),
             }
             for item in prepared
         ],
-        "canonical_assets": [asdict(report) for report in assert_omni_asset_integrity()],
-        "validator": asdict(ModelStore().verify_checkpoint(VALIDATOR_MODEL_ID, validator_path)),
+        "canonical_assets": [
+            asdict(report)
+            for report in (
+                assert_omni_asset_integrity(assets=_FUSED_HELD_ASSETS)
+                if is_fused
+                else assert_omni_asset_integrity()
+            )
+        ],
+        "validator": (
+            asdict(ModelStore().verify_checkpoint(VALIDATOR_MODEL_ID, validator_path))
+            if validator_path is not None
+            else None
+        ),
     }
+    if validator_path is None:
+        binding["validator_mode"] = "off"
     # Asset reports contain Path instances; retain their actual paths in canonical JSON.
     binding = json.loads(json.dumps(binding, default=str))
     return OperationJournal(directory.path, binding)

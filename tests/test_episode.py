@@ -24,7 +24,7 @@ from hawedit.episode import (
     reconcile_episode_manifest,
     select_episode_plan,
 )
-from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import build_parser, run_pipeline
 from hawedit.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript, Word
 
@@ -88,7 +88,7 @@ def _make_dummy_candidate(
         title_ckb=f"سەردێڕی {cand_id}",
         description_ckb="وەسفی کورت",
         hashtags_ckb=("#کوردستان",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         payoff_strength=payoff_strength,
         ends_on_a_beat=True,
         reason_ckb="گرتەیەکی زۆر بەهێزە بۆ بڵاوکردنەوە",
@@ -322,7 +322,7 @@ def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path
     cand3 = Candidate("c3", "fixture", 100, 4_100, DiscoveryPath.VERBAL, rank=3, score=0.85)
 
     class MultiJudge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def __init__(self) -> None:
             self.calls: list[str] = []
@@ -348,7 +348,7 @@ def test_episode_cli_renders_distinct_eligible_clips_with_shared_ingest(tmp_path
                 title_ckb=f"سەردێڕی {request.candidate_id}",
                 description_ckb="وەسفی کورتی گرتەکە",
                 hashtags_ckb=("#کوردستان",),
-                judge="gemini-2.5-pro",
+                judge=KURDISH_EDITORIAL_JUDGE,
                 payoff_strength=0.85,
                 ends_on_a_beat=True,
                 reason_ckb="شیاوە بۆ بڵاوکردنەوە",
@@ -579,3 +579,41 @@ def test_episode_manifest_exposes_partial_failure_and_no_clip_outcome(tmp_path: 
     assert loaded_none.is_no_clip_outcome is True
     assert loaded_none.has_partial_failure is False
     assert len(loaded_none.rejected_items) == 3
+
+
+def test_episode_silence_tightening_uses_the_effective_output_clock(tmp_path: Path) -> None:
+    class OfflineJudge:
+        model_id = KURDISH_EDITORIAL_JUDGE
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            verdict = _make_dummy_candidate(
+                "trimmed", request.clip_in_ms, request.clip_out_ms, 0.95
+            )[2]
+            return replace(verdict, candidate_id=request.candidate_id)
+
+    candidate = Candidate("trimmed", "fixture", 100, 4100, DiscoveryPath.VERBAL, rank=1, score=0.95)
+    run = run_pipeline(
+        FIXTURE,
+        tmp_path / "trimmed",
+        media_id="fixture",
+        transcript=_a_transcript(),
+        discover=lambda _n: [candidate],
+        judge=OfflineJudge(),
+        auto_select=True,
+        judge_top_n=1,
+        min_clip_ms=1000,
+        max_clips=1,
+        silence_threshold_ms=200,
+        silence_target_gap_ms=80,
+        excise_fillers=False,
+    )
+    assert run.episode_manifest is not None
+    manifest = run.episode_manifest
+    assert manifest.reconciled
+    assert manifest.clips_count == 1
+    summary = manifest.clips[0]
+    measured_path = tmp_path / "trimmed" / summary.delivery_dir / f"{summary.clip_id}.measured.json"
+    measured = json.loads(measured_path.read_text(encoding="utf-8"))
+    assert summary.duration_ms < summary.out_ms - summary.in_ms
+    assert abs(summary.duration_ms - measured["video"]["duration_ms"]) <= 60
+    assert manifest.total_duration_ms == summary.duration_ms

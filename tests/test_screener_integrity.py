@@ -393,7 +393,12 @@ def test_shared_builder_routes_screening_through_explicit_transport(
         if "candidates" in document["generationConfig"]["responseSchema"]["properties"]:
             fields = {
                 "candidates": [
-                    {"in_ms": 100, "out_ms": 4100, "score": 0.9, "reason_ckb": fields["reason_ckb"]}
+                    {
+                        "start_sentence": 0,
+                        "end_sentence": 1,
+                        "score": 0.9,
+                        "reason_ckb": fields["reason_ckb"],
+                    }
                 ]
             }
         return json.dumps(

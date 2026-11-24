@@ -55,10 +55,10 @@ def test_caption_width_changed_font_context_remeasures(tmp_path: Path) -> None:
     target = tmp_path / "fonts"
     target.mkdir()
     selected = target / "selected.ttf"
-    shutil.copyfile(fonts / "NotoNaskhArabic-Regular.ttf", selected)
+    shutil.copyfile(fonts / "Vazirmatn.ttf", selected)
     text = "changed-local-font-negative"
     assert measure_rendered_caption_width(text, ffmpeg=binary, fonts_dir=target) > 0
-    shutil.copyfile(fonts / "Vazirmatn.ttf", selected)
+    shutil.copyfile(fonts / "NotoNaskhArabic-Regular.ttf", selected)
     with pytest.raises(CaptionVerificationError, match="measurement"):
         measure_rendered_caption_width(text, ffmpeg=binary, fonts_dir=target)
 

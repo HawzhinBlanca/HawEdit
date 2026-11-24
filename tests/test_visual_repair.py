@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,9 @@ from hawedit.visual_repair import (
 )
 
 
-def test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself() -> None:
+def test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself(
+    tmp_path: Path,
+) -> None:
     """VE-12: Repair allows only approved changes, cannot change meaning, and cannot approve itself.
 
     WHEN a repair is proposed, THE system SHALL allow only approved transformations,
@@ -86,7 +89,37 @@ def test_visual_repair_is_bounded_and_cannot_change_meaning_or_approve_itself() 
         status="needs_review",
     )
 
-    fixture_video = str(Path(__file__).parent / "fixtures" / "kurdish-speech-3cuts.mp4")
+    from hawedit.captions import find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    source_fixture = Path(__file__).parent / "fixtures" / "kurdish-speech-3cuts.mp4"
+    fixture_video = str(tmp_path / "repair-30s.mp4")
+    # This test exercises 30 seconds of repair decisions; provide that much real media.
+    subprocess.run(
+        [
+            str(ffmpeg),
+            "-nostdin",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(source_fixture),
+            "-t",
+            "30",
+            "-vf",
+            "scale=320:-2",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            fixture_video,
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
     sequence_damaged = RenderedSequenceContext(
         render_path=fixture_video,
         duration_ms=duration_ms,

@@ -13,12 +13,12 @@ import pytest
 from hawedit.clip import DiscoveryPath
 from hawedit.diarization import Segment
 from hawedit.discovery import Candidate
-from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import PipelineRun, StageSkipped, run_pipeline
 from hawedit.reframe import FocusPoint, SpeakerFocusPoint
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 
-FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/kurdish-speech-3cuts.mp4"
+FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/camera-face-mechanics.mp4"
 _TEXT = (
     "\u0695\u06c6\u0698\u0646\u0627\u0645\u06d5\u0648\u0627\u0646\u06cc "
     "\u06a9\u0648\u0631\u062f\u06cc. \u0644\u06d5 "
@@ -48,7 +48,7 @@ def _a_transcript() -> RawTranscript:
 
 
 class _Judge:
-    model_id = "gemini-2.5-pro"
+    model_id = KURDISH_EDITORIAL_JUDGE
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
         return JudgeVerdict(
@@ -431,3 +431,15 @@ def test_camera_parity_preserves_source_raw_and_private_review_contract(
         0,
         0.0,
     )
+
+
+def test_camera_contract_fixture_has_real_observed_faces() -> None:
+    from hawedit.measure import probe_face_tracking
+
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == (
+        "9079aecd0390a9ef593fb94b5b97b1b0d7c533679894e69c1395d8a5266809a0"
+    )
+    measured = probe_face_tracking(FIXTURE)
+    assert measured.face_detected_share >= 0.90
+    assert measured.first_frame_face_share is not None
+    assert measured.first_frame_face_share >= 0.05

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hawedit.artifact_bundle import ArtifactBundle
-from hawedit.judge import BilledCall
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, BilledCall
 from hawedit.pipeline import (
     _prepare_selection,
     _raw_text_for_words,
@@ -410,7 +410,7 @@ def test_artifact_mutation_invalidates_approval(tmp_path: Path) -> None:
 
 def test_uncertain_external_call_is_not_blindly_rebilled() -> None:
     """RB-17: Tracked external calls record retry parameters."""
-    call1 = BilledCall("gemini-2.5-pro", 100, 0.001, "editorial")
+    call1 = BilledCall(KURDISH_EDITORIAL_JUDGE, 100, 0.001, "editorial")
     assert call1.cost_usd_estimate > 0
 
 

@@ -173,6 +173,7 @@ class UploadStore:
         self.reservation_seconds = reservation_seconds
         self._lock = threading.Lock()
         self._active: set[str] = set()
+        self._terminal_ticket_cache: dict[str, tuple[int, int, int, int, int]] = {}
         self._containers = {
             name: self._storage.child(name, create=True)
             for name in ("tickets", "incoming", "sources")
@@ -259,14 +260,46 @@ class UploadStore:
 
     def _reserved(self) -> int:
         self._verify()
+        now = time.time()
         total = 0
+        tickets_dir = self._containers["tickets"]
         for path in (self.root / "tickets").glob("*.json"):
-            record = self._record(path.stem)
+            stem = path.stem
+            cached = self._terminal_ticket_cache.get(stem)
+            if cached is not None:
+                try:
+                    info = path.lstat()
+                    identity = (
+                        info.st_dev,
+                        info.st_ino,
+                        info.st_size,
+                        info.st_mtime_ns,
+                        info.st_nlink,
+                    )
+                    if identity == cached and info.st_nlink == 1:
+                        tickets_dir.member_identity(path.name)
+                        continue
+                except (OSError, StudioStorageError):
+                    self._terminal_ticket_cache.pop(stem, None)
+            record = self._record(stem)
             if (
                 record.get("state") in {"reserved", "receiving"}
-                and record.get("expires_at", 0) > time.time()
+                and record.get("expires_at", 0) > now
             ):
                 total += record["size"]
+            else:
+                try:
+                    info = path.lstat()
+                    if info.st_nlink == 1:
+                        self._terminal_ticket_cache[stem] = (
+                            info.st_dev,
+                            info.st_ino,
+                            info.st_size,
+                            info.st_mtime_ns,
+                            info.st_nlink,
+                        )
+                except OSError:
+                    pass
         return total
 
     def begin(self, filename: str, size: int) -> dict[str, Any]:
@@ -277,14 +310,16 @@ class UploadStore:
             if size + self._reserved() + self.reserve_bytes > shutil.disk_usage(self.root).free:
                 raise UploadError("Insufficient free storage space for this upload")
             upload_id = uuid.uuid4().hex
+            now = time.time()
+            expires_at = now + self.reservation_seconds
             record = {
                 "upload_id": upload_id,
                 "filename": filename,
                 "size": size,
                 "suffix": suffix,
                 "state": "reserved",
-                "created_at": time.time(),
-                "expires_at": time.time() + self.reservation_seconds,
+                "created_at": now,
+                "expires_at": expires_at,
             }
             self._write(record)
         return {"upload_id": upload_id, "size": size, "expires_at": record["expires_at"]}

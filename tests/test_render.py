@@ -37,6 +37,7 @@ from hawedit.brand import BrandKit, BrandKitError, ProgressBarConfig
 from hawedit.captions import build_ass, ffprobe_for, find_ffmpeg
 from hawedit.clip import Clip, ClipTranscript, DiscoveryPath, Editorial, Output, Provenance, Qc
 from hawedit.ingest import probe_duration_ms
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.render import (
     DELIVERY_AUDIO_RATE,
     DELIVERY_COLOR_ARGS,
@@ -131,7 +132,7 @@ def _clip(*, qc: Qc | None = None, complete: bool = True) -> Clip:
             misleading_edit_risk=0.05,
             cultural_landing=0.7,
             narrative_role="payoff",
-            judge="gemini-2.5-pro",
+            judge=KURDISH_EDITORIAL_JUDGE,
         ),
         output=Output(
             title_ckb=CAPTION_TEXT,
@@ -1654,15 +1655,16 @@ def test_crop_filter_with_per_shot_boxes_emits_sendcmd_and_adapts_wide_shot() ->
         clip_in_ms=0,
     )
     assert chain.startswith("sendcmd=c='"), chain
-    assert "5.000 crop w" in chain
-    assert "5.000 crop h" in chain
+    # D-360: per_shot_boxes switches snap -2 ms early (4.998 s) matching _interpolated().
+    assert "4.998 crop w" in chain
+    assert "4.998 crop h" in chain
     # Base 1080p vertical crop width is 606.
     # Wide shot (h=140) triggers zoom toward TARGET_FACE_HEIGHT_SHARE (0.15):
     # share = 140/1080 = 0.1296 -> zoom = 0.15/0.1296 = 1.157 -> crop w 522, crop h 932
-    assert "5.000 crop w 522" in chain
-    assert "5.000 crop h 932" in chain
-    # Stepped eye line is present in y expression
-    assert "lt(t\\,5.000)" in chain
+    assert "4.998 crop w 522" in chain
+    assert "4.998 crop h 932" in chain
+    # Stepped eye line is present in y expression (also snapped -2 ms early)
+    assert "lt(t\\,4.998)" in chain
 
     # If face is smaller (e.g. h=90), zoom hits MAX_VERTICAL_ZOOM (1.5x cap):
     # 606/1.5 = 404, 1080/1.5 = 720
@@ -1671,8 +1673,8 @@ def test_crop_filter_with_per_shot_boxes_emits_sendcmd_and_adapts_wide_shot() ->
         (5000, 12000, 360, 90),
     )
     chain_capped = crop_filter(1920, 1080, focus_x=960, per_shot_boxes=wide_shots, clip_in_ms=0)
-    assert "5.000 crop w 404" in chain_capped
-    assert "5.000 crop h 720" in chain_capped
+    assert "4.998 crop w 404" in chain_capped
+    assert "4.998 crop h 720" in chain_capped
 
 
 @pytest.mark.parametrize(
@@ -2710,3 +2712,206 @@ def test_production_profile_rejects_music_bed(tmp_path: Path) -> None:
             deliverable=True,
             music_bed_path=music,
         )
+
+
+@needs_ffmpeg
+def test_cut_audio_fades_eliminate_splice_boundary_discontinuity_without_av_drift(
+    tmp_path: Path,
+) -> None:
+    """D8 AC2. 30 ms qsin fades cut ±1 ms splice-boundary peak >= 10x with <= 1 ms PCM drift."""
+    import wave
+
+    import numpy as np
+
+    from hawedit.silence import silence_trim_filter
+
+    binary = find_ffmpeg()
+    assert binary is not None
+
+    src_mp4 = tmp_path / "tone.mkv"
+    # Continuous 437 Hz tone (non-zero crossing at 0.800s and 1.100s) with PCM (zero AAC priming)
+    subprocess.run(
+        [
+            str(binary),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x180:r=25:d=2.2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=437:sample_rate=48000:duration=2.2",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "pcm_s16le",
+            "-y",
+            str(src_mp4),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30.0,
+    )
+
+    retained = ((0, 800), (1100, 1900))
+    faded_graph = silence_trim_filter(retained)
+    unfaded_graph = (
+        "[0:v]trim=start=0.000:end=0.800,setpts=PTS-STARTPTS[v0];"
+        "[0:a]atrim=start=0.000:end=0.800,asetpts=PTS-STARTPTS[a0];"
+        "[0:v]trim=start=1.100:end=1.900,setpts=PTS-STARTPTS[v1];"
+        "[0:a]atrim=start=1.100:end=1.900,asetpts=PTS-STARTPTS[a1];"
+        "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_tightened][a_tightened]"
+    )
+    assert "afade=" in faded_graph
+
+    def _decode_spliced_wav(graph: str, name: str) -> tuple[np.ndarray[Any, Any], int]:
+        wav_p = tmp_path / name
+        subprocess.run(
+            [
+                str(binary),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(src_mp4),
+                "-filter_complex",
+                f"{graph};[v_tightened]nullsink;[a_tightened]aresample=48000[ao]",
+                "-map",
+                "[ao]",
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "48000",
+                "-y",
+                str(wav_p),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30.0,
+        )
+        with wave.open(str(wav_p), "rb") as wf:
+            sr = wf.getframerate()
+            pcm = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).astype(float)
+        return pcm, sr
+
+    pcm_raw, sr = _decode_spliced_wav(unfaded_graph, "unfaded.wav")
+    pcm_fade, sr_f = _decode_spliced_wav(faded_graph, "faded.wav")
+    assert sr == sr_f == 48000
+    dur_raw_ms = len(pcm_raw) * 1000.0 / sr
+    dur_fade_ms = len(pcm_fade) * 1000.0 / sr_f
+    assert abs(dur_fade_ms - dur_raw_ms) <= 1.0, (
+        f"fade changed PCM duration: {dur_fade_ms:.2f} ms vs {dur_raw_ms:.2f} ms"
+    )
+    assert abs(dur_fade_ms - 1600.0) <= 30.0
+
+    # Cut is at 800 ms; AAC/atrim framing alignment sits within a few samples of 800 ms,
+    # check +-1 ms window around sample idx = int(0.800 * sr)
+    cut_idx = int(0.800 * sr)
+    half_win = sr // 1000  # 48 samples = +-1 ms
+    peak_raw = float(np.abs(pcm_raw[cut_idx - half_win : cut_idx + half_win]).max())
+    peak_fade = float(np.abs(pcm_fade[cut_idx - half_win : cut_idx + half_win]).max())
+    assert peak_raw > 3000.0
+    ratio = peak_raw / max(peak_fade, 1.0)
+    assert ratio >= 10.0, (
+        f"cut boundary +-1ms peak ratio {ratio:.1f}x < 10x (raw={peak_raw}, fade={peak_fade})"
+    )
+
+
+@needs_ffmpeg
+def test_render_clip_cut_fades_preserve_two_pass_loudness_and_span(tmp_path: Path) -> None:
+    """D8 AC3. Deliverable two-pass render with multi-span SilencePlan preserves loudness & span."""
+    work = tmp_path / "deliverable_cut_fades"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip_faded.mp4"
+
+    clip = _clip()
+    duration = clip.out_ms - clip.in_ms
+    plan = SilencePlan(
+        clip_in_ms=clip.in_ms,
+        clip_out_ms=clip.out_ms,
+        threshold_ms=400,
+        target_gap_ms=100,
+        retained_intervals_ms=((0, 800), (1300, duration)),
+        removed_intervals_ms=((800, 1300),),
+        total_removed_ms=500,
+    )
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        deliverable=True,
+        silence_plan=plan,
+    )
+    assert Path(result.path).is_file()
+    assert result.requested_duration_ms == duration - 500
+    assert abs(result.measured_duration_ms - (duration - 500)) <= 50
+    assert result.loudness_pass1 is not None and result.loudness_pass2 is not None
+    assert result.loudness_pass2.normalization_type == "linear"
+    assert result.loudness_pass2.output_tp is not None
+    assert result.loudness_pass2.output_tp <= -1.0 + 1e-3
+    assert result.loudness_pass2.output_i is not None
+    assert -24.0 <= result.loudness_pass2.output_i <= -14.0
+    assert abs(result.loudness_pass2.input_i - result.loudness_pass1.input_i) <= 0.25
+
+
+@needs_ffmpeg
+def test_render_clip_spills_long_filtergraph_to_script_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long crop/eased-push filtergraphs (>8k chars) use -filter_script:v and clean up."""
+    work = tmp_path / "long_filter_script"
+    work.mkdir(parents=True, exist_ok=True)
+    ass = work / "captions.ass"
+    ass.write_text(build_ass((_sentence(),)), encoding="utf-8")
+    out = work / "clip_script.mp4"
+
+    clip = _clip()
+    dense_push = eased_push_schedule(((0, clip.out_ms - clip.in_ms),), step_ms=5)
+
+    real_run = subprocess.run
+    seen_cmds: list[list[str]] = []
+
+    def _spy_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        seen_cmds.append([str(part) for part in cmd])
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("hawedit.render.subprocess.run", _spy_run)
+
+    result = render_clip(
+        clip,
+        FIXTURE,
+        ass,
+        FONTS,
+        out,
+        SOURCE_WIDTH,
+        SOURCE_HEIGHT,
+        punch_ins=dense_push,
+    )
+    assert Path(result.path).is_file()
+    assert any("-filter_script:v" in cmd for cmd in seen_cmds)
+    assert list(work.glob("*.filtergraph.txt")) == []
+
+
+def test_crop_filter_snaps_instant_shot_cut_before_new_shot_frame() -> None:
+    """Instant 1 ms shot-cut steps from stabilize() must switch 2 ms before cut_ms, never ramp."""
+    chain = crop_filter(
+        2560,
+        1440,
+        focus_points=((0, 420), (1_246, 420), (1_247, 1_280), (5_000, 1_280)),
+        clip_in_ms=0,
+    )
+    # 2560x1440 -> crop_w=810: x1=420-405=15, x2=1280-405=875.
+    # Step must switch before t=1.246 (at 1.244) with no 1 ms linear ramp leaving frame 1.246 at x1.
+    assert "if(lt(t\\,1.244)\\,15\\," in chain
+    assert "/0.001)" not in chain
+    assert "lt(t\\,1.247)" not in chain

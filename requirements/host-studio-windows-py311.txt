@@ -5,7 +5,7 @@
 # target-python: 3.11
 # extras: media,gpu,models,diarization,agentic,cloud
 # project-version: 0.1.0
-# contract-sha256: f86e0b70fc4dfd2359c274c3cac94b9541b29c98df70fe282ba4ae6487c377a4
+# contract-sha256: 2adf75be9e70d3b5b2a9223fa5dd045f6bd869ad6bfdad754d3b7ed5b9ee1aca
 # resolver: uv==0.11.26
 # exclude-newer: 2026-08-13T00:00:00Z
 # torch-backend: cu130
@@ -193,6 +193,8 @@ pyannoteai-sdk==0.4.0 --hash=sha256:36a0175978e0427f27843d690eb4d1e8ec839009ea54
 pyasn1==0.6.4 --hash=sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b
 # selected wheel https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl
 pyasn1-modules==0.4.2 --hash=sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a
+# selected wheel https://files.pythonhosted.org/packages/33/fd/8762f7ee3e4e4be6d1d846cffb4916dd9bb02b2f800d3603718a0efe494c/pybind11-3.1.0-py3-none-any.whl
+pybind11==3.1.0 --hash=sha256:b8488090f8acffbcb6b5d6a85571a6827a0a2981ffb75e5a0b27b87c4a6b7dd0
 # selected wheel https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
 pycparser==3.0 --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
 # selected wheel https://files.pythonhosted.org/packages/fd/7b/122376b1fd3c62c1ed9dc80c931ace4844b3c55407b6fb2d199377c9736f/pydantic-2.13.4-py3-none-any.whl
@@ -237,6 +239,8 @@ setuptools==84.0.0 --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d13
 silero-vad==5.1.2 --hash=sha256:93b41953d7774b165407fda6b533c119c5803864e367d5034dc626c82cfdf661
 # selected wheel https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl
 six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+# selected wheel https://files.pythonhosted.org/packages/a0/9b/7c8274d55cc7eb4c3bab17e490b854b2bc636cd8312e2221750da3c2ef35/skia_python-144.0.post2-cp311-cp311-win_amd64.whl
+skia-python==144.0.post2 --hash=sha256:e95ab76b3e1859e3dd5402e5ccba1c1a539c5d37a082a3a62e16261a4bebc3f6
 # selected wheel https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl
 sortedcontainers==2.4.0 --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
 # selected wheel https://files.pythonhosted.org/packages/7a/f0/04d2ac5ad66f3d31278f37064ed5f5ef3fe653f7bdaa67036663f223d186/sqlalchemy-2.0.52-cp311-cp311-win_amd64.whl
@@ -273,6 +277,8 @@ typing-extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539
 typing-inspection==0.4.4 --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
 # selected wheel https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl
 tzdata==2026.3 --hash=sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931
+# selected wheel https://files.pythonhosted.org/packages/96/84/6c63afa111bcaed79ac011fc112c4a8d8cb60904ff5999f2e435bb79db4a/uharfbuzz-0.56.0-cp310-abi3-win_amd64.whl
+uharfbuzz==0.56.0 --hash=sha256:0e7c628f327ce862a8606de93766f001704a5201e97d598686730ef2c1605c03
 # selected wheel https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl
 urllib3==2.7.0 --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
 # selected wheel https://files.pythonhosted.org/packages/7b/b1/ba0ce59681db38c320a6d485f95a497ddea20356d9a9e8e70615ddd867b9/websockets-17.0.1-cp311-cp311-win_amd64.whl

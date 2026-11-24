@@ -24,7 +24,7 @@ from hawedit.asr import SpeechSegment
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import Qc
 from hawedit.events import RunEvent, RunEventLog, RunState, discard
-from hawedit.judge import JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeVerdict
 from hawedit.pipeline import PipelineRun, StageSkipped, run_pipeline
 from hawedit.transcripts import AsrProvenance, RawTranscript, Word
 
@@ -67,7 +67,7 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
         title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
         description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
         hashtags_ckb=("#کوردی",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=clip_in_ms,
         clip_out_ms=clip_out_ms,
     )

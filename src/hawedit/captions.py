@@ -27,6 +27,7 @@ a viewer must see what was said, spelled as the speaker's transcript spells it.
 
 from __future__ import annotations
 
+import math
 import re
 import stat
 import threading
@@ -47,7 +48,10 @@ from hawedit.transcripts import Word
 __all__ = [
     "ASS_ENCODING_AUTO",
     "BROADCAST_THEME",
+    "CALLOUT_CARD_FONT_SIZE",
+    "CALLOUT_CARD_THEME",
     "DEFAULT_BOTTOM_CAPTION_BAND",
+    "DEFAULT_CAPTION_FONT",
     "DEFAULT_MAX_CHARS_PER_LINE",
     "DEFAULT_MAX_LINE_WIDTH_PX",
     "DEFAULT_PLATE_COLOUR",
@@ -100,6 +104,7 @@ __all__ = [
     "contrast_ratio",
     "decode_to_rgb",
     "event_needs_plate",
+    "extract_kurdish_callout_cards",
     "find_ffmpeg",
     "intersects_caption_band",
     "measure_rendered_caption_width",
@@ -121,6 +126,10 @@ __all__ = [
 # into. A font can contain Arabic kaf/yeh and still lack Kurdish `ک` U+06A9 / `ی` U+06CC;
 # measured, libass then split `کوردی` across fallback fonts (D-163).
 KURDISH_REQUIRED_GLYPHS: Final[frozenset[str]] = frozenset("ڕڵۆێچژپگە" + "هھ" + "کی")
+
+# Bundle-first caption font family covering Sorani Kurdish, Latin/brand tokens, and numerals
+# at matched x-height and stroke weight without host fontconfig fallback (D-349).
+DEFAULT_CAPTION_FONT: Final = "Vazirmatn"
 
 # Caption line width. Long RTL lines are hard to read on a vertical crop; this is a
 # reporting default, adjustable per output format.
@@ -181,7 +190,7 @@ class CaptionStyle(Enum):
 # viewer reads ahead of the audio — the failure that made every earlier run of this pipeline
 # unusable for social delivery even though every timestamp in it was correct.
 POPUP_MAX_WORDS: Final = 3
-POPUP_MAX_CHARS: Final = 22
+POPUP_MAX_CHARS: Final = 20
 POPUP_MAX_WIDTH_PX: Final = 700
 POPUP_MAX_MS: Final = 2_000
 # A pause inside one popup leaves it on screen with nothing being said. Break there instead:
@@ -237,17 +246,23 @@ class CaptionTheme:
         margin_v: int | None = None,
         primary: str | None = None,
         secondary: str | None = None,
+        outline: float | None = None,
+        shadow: float | None = None,
+        border_style: int | None = None,
     ) -> str:
         """One `Style:` line. `%g` keeps `3.0` as `3` so existing goldens still match."""
         align = self.alignment if alignment is None else alignment
         mv = self.margin_v if margin_v is None else margin_v
         p = self.primary if primary is None else primary
         s = self.secondary if secondary is None else secondary
+        out = self.outline if outline is None else outline
+        shad = self.shadow if shadow is None else shadow
+        bs = self.border_style if border_style is None else border_style
         return (
             f"Style: {name},{font_name},{font_size},{p},{s},"
             f"{self.outline_colour},{self.back_colour},{int(self.bold)},0,0,0,100,100,0,0,"
-            f"{self.border_style},"
-            f"{self.outline:g},{self.shadow:g},{align},{self.margin_l},"
+            f"{bs},"
+            f"{out:g},{shad:g},{align},{self.margin_l},"
             f"{self.margin_r},"
             f"{mv},{ASS_ENCODING_AUTO}"
         )
@@ -298,9 +313,11 @@ REPORT_THEME: Final = CaptionTheme()
 # text. Measured by rendering a real 17-character popup and taking the ink bounding box:
 # 64 pt -> 38 px tall, 74 -> 43, 84 -> 49, 96 -> 56, 108 -> 63, 120 -> 70. A burned-in social
 # caption wants 60-90 px on a 1920-tall frame, so 74 was less than half the size it looked.
-# 108 lands in that band while leaving the widest popup (22 characters, ~620 px) comfortably
-# inside the 920 px the left and right margins leave for it.
-VIRAL_FONT_SIZE: Final = 108
+# `margin_v` is 450 in the lower-middle safe zone: clears Reels/Shorts/TikTok bottom UI (~300 px)
+# as well as burned-in lower-third teaser pills (e.g. Zar `"لەم پۆدکاستەدا:"` pill at y=1525..1734).
+# In `Vazirmatn`, `128 pt` renders at ~72 px ink height (`2.06x` of `64 pt`'s 35 px), cleanly
+# readable at phone arm's length while fitting `<= 20`-char popups within 920 px margins (D-350).
+VIRAL_FONT_SIZE: Final = 128
 
 # Base direction, D-334. libass lays a line out left-to-right unless the Style's Encoding is -1
 # (auto-detect), and auto-detect reads the first strong character — so a Sorani line that opens
@@ -379,11 +396,11 @@ VIRAL_THEME: Final = CaptionTheme(
     primary="&H0000E5FF",
     secondary="&H00FFFFFF",
     bold=True,
-    outline=4.0,
+    outline=6.0,
     shadow=2.0,
     margin_l=80,
     margin_r=80,
-    margin_v=360,
+    margin_v=450,
 )
 
 BROADCAST_THEME: Final = CaptionTheme(
@@ -689,13 +706,18 @@ def _ass_record(line: str, fields: tuple[str, ...], *, kind: str) -> dict[str, s
     return dict(zip(fields, values, strict=True))
 
 
-def _used_ass_font_families(ass_text: str) -> tuple[str, ...]:
-    """Return the declared family for every style used by a Dialogue event."""
+_LATIN_LETTER_RE: Final = re.compile(r"[A-Za-z]")
+
+
+def _used_ass_font_families_and_latin(
+    ass_text: str,
+) -> tuple[tuple[str, ...], dict[str, frozenset[str]]]:
+    """Return used ASS families and the distinct ASCII Latin letters rendered under each family."""
     section = ""
     style_fields: tuple[str, ...] | None = None
     event_fields: tuple[str, ...] | None = None
     styles: dict[str, tuple[str, str]] = {}
-    used_styles: list[tuple[str, str]] = []
+    used_styles: list[tuple[str, str, str]] = []
 
     for raw_line in ass_text.splitlines():
         line = raw_line.strip()
@@ -747,7 +769,8 @@ def _used_ass_font_families(ass_text: str) -> tuple[str, ...]:
                 style_name = record["style"]
                 if not style_name:
                     raise FontCoverageError("ASS Dialogue style must be non-empty")
-                used_styles.append((style_name.casefold(), style_name))
+                visible_text = re.sub(r"\\[Nnh]", " ", _ASS_OVERRIDE_TAGS.sub("", record["text"]))
+                used_styles.append((style_name.casefold(), style_name, visible_text))
 
     if style_fields is None or not styles:
         raise FontCoverageError("ASS has no usable V4+ Styles table")
@@ -755,14 +778,23 @@ def _used_ass_font_families(ass_text: str) -> tuple[str, ...]:
         raise FontCoverageError("ASS has no usable Dialogue event")
 
     families: list[str] = []
-    for key, original in used_styles:
+    latin_by_family: dict[str, set[str]] = {}
+    for key, original, visible_text in used_styles:
         try:
             _declared_name, family = styles[key]
         except KeyError as exc:
             raise FontCoverageError(f"ASS Dialogue uses undefined style {original!r}") from exc
         if family not in families:
             families.append(family)
-    return tuple(families)
+        latin_chars = _LATIN_LETTER_RE.findall(visible_text)
+        if latin_chars:
+            latin_by_family.setdefault(family.casefold(), set()).update(latin_chars)
+    return tuple(families), {k: frozenset(v) for k, v in latin_by_family.items()}
+
+
+def _used_ass_font_families(ass_text: str) -> tuple[str, ...]:
+    """Return the declared family for every style used by a Dialogue event."""
+    return _used_ass_font_families_and_latin(ass_text)[0]
 
 
 def _font_family_names(font_path: Path) -> frozenset[str]:
@@ -795,7 +827,7 @@ def assert_ass_fonts_cover_kurdish(
     the same family is ambiguous without reproducing libass's weight/style selection, and an inline
     `\\fn` can switch families inside one event; both are refused before a client can see fallback.
     """
-    families = _used_ass_font_families(ass_text)
+    families, latin_by_family = _used_ass_font_families_and_latin(ass_text)
     try:
         candidates = sorted(
             path
@@ -836,12 +868,14 @@ def assert_ass_fonts_cover_kurdish(
                 "libass style selection would be ambiguous"
             )
         match = matches[0]
+        latin_chars = latin_by_family.get(family.casefold(), frozenset())
         try:
-            assert_font_covers_kurdish(match, required=required)
+            assert_font_covers_kurdish(match, required=required | latin_chars)
         except (FontCoverageError, OSError) as exc:
+            scope = "Kurdish and Latin" if latin_chars else "Kurdish"
             raise FontCoverageError(
-                f"ASS family {family!r} resolves to {match.name}, but that font fails Kurdish "
-                f"coverage: {exc}"
+                f"ASS family {family!r} resolves to {match.name}, but that font fails {scope} "
+                f"coverage (refusing host font fallback): {exc}"
             ) from exc
         if match not in resolved:
             resolved.append(match)
@@ -908,8 +942,331 @@ def wrap_title_lines(title: str, max_chars: int = DEFAULT_MAX_CHARS_PER_LINE) ->
 
 
 _WIDTH_CACHE: dict[tuple[object, ...], int] = {}
+_WORD_BOX_CACHE: dict[tuple[object, ...], tuple[tuple[int, int, int, int], ...]] = {}
 _MAX_WIDTH_CACHE = 1024
 _WIDTH_LOCK = threading.Lock()
+
+# 12 saturated distinct RGB probe colours for single-pass libass word bounding-box extraction.
+_WORD_BOX_PALETTE: Final[tuple[tuple[int, int, int], ...]] = (
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+    (255, 255, 0),
+    (255, 0, 255),
+    (0, 255, 255),
+    (255, 128, 0),
+    (128, 255, 0),
+    (0, 128, 255),
+    (255, 0, 128),
+    (128, 0, 255),
+    (0, 255, 128),
+)
+_ARABIC_CHAR_RE: Final = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
+)
+_LTR_CHAR_RE: Final = re.compile(r"[A-Za-z0-9\u00C0-\u024F]")
+
+
+def _word_is_ltr(token: str) -> bool:
+    """Return True when a caption token should sweep left-to-right (Latin/digits, no Arabic)."""
+    if _ARABIC_CHAR_RE.search(token):
+        return False
+    return bool(_LTR_CHAR_RE.search(token))
+
+
+def _format_caption_lines(
+    lines_words: Sequence[Sequence[Word]],
+    *,
+    word_colors: Sequence[str] | None = None,
+    hide_outline_and_shadow: bool = False,
+) -> str:
+    """Render one or more wrapped caption lines with per-line accent scaling (never edits words)."""
+    line_strs: list[str] = []
+    flat_idx = 0
+    for line in lines_words:
+        accent = emphasis_index(line)
+        parts: list[str] = []
+        for idx, word in enumerate(line):
+            escaped = _escape_ass_text(word.w)
+            tags: list[str] = []
+            if word_colors is not None:
+                tags.append(f"\\1c{word_colors[flat_idx]}")
+                if hide_outline_and_shadow:
+                    tags.append("\\3a&HFF&\\4a&HFF&")
+            if idx == accent:
+                tags.append(f"\\fscx{EMPHASIS_SCALE}\\fscy{EMPHASIS_SCALE}")
+            prefix = f"{{{''.join(tags)}}}" if tags else ""
+            suffix = "{\\fscx100\\fscy100}" if idx == accent else ""
+            parts.append(f"{prefix}{escaped}{suffix}")
+            flat_idx += 1
+        line_strs.append(" ".join(parts))
+    return "\\N".join(line_strs)
+
+
+def _measure_word_boxes(
+    lines_words: Sequence[Sequence[Word]],
+    *,
+    theme: CaptionTheme,
+    font_name: str,
+    font_size: int,
+    is_top: bool,
+    play_res_x: int = 1080,
+    play_res_y: int = 1920,
+    fonts_dir: Path | None = None,
+    ffmpeg: Path | None = None,
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Extract per-word `(x0, y0, x1, y1)` pixel bounds from libass using unique glyph colours.
+
+    Uses a single ffmpeg/libass rawvideo pass per 12-word batch with transparent outline/shadow so
+    adjacent words stay separated by whitespace and glyph metrics match the emitted style row.
+    """
+    entries: list[tuple[int, int, Word]] = []
+    for line_idx, line in enumerate(lines_words):
+        for word in line:
+            entries.append((line_idx, len(entries), word))
+    if not entries:
+        return ()
+
+    binary = ffmpeg or find_ffmpeg()
+    if binary is None:
+        raise CaptionVerificationError(
+            "caption word-box measurement requires a configured renderer"
+        )
+    resolved_fonts = fonts_dir or _default_fonts_dir()
+    if not isinstance(binary, Path) or not isinstance(resolved_fonts, Path):
+        raise CaptionVerificationError("caption word-box measurement requires local resource paths")
+    try:
+        binary, resolved_fonts, context = _measurement_context(binary, resolved_fonts)
+    except OSError as exc:
+        raise CaptionVerificationError(
+            "caption word-box measurement resources are unavailable"
+        ) from exc
+
+    alignment = 8 if is_top else theme.alignment
+    margin_v = DEFAULT_TOP_MARGIN_V if is_top else theme.margin_v
+    lines_sig = tuple(tuple(word.w for word in line) for line in lines_words)
+    cache_key = (
+        lines_sig,
+        font_name,
+        font_size,
+        theme.bold,
+        theme.outline,
+        theme.shadow,
+        alignment,
+        theme.margin_l,
+        theme.margin_r,
+        margin_v,
+        play_res_x,
+        play_res_y,
+        context,
+    )
+    with _WIDTH_LOCK:
+        cached = _WORD_BOX_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    import subprocess
+    import tempfile
+
+    probe_style = theme.style_row(
+        "KurdishProbe",
+        font_name,
+        font_size,
+        alignment=alignment,
+        margin_v=margin_v,
+        border_style=1,
+    )
+    raw_boxes: list[tuple[int, int, int, int] | None] = [None] * len(entries)
+    batch_size = len(_WORD_BOX_PALETTE)
+    vf_template_dir = tempfile.TemporaryDirectory()
+    try:
+        td_path = Path(vf_template_dir.name)
+        for batch_start in range(0, len(entries), batch_size):
+            batch_end = min(len(entries), batch_start + batch_size)
+            batch_pal = _WORD_BOX_PALETTE[: batch_end - batch_start]
+            colors: list[str] = []
+            for global_idx in range(len(entries)):
+                if batch_start <= global_idx < batch_end:
+                    r, g, b = batch_pal[global_idx - batch_start]
+                    colors.append(f"&H{b:02X}{g:02X}{r:02X}&")
+                else:
+                    colors.append("&H000000&")
+            body = _format_caption_lines(
+                lines_words, word_colors=colors, hide_outline_and_shadow=True
+            )
+            ass_content = "\n".join(
+                [
+                    "[Script Info]",
+                    "ScriptType: v4.00+",
+                    f"PlayResX: {play_res_x}",
+                    f"PlayResY: {play_res_y}",
+                    "WrapStyle: 2",
+                    "ScaledBorderAndShadow: yes",
+                    "",
+                    "[V4+ Styles]",
+                    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+                    "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+                    "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+                    "MarginR, MarginV, Encoding",
+                    probe_style,
+                    "",
+                    "[Events]",
+                    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
+                    "Effect, Text",
+                    _mark_right_to_left(
+                        f"Dialogue: 0,0:00:00.00,0:00:01.00,KurdishProbe,,0,0,0,,{body}"
+                    ),
+                    "",
+                ]
+            )
+            try:
+                assert_ass_fonts_cover_kurdish(ass_content, resolved_fonts)
+            except (OSError, FontCoverageError) as exc:
+                raise CaptionVerificationError(
+                    "caption word-box measurement font binding refused"
+                ) from exc
+
+            ass_path = td_path / f"probe_{batch_start}.ass"
+            ass_path.write_text(ass_content, encoding="utf-8")
+            vf = subtitle_filter(ass_path, resolved_fonts)
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=black:s={play_res_x}x{play_res_y}:d=1",
+                    "-vf",
+                    vf,
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30.0,
+            )
+            raw = result.stdout
+            expected_bytes = play_res_x * play_res_y * 3
+            if len(raw) != expected_bytes:
+                raise CaptionVerificationError(
+                    "caption word-box measurement decoded extent differs from canvas"
+                )
+            stride = play_res_x * 3
+            zero_row = b"\x00" * stride
+            pal_unit = [
+                (r / n, g / n, b / n)
+                for r, g, b in batch_pal
+                if (n := math.sqrt(r * r + g * g + b * b)) > 0.0
+            ]
+            pal_count = len(pal_unit)
+            word_min_x = [play_res_x] * pal_count
+            word_min_y = [play_res_y] * pal_count
+            word_max_x = [-1] * pal_count
+            word_max_y = [-1] * pal_count
+            for y in range(play_res_y):
+                row_start = y * stride
+                row = raw[row_start : row_start + stride]
+                if row == zero_row or max(row) <= 40:
+                    continue
+                for x in range(play_res_x):
+                    p = x * 3
+                    r_v, g_v, b_v = row[p], row[p + 1], row[p + 2]
+                    if r_v <= 40 and g_v <= 40 and b_v <= 40:
+                        continue
+                    best_k = 0
+                    best_dot = r_v * pal_unit[0][0] + g_v * pal_unit[0][1] + b_v * pal_unit[0][2]
+                    for k in range(1, pal_count):
+                        dot = r_v * pal_unit[k][0] + g_v * pal_unit[k][1] + b_v * pal_unit[k][2]
+                        if dot > best_dot:
+                            best_dot = dot
+                            best_k = k
+                    if x < word_min_x[best_k]:
+                        word_min_x[best_k] = x
+                    if x > word_max_x[best_k]:
+                        word_max_x[best_k] = x
+                    if y < word_min_y[best_k]:
+                        word_min_y[best_k] = y
+                    if y > word_max_y[best_k]:
+                        word_max_y[best_k] = y
+            for local_idx in range(pal_count):
+                if word_max_x[local_idx] >= word_min_x[local_idx]:
+                    raw_boxes[batch_start + local_idx] = (
+                        word_min_x[local_idx],
+                        word_min_y[local_idx],
+                        word_max_x[local_idx] + 1,
+                        word_max_y[local_idx] + 1,
+                    )
+    finally:
+        vf_template_dir.cleanup()
+
+    # Validate non-whitespace words yielded pixel bounds, then pad and clamp per line.
+    line_min_y: dict[int, int] = {}
+    line_max_y: dict[int, int] = {}
+    line_word_indices: dict[int, list[int]] = {}
+    for line_idx, flat_idx, word in entries:
+        box = raw_boxes[flat_idx]
+        if box is None:
+            if word.w.strip():
+                raise CaptionVerificationError(
+                    f"caption word-box measurement found no ink pixels for {word.w!r}"
+                )
+            continue
+        _gx0, gy0, _gx1, gy1 = box
+        line_min_y[line_idx] = min(line_min_y.get(line_idx, gy0), gy0)
+        line_max_y[line_idx] = max(line_max_y.get(line_idx, gy1), gy1)
+        line_word_indices.setdefault(line_idx, []).append(flat_idx)
+
+    pad_y = max(4, math.ceil(theme.outline + theme.shadow + 2))
+    pad_x = 2
+    sorted_lines = sorted(line_min_y)
+    line_y_bounds: dict[int, tuple[int, int]] = {}
+    for pos, line_idx in enumerate(sorted_lines):
+        y0 = max(0, line_min_y[line_idx] - pad_y)
+        y1 = min(play_res_y, line_max_y[line_idx] + pad_y)
+        if pos > 0:
+            prev_line = sorted_lines[pos - 1]
+            mid_above = (line_max_y[prev_line] + line_min_y[line_idx]) // 2 + 1
+            y0 = max(y0, mid_above)
+        if pos + 1 < len(sorted_lines):
+            next_line = sorted_lines[pos + 1]
+            mid_below = (line_max_y[line_idx] + line_min_y[next_line]) // 2
+            y1 = min(y1, mid_below)
+        if y1 <= y0:
+            y1 = min(play_res_y, y0 + 1)
+        line_y_bounds[line_idx] = (y0, y1)
+
+    final_boxes: list[tuple[int, int, int, int]] = [(0, 0, 0, 0)] * len(entries)
+    for line_idx, idxs in line_word_indices.items():
+        y0, y1 = line_y_bounds[line_idx]
+        ordered = sorted(idxs, key=lambda idx: raw_boxes[idx][0])  # type: ignore[index]
+        for rank, flat_idx in enumerate(ordered):
+            gx0, _gy0, gx1, _gy1 = raw_boxes[flat_idx]  # type: ignore[misc]
+            x0 = max(0, gx0 - pad_x)
+            x1 = min(play_res_x, gx1 + pad_x)
+            if rank > 0:
+                prev_gx1 = raw_boxes[ordered[rank - 1]][2]  # type: ignore[index]
+                x0 = max(x0, (prev_gx1 + gx0 + 1) // 2)
+            if rank + 1 < len(ordered):
+                next_gx0 = raw_boxes[ordered[rank + 1]][0]  # type: ignore[index]
+                x1 = min(x1, (gx1 + next_gx0) // 2)
+            if x1 <= x0:
+                x1 = min(play_res_x, x0 + 1)
+            final_boxes[flat_idx] = (x0, y0, x1, y1)
+
+    result_boxes = tuple(final_boxes)
+    with _WIDTH_LOCK:
+        if len(_WORD_BOX_CACHE) >= _MAX_WIDTH_CACHE:
+            _WORD_BOX_CACHE.pop(next(iter(_WORD_BOX_CACHE)))
+        _WORD_BOX_CACHE[cache_key] = result_boxes
+    return result_boxes
 
 
 def _default_fonts_dir() -> Path:
@@ -964,7 +1321,7 @@ def _decoded_ink_width(raw: bytes, *, width: int, height: int) -> int:
 def measure_rendered_caption_width(
     text: str,
     *,
-    font_name: str = "Noto Naskh Arabic",
+    font_name: str = DEFAULT_CAPTION_FONT,
     font_size: int = VIRAL_FONT_SIZE,
     ffmpeg: Path | None = None,
     fonts_dir: Path | None = None,
@@ -1088,7 +1445,7 @@ def wrap_caption_lines(
     max_chars: int = DEFAULT_MAX_CHARS_PER_LINE,
     *,
     max_width_px: int | None = None,
-    font_name: str = "Noto Naskh Arabic",
+    font_name: str = DEFAULT_CAPTION_FONT,
     font_size: int = VIRAL_FONT_SIZE,
     fonts_dir: Path | None = None,
     canvas_width: int = 1080,
@@ -1155,7 +1512,7 @@ def chunk_caption_events(
     max_width_px: int | None = None,
     max_ms: int = POPUP_MAX_MS,
     max_gap_ms: int = POPUP_MAX_GAP_MS,
-    font_name: str = "Noto Naskh Arabic",
+    font_name: str = DEFAULT_CAPTION_FONT,
     font_size: int = VIRAL_FONT_SIZE,
     fonts_dir: Path | None = None,
     canvas_width: int = 1080,
@@ -1224,6 +1581,462 @@ def chunk_caption_events(
             width += addition
     chunks.append(tuple(current))
     return tuple(chunks)
+
+
+_ORPHAN_MAX_CHARS: Final = 4
+_ORPHAN_MAX_GAP_MS: Final = 250
+_KURDISH_REBALANCE_MAX_GAP_MS: Final = 250
+_KURDISH_ORPHAN_REBALANCE_MAX_GAP_MS: Final = 250
+_KURDISH_TERMINAL_PUNCT: Final = frozenset({".", "!", "?", "؟", "؛", "،", "۔", "…"})
+# D-366: Kurdish Sorani proclitics, prepositions, demonstratives, and non-terminal linkers that
+# syntactically attach to the following word and should not dangle at the end of a caption popup.
+KURDISH_NON_TERMINAL_WORDS: Final[frozenset[str]] = frozenset(
+    {
+        "و",
+        "بە",
+        "لە",
+        "بۆ",
+        "کە",
+        "تا",
+        "ئەم",
+        "ئەو",
+        "وەکو",
+        "وەک",
+        "هەر",
+        "بەس",
+        "تەنها",
+        "نە",
+        "بێ",
+        "لەسەر",
+        "لەبەر",
+        "لەگەڵ",
+        "دوای",
+        "پێش",
+        "ئایا",
+        "ئەگەر",
+        "چونکە",
+        "بەڵام",
+        "یان",
+        "یەعنی",
+        "ئەبێتە",
+        "دەبێتە",
+        "ئەبێت",
+        "دەبێت",
+    }
+)
+_HOOK_TOP_BAND_MAX_Y: Final = 420
+_HOOK_TOP_Y: Final = 95
+_HOOK_RELOCATED_Y: Final = 1260
+_HOOK_FRAME0_WINDOW_MS: Final = 500
+_HOOK_MIN_FACE_AWARE_CHARS: Final = 30
+# D-362 / D-364: Zero-scale-distortion luminous electric-lime accent (`#B8FF2E`, BT.601 luma
+# 210 > 175, >=16.5:1 stroke contrast) on acoustically excited karaoke words. Never rescale
+# Layer 4 inside a 100%-scale \clip(...) box (rescaling causes double-vision glyph ghosting).
+_EXCITED_POP_TAG: Final = r"\1c&H002EFFB8&"
+
+# D-364: Clean editorial display typography for face-aware hook cards (BorderStyle=1 bold
+# outlined text + soft drop shadow, replacing jagged per-line BorderStyle=3 black boxes while
+# preserving HOOK_CARD_THEME byte-identically for legacy / GOLDEN_HOOK_CARD callers).
+HOOK_EDITORIAL_FONT_SIZE: Final = 88
+HOOK_EDITORIAL_MS: Final = 2_400
+HOOK_EDITORIAL_THEME: Final = CaptionTheme(
+    primary="&H0000D7FF",
+    secondary="&H0000D7FF",
+    bold=True,
+    outline=7.0,
+    shadow=4.0,
+    back_colour="&H80000000",
+    margin_l=70,
+    margin_r=70,
+    margin_v=110,
+    alignment=8,
+    border_style=1,
+)
+
+# D-379: Contextual kinetic Kurdish keyword/phrase callout cards anchored to vocal peaks.
+CALLOUT_CARD_FONT_SIZE: Final = 66
+_CALLOUT_TOP_Y: Final = 155
+_CALLOUT_RELOCATED_Y: Final = 1240
+_CALLOUT_MIN_TAIL_CLEARANCE_MS: Final = 1_200
+_CALLOUT_BURST_MERGE_GAP_MS: Final = 350
+_CALLOUT_NEIGHBOR_GAP_MS: Final = 250
+_CALLOUT_MAX_CHARS: Final = 28
+_CALLOUT_LIFT_PX: Final = 14
+_HOOK_LIFT_PX: Final = 12
+_SPEAKER_TAG_LIFT_PX: Final = 12
+
+CALLOUT_CARD_THEME: Final = CaptionTheme(
+    primary="&H002EFFB8",
+    secondary="&H002EFFB8",
+    outline_colour="&H00000000",
+    back_colour="&H80000000",
+    bold=True,
+    outline=6.0,
+    shadow=4.0,
+    margin_l=70,
+    margin_r=70,
+    margin_v=_CALLOUT_TOP_Y,
+    alignment=8,
+    border_style=1,
+)
+
+_CALLOUT_EDGE_PUNCT: Final = re.compile(
+    r"^[«»\"'“”،,;؛.:!؟?()\[\]\s]+|[«»\"'“”،,;؛.:!؟?()\[\]\s]+$"
+)
+_CALLOUT_STOPWORDS: Final[frozenset[str]] = frozenset(
+    normalize_sorani(w)
+    for w in (
+        KURDISH_NON_TERMINAL_WORDS
+        | {
+            "من",
+            "تۆ",
+            "ئێمە",
+            "ئێوە",
+            "ئەوان",
+            "ئەوە",
+            "ئەمە",
+            "ئەوەی",
+            "ئەمەی",
+            "ئێستا",
+            "زۆر",
+            "کەس",
+            "شت",
+            "شتێک",
+            "هیچ",
+            "چۆن",
+            "چی",
+            "کێ",
+            "لێرە",
+            "لەوێ",
+            "بوو",
+            "بوون",
+            "بێت",
+            "بووە",
+            "هەیە",
+            "نییە",
+            "دەکات",
+            "ئەکات",
+            "بکات",
+            "دەکەن",
+            "ئەکەن",
+            "دەڵێت",
+            "ئەڵێت",
+            "وتی",
+            "وتم",
+            "ئاوا",
+            "وایە",
+            "نازانم",
+            "تەبعەن",
+            "یانی",
+            "جا",
+            "باشە",
+            "بەڵێ",
+            "بۆیە",
+            "چون",
+            "کاتێک",
+            "دواتر",
+            "ئیتر",
+        }
+    )
+)
+
+
+def _clean_callout_token(surface: str) -> str:
+    return _CALLOUT_EDGE_PUNCT.sub("", surface).strip()
+
+
+def _is_callout_content_word(surface: str) -> bool:
+    clean = _clean_callout_token(surface)
+    if len(clean) <= 2:
+        return False
+    return normalize_sorani(clean) not in _CALLOUT_STOPWORDS
+
+
+def extract_kurdish_callout_cards(
+    sentences: Sequence[Sentence],
+    excited_intervals_ms: Sequence[tuple[int, int]],
+    *,
+    clip_in_ms: int = 0,
+    clip_duration_ms: int | None = None,
+    min_start_ms: int = 4_500,
+    min_spacing_ms: int = 10_000,
+    max_cards: int = 4,
+    card_duration_ms: int = 2_200,
+) -> tuple[tuple[int, int, str], ...]:
+    """Extract 1–3 word punchy Kurdish callout cards anchored to vocal peaks (D-379).
+
+    Returns clip-relative ``(start_rel_ms, end_rel_ms, phrase_ckb)`` tuples filtered for
+    Kurdish stopwords/proclitics and short ``<= 2``-char particles, starting at or after
+    ``min_start_ms`` (never colliding with the 0–2.4 s hook card), spaced by at least
+    ``min_spacing_ms``, and ending at least 1.2 s before clip end.
+    """
+    if not sentences or not excited_intervals_ms or max_cards <= 0 or card_duration_ms <= 0:
+        return ()
+
+    effective_duration_ms = (
+        clip_duration_ms
+        if clip_duration_ms is not None
+        else max(s.end_ms for s in sentences) - clip_in_ms
+    )
+    max_end_ms = effective_duration_ms - _CALLOUT_MIN_TAIL_CLEARANCE_MS
+    min_visible_ms = min(card_duration_ms, 1_000)
+    if max_end_ms - min_start_ms < min_visible_ms:
+        return ()
+
+    sorted_intervals = sorted((s_ms, e_ms) for s_ms, e_ms in excited_intervals_ms if e_ms > s_ms)
+    if not sorted_intervals:
+        return ()
+
+    bursts: list[tuple[int, int]] = [sorted_intervals[0]]
+    for s_ms, e_ms in sorted_intervals[1:]:
+        prev_s, prev_e = bursts[-1]
+        if s_ms <= prev_e + _CALLOUT_BURST_MERGE_GAP_MS:
+            bursts[-1] = (prev_s, max(prev_e, e_ms))
+        else:
+            bursts.append((s_ms, e_ms))
+
+    # Collect one best candidate (score, -start_rel_ms, start_rel_ms, end_rel_ms, phrase) per burst.
+    candidates: list[tuple[int, int, int, int, str]] = []
+    for b_start, b_end in bursts:
+        best_for_burst: tuple[int, int, int, int, str] | None = None
+        for sent in sentences:
+            if sent.end_ms <= b_start or sent.start_ms >= b_end or not sent.words:
+                continue
+            words = sent.words
+            peak_idxs = [
+                idx
+                for idx, w in enumerate(words)
+                if b_start <= (w.start_ms + w.end_ms) / 2.0 <= b_end
+            ]
+            if not peak_idxs:
+                peak_idxs = [
+                    idx for idx, w in enumerate(words) if w.start_ms < b_end and w.end_ms > b_start
+                ]
+            if not peak_idxs:
+                continue
+
+            peak_set = set(peak_idxs)
+            lo = min(peak_idxs)
+            hi = max(peak_idxs)
+            content_in_peak = sum(1 for idx in peak_idxs if _is_callout_content_word(words[idx].w))
+            if content_in_peak == 1:
+                if (
+                    lo > 0
+                    and words[lo].start_ms - words[lo - 1].end_ms <= _CALLOUT_NEIGHBOR_GAP_MS
+                    and _is_callout_content_word(words[lo - 1].w)
+                ):
+                    lo -= 1
+                if (
+                    hi + 1 < len(words)
+                    and words[hi + 1].start_ms - words[hi].end_ms <= _CALLOUT_NEIGHBOR_GAP_MS
+                    and _is_callout_content_word(words[hi + 1].w)
+                ):
+                    hi += 1
+
+            for i in range(lo, hi + 1):
+                if not _is_callout_content_word(words[i].w):
+                    continue
+                for length in (1, 2, 3):
+                    j = i + length
+                    if j > hi + 1:
+                        break
+                    if not any(idx in peak_set for idx in range(i, j)):
+                        continue
+                    span = words[i:j]
+                    if not all(_is_callout_content_word(w.w) for w in span):
+                        break
+                    cleaned_tokens = [_clean_callout_token(w.w) for w in span]
+                    phrase = " ".join(cleaned_tokens)
+                    if not phrase or len(phrase) > _CALLOUT_MAX_CHARS:
+                        continue
+
+                    start_rel_ms = span[0].start_ms - clip_in_ms
+                    if start_rel_ms < min_start_ms:
+                        continue
+                    end_rel_ms = min(start_rel_ms + card_duration_ms, max_end_ms)
+                    if end_rel_ms - start_rel_ms < min_visible_ms:
+                        continue
+
+                    word_bonus = 10 if length == 2 else (8 if length == 3 else 3)
+                    emphasis_bonus = sum(
+                        6
+                        for tok in cleaned_tokens
+                        if classify_kurdish_emphasis(tok) is not EmphasisCategory.DEFAULT
+                    )
+                    length_bonus = sum(min(len(tok), 10) for tok in cleaned_tokens)
+                    score = word_bonus + emphasis_bonus + length_bonus
+                    cand = (score, -start_rel_ms, start_rel_ms, end_rel_ms, phrase)
+                    if best_for_burst is None or cand[:2] > best_for_burst[:2]:
+                        best_for_burst = cand
+
+        if best_for_burst is not None:
+            candidates.append(best_for_burst)
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    selected: list[tuple[int, int, str]] = []
+    seen_phrases: set[str] = set()
+    for _score, _neg_start, start_rel_ms, end_rel_ms, phrase in candidates:
+        if len(selected) >= max_cards:
+            break
+        norm_phrase = normalize_sorani(phrase)
+        if norm_phrase in seen_phrases:
+            continue
+        if any(
+            abs(start_rel_ms - sel_s) < min_spacing_ms
+            or not (end_rel_ms <= sel_s or start_rel_ms >= sel_e)
+            for sel_s, sel_e, _ in selected
+        ):
+            continue
+        selected.append((start_rel_ms, end_rel_ms, phrase))
+        seen_phrases.add(norm_phrase)
+
+    selected.sort(key=lambda item: item[0])
+    return tuple(selected)
+
+
+def _merge_short_orphan_chunks(
+    chunks: tuple[tuple[Word, ...], ...],
+    *,
+    max_words: int,
+    max_width_px: int | None = None,
+    font_name: str = DEFAULT_CAPTION_FONT,
+    font_size: int = VIRAL_FONT_SIZE,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
+) -> tuple[tuple[Word, ...], ...]:
+    """Merge short 1-word orphan chunks into the preceding chunk when gap and width allow."""
+    if len(chunks) < 2:
+        return chunks
+
+    merged: list[tuple[Word, ...]] = [chunks[0]]
+    for chunk in chunks[1:]:
+        prev = merged[-1]
+        if (
+            len(chunk) == 1
+            and len(chunk[0].w.strip()) <= _ORPHAN_MAX_CHARS
+            and chunk[0].start_ms - prev[-1].end_ms <= _ORPHAN_MAX_GAP_MS
+            and len(prev) + 1 <= max_words + 1
+        ):
+            combined = (*prev, chunk[0])
+            fits_width = True
+            if max_width_px is not None:
+                candidate_text = " ".join(w.w for w in combined)
+                cand_w = measure_rendered_caption_width(
+                    candidate_text,
+                    font_name=font_name,
+                    font_size=font_size,
+                    fonts_dir=fonts_dir,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
+                fits_width = cand_w <= max_width_px
+            if fits_width:
+                merged[-1] = combined
+                continue
+        merged.append(chunk)
+    return tuple(merged)
+
+
+def _is_non_terminal_kurdish_word(surface: str) -> bool:
+    """Return True when ``surface`` is a Kurdish proclitic/linker with no terminal punctuation."""
+    stripped = surface.strip()
+    if not stripped or stripped[-1] in _KURDISH_TERMINAL_PUNCT:
+        return False
+    core = stripped.strip(".,!?:؛،؟۔…«»\"'“”()[]")
+    return core in KURDISH_NON_TERMINAL_WORDS
+
+
+def _rebalance_kurdish_chunks(
+    chunks: tuple[tuple[Word, ...], ...],
+    *,
+    max_words: int,
+    max_width_px: int | None = None,
+    font_name: str = DEFAULT_CAPTION_FONT,
+    font_size: int = VIRAL_FONT_SIZE,
+    fonts_dir: Path | None = None,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
+) -> tuple[tuple[Word, ...], ...]:
+    """Eliminate dangling Kurdish prepositions and stranded 1-word popups (D-366).
+
+    Pass A carries a trailing non-terminal function word (e.g. ``بە``, ``لە``, ``و``, ``ئەم``)
+    onto the start of the following chunk when no real pause separates them and width permits.
+    Pass B rebalances remaining 1-word popups (merging short words or splitting ``[3, 1]`` into
+    ``[2, 2]``) without stranding a non-terminal word or violating ``max_width_px``.
+    """
+    if len(chunks) < 2:
+        return chunks
+
+    def _fits(group: Sequence[Word]) -> bool:
+        if max_width_px is None:
+            return True
+        candidate_text = " ".join(w.w for w in group)
+        cand_w = measure_rendered_caption_width(
+            candidate_text,
+            font_name=font_name,
+            font_size=font_size,
+            fonts_dir=fonts_dir,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+        )
+        return cand_w <= max_width_px
+
+    # Pass A: carry trailing Kurdish non-terminal proclitics onto the start of the next chunk.
+    work: list[tuple[Word, ...]] = list(chunks)
+    for idx in range(len(work) - 1):
+        prev = work[idx]
+        nxt = work[idx + 1]
+        if (
+            len(prev) >= 2
+            and _is_non_terminal_kurdish_word(prev[-1].w)
+            and nxt[0].start_ms - prev[-1].end_ms <= _KURDISH_REBALANCE_MAX_GAP_MS
+            and len(nxt) + 1 <= max_words + 1
+        ):
+            new_nxt = (prev[-1], *nxt)
+            if new_nxt[-1].end_ms - new_nxt[0].start_ms <= 2_600 and _fits(new_nxt):
+                work[idx] = prev[:-1]
+                work[idx + 1] = new_nxt
+
+    # Pass B: rebalance stranded 1-word popups [3+, 1] -> [2+, 2] without merging across
+    # deliberate pauses (> 250 ms) or overriding `_merge_short_orphan_chunks`'s 4-char merge limit.
+    balanced: list[tuple[Word, ...]] = [work[0]]
+    for chunk in work[1:]:
+        prev = balanced[-1]
+        gap_ms = chunk[0].start_ms - prev[-1].end_ms
+        if (
+            len(chunk) == 1
+            and gap_ms <= _KURDISH_ORPHAN_REBALANCE_MAX_GAP_MS
+            and len(prev) >= 3
+            and not _is_non_terminal_kurdish_word(prev[-2].w)
+            and _fits((prev[-1], chunk[0]))
+        ):
+            balanced[-1] = prev[:-1]
+            balanced.append((prev[-1], chunk[0]))
+            continue
+        balanced.append(chunk)
+
+    # Also catch a leading 1-word chunk (e.g. after Pass A left [1] or isolated opener) by merging
+    # forward when gap <= 400 ms and width fits.
+    if len(balanced) >= 2 and len(balanced[0]) == 1:
+        first_gap = balanced[1][0].start_ms - balanced[0][-1].end_ms
+        if first_gap <= _KURDISH_REBALANCE_MAX_GAP_MS and len(balanced[1]) + 1 <= max_words + 1:
+            combined_head = (*balanced[0], *balanced[1])
+            if _fits(combined_head):
+                balanced = [combined_head, *balanced[2:]]
+
+    return tuple(balanced)
+
+
+def _is_word_excited(
+    word: Word,
+    excited_intervals_ms: Sequence[tuple[int, int]],
+) -> bool:
+    """Return True when a word's midpoint falls inside any acoustically excited interval."""
+    if not excited_intervals_ms:
+        return False
+    mid_ms = (word.start_ms + word.end_ms) / 2.0
+    return any(s_ms <= mid_ms <= e_ms for s_ms, e_ms in excited_intervals_ms)
 
 
 class CaptionsOutsideClip(ValueError):
@@ -1495,7 +2308,7 @@ def _karaoke(words: Sequence[Word], start_ms: int) -> str:
 
 def compute_rtl_word_positions(
     words: Sequence[Word],
-    font_name: str = "Noto Naskh Arabic",
+    font_name: str = DEFAULT_CAPTION_FONT,
     font_size: int = VIRAL_FONT_SIZE,
     canvas_width: int = 1080,
     fonts_dir: Path | None = None,
@@ -1556,7 +2369,7 @@ def compute_rtl_word_positions(
 
 def build_ass(
     sentences: Sequence[Sentence],
-    font_name: str = "Noto Naskh Arabic",
+    font_name: str = DEFAULT_CAPTION_FONT,
     font_size: int = 64,
     play_res_x: int = 1080,
     play_res_y: int = 1920,
@@ -1578,6 +2391,10 @@ def build_ass(
     hook_banner: HookBannerConfig | None = None,
     keyword_emphasis: bool = True,
     margin_v: int | None = None,
+    merge_short_orphans: bool = False,
+    excited_intervals_ms: Sequence[tuple[int, int]] = (),
+    callout_cards: Sequence[tuple[int, int, str]] = (),
+    kinetic_entrance: bool = False,
 ) -> str:
     """Generate an ASS subtitle file for a clip's sentences.
 
@@ -1628,6 +2445,15 @@ def build_ass(
     if margin_v is not None:
         theme = replace(theme, margin_v=margin_v)
 
+    valid_callouts: list[tuple[int, int, str]] = []
+    for c_start, c_end, c_phrase in callout_cards:
+        cleaned_phrase = _escape_ass_text(" ".join(c_phrase.split()))
+        if not cleaned_phrase or c_start < 0:
+            continue
+        eff_end = min(c_end, clip_duration_ms) if clip_duration_ms is not None else c_end
+        if eff_end > c_start:
+            valid_callouts.append((c_start, eff_end, cleaned_phrase))
+
     header = "\n".join(
         [
             "[Script Info]",
@@ -1643,7 +2469,24 @@ def build_ass(
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
             "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
             "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            theme.style_row("Kurdish", font_name, font_size),
+            theme.style_row(
+                "Kurdish",
+                font_name,
+                font_size,
+                primary=(theme.secondary if style is CaptionStyle.WORD_HIGHLIGHT else None),
+            ),
+            *(
+                [
+                    theme.style_row(
+                        "KurdishHighlight",
+                        font_name,
+                        font_size,
+                        primary=theme.primary,
+                    )
+                ]
+                if style is CaptionStyle.WORD_HIGHLIGHT
+                else []
+            ),
             *(
                 [
                     theme.style_row(
@@ -1676,9 +2519,25 @@ def build_ass(
                         "KurdishPlate",
                         font_name,
                         font_size,
+                        primary=(theme.secondary if style is CaptionStyle.WORD_HIGHLIGHT else None),
                     )
                 ]
                 if plate_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.style_row(
+                        "KurdishPlateHighlight",
+                        font_name,
+                        font_size,
+                        primary=theme.primary,
+                        outline=0.0,
+                        shadow=0.0,
+                        border_style=1,
+                    )
+                ]
+                if (style is CaptionStyle.WORD_HIGHLIGHT and plate_intervals)
                 else []
             ),
             *(
@@ -1715,9 +2574,24 @@ def build_ass(
                         font_size,
                         alignment=8,
                         margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=(theme.secondary if style is CaptionStyle.WORD_HIGHLIGHT else None),
                     )
                 ]
                 if face_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.style_row(
+                        "KurdishTopHighlight",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=theme.primary,
+                    )
+                ]
+                if (style is CaptionStyle.WORD_HIGHLIGHT and face_intervals)
                 else []
             ),
             *(
@@ -1758,9 +2632,27 @@ def build_ass(
                         font_size,
                         alignment=8,
                         margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=(theme.secondary if style is CaptionStyle.WORD_HIGHLIGHT else None),
                     )
                 ]
                 if face_intervals and plate_intervals
+                else []
+            ),
+            *(
+                [
+                    theme.style_row(
+                        "KurdishTopPlateHighlight",
+                        font_name,
+                        font_size,
+                        alignment=8,
+                        margin_v=DEFAULT_TOP_MARGIN_V,
+                        primary=theme.primary,
+                        outline=0.0,
+                        shadow=0.0,
+                        border_style=1,
+                    )
+                ]
+                if (style is CaptionStyle.WORD_HIGHLIGHT and face_intervals and plate_intervals)
                 else []
             ),
             *(
@@ -1794,7 +2686,15 @@ def build_ass(
                 else []
             ),
             *(
-                [HOOK_CARD_THEME.style_row("Hook", font_name, HOOK_CARD_FONT_SIZE)]
+                [
+                    (
+                        HOOK_CARD_THEME.style_row("Hook", font_name, HOOK_CARD_FONT_SIZE)
+                        if face_intervals is None
+                        else HOOK_EDITORIAL_THEME.style_row(
+                            "Hook", font_name, HOOK_EDITORIAL_FONT_SIZE
+                        )
+                    )
+                ]
                 if title_ckb
                 else []
             ),
@@ -1821,6 +2721,11 @@ def build_ass(
                 if (hook_banner and hook_banner.enabled and hook_banner.text_ckb)
                 else []
             ),
+            *(
+                [CALLOUT_CARD_THEME.style_row("Callout", font_name, CALLOUT_CARD_FONT_SIZE)]
+                if valid_callouts
+                else []
+            ),
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -1829,7 +2734,7 @@ def build_ass(
 
     def render(words: Sequence[Word]) -> str:
         if style is CaptionStyle.WORD_HIGHLIGHT:
-            return _karaoke(words, words[0].start_ms)
+            return _format_caption_lines((words,))
         return " ".join(_escape_ass_text(word.w) for word in words)
 
     def choose_style(
@@ -1848,27 +2753,222 @@ def build_ass(
             return f"KurdishPlate{suffix}"
         return f"Kurdish{suffix}"
 
-    # The clip's timeline, not the source's. The kf spans are durations and are unaffected
-    # — only the two absolute stamps below ever needed the offset, and for as long as they did
-    # not have it, every clip cut from mid-episode shipped with no captions at all.
-    def event(start_ms: int, end_ms: int, text: str, style_name: str = "Kurdish") -> str:
+    # The clip's timeline, not the source's. Durations and clip sweeps are clip-relative so a
+    # clip cut from mid-episode lines up cleanly on t=0.
+    def event(
+        start_ms: int,
+        end_ms: int,
+        text: str,
+        style_name: str = "Kurdish",
+        *,
+        layer: int = 0,
+    ) -> str:
         return (
-            f"Dialogue: 0,{_ass_time(start_ms - clip_in_ms)},"
+            f"Dialogue: {layer},{_ass_time(start_ms - clip_in_ms)},"
             f"{_ass_time(end_ms - clip_in_ms)},"
             f"{style_name},,0,0,0,,{text}"
         )
+
+    def emit_word_highlight_events(
+        ev_start_ms: int,
+        ev_end_ms: int,
+        lines_words: Sequence[Sequence[Word]],
+    ) -> None:
+        base_style = choose_style(ev_start_ms, ev_end_ms)
+        hl_style = f"{base_style}Highlight"
+        is_top = base_style.startswith("KurdishTop")
+        plain_text = _format_caption_lines(lines_words)
+        base_text = f"{{\\fad(50,0)}}{plain_text}" if kinetic_entrance else plain_text
+        events.append(event(ev_start_ms, ev_end_ms, base_text, style_name=base_style, layer=0))
+        boxes = _measure_word_boxes(
+            lines_words,
+            theme=theme,
+            font_name=font_name,
+            font_size=font_size,
+            is_top=is_top,
+            play_res_x=play_res_x,
+            play_res_y=play_res_y,
+            fonts_dir=fonts_dir,
+        )
+        flat_words = [word for line in lines_words for word in line]
+        fad_tag = r"\fad(50,0)" if kinetic_entrance else ""
+        for word, (x0, y0, x1, y1) in zip(flat_words, boxes, strict=True):
+            if not word.w.strip():
+                continue
+            w_start = max(ev_start_ms, word.start_ms)
+            dur_ms = max(10, word.end_ms - w_start)
+            # Cap karaoke fill sweep to natural spoken word duration so CTC alignment silence
+            # bleed (e.g. a 3-letter word stretched over a 2.5 s pause) does not crawl slowly.
+            clean_len = max(1, len(word.w.strip()))
+            sweep_ms = min(dur_ms, max(600, min(900, clean_len * 100)))
+            pop_tag = _EXCITED_POP_TAG if _is_word_excited(word, excited_intervals_ms) else ""
+            if _word_is_ltr(word.w):
+                clip_tag = (
+                    f"{{\\clip({x0},{y0},{x0},{y1})"
+                    f"\\t(0,{sweep_ms},\\clip({x0},{y0},{x1},{y1})){pop_tag}{fad_tag}}}"
+                )
+            else:
+                clip_tag = (
+                    f"{{\\clip({x1},{y0},{x1},{y1})"
+                    f"\\t(0,{sweep_ms},\\clip({x0},{y0},{x1},{y1})){pop_tag}{fad_tag}}}"
+                )
+            events.append(
+                event(
+                    w_start,
+                    ev_end_ms,
+                    f"{clip_tag}{plain_text}",
+                    style_name=hl_style,
+                    layer=4,
+                )
+            )
+
+    def chunk_sentence(
+        words: Sequence[Word],
+        max_words: int,
+    ) -> tuple[tuple[Word, ...], ...]:
+        chunks = chunk_caption_events(
+            words,
+            max_words=max_words,
+            max_chars=max_chars_per_line,
+            max_width_px=max_popup_width_px,
+            font_name=font_name,
+            font_size=font_size,
+            fonts_dir=fonts_dir,
+            canvas_width=play_res_x,
+            canvas_height=play_res_y,
+        )
+        if merge_short_orphans:
+            chunks = _merge_short_orphan_chunks(
+                chunks,
+                max_words=max_words,
+                max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
+            )
+            chunks = _rebalance_kurdish_chunks(
+                chunks,
+                max_words=max_words,
+                max_width_px=max_popup_width_px,
+                font_name=font_name,
+                font_size=font_size,
+                fonts_dir=fonts_dir,
+                canvas_width=play_res_x,
+                canvas_height=play_res_y,
+            )
+        return chunks
 
     events: list[str] = []
     if title_ckb:
         # Layer 1, above the karaoke: they overlap in time by design — the card holds while the
         # first words are already being spoken, which is what a scroll-stopping open looks like.
-        events.append(
-            f"Dialogue: 1,{_ass_time(0)},{_ass_time(HOOK_CARD_MS)},Hook,,0,0,0,,"
-            + "\\N".join(
-                _escape_ass_text(line)
-                for line in wrap_title_lines(title_ckb, max_chars=max_chars_per_line)
+        if face_intervals is None:
+            events.append(
+                f"Dialogue: 1,{_ass_time(0)},{_ass_time(HOOK_CARD_MS)},Hook,,0,0,0,,"
+                + "\\N".join(
+                    _escape_ass_text(line)
+                    for line in wrap_title_lines(title_ckb, max_chars=max_chars_per_line)
+                )
             )
-        )
+        else:
+            hook_max_chars = max(
+                _HOOK_MIN_FACE_AWARE_CHARS,
+                max_chars_per_line or _HOOK_MIN_FACE_AWARE_CHARS,
+            )
+            top_band_limit = round(_HOOK_TOP_BAND_MAX_Y * play_res_y / 1920)
+            frame0_face_overlaps_top = any(
+                f_start <= clip_in_ms + _HOOK_FRAME0_WINDOW_MS
+                and f_end > clip_in_ms
+                and f_top < top_band_limit
+                for f_start, f_end, f_top, _f_bottom in face_intervals
+            )
+            pos_x = play_res_x // 2
+            if frame0_face_overlaps_top:
+                pos_y = round(_HOOK_RELOCATED_Y * play_res_y / 1920)
+                hook_align = r"\an2"
+            else:
+                pos_y = round(_HOOK_TOP_Y * play_res_y / 1920)
+                hook_align = r"\an8"
+            if kinetic_entrance:
+                hook_lift = round(_HOOK_LIFT_PX * play_res_y / 1920)
+                hook_pos_tag = (
+                    f"{{{hook_align}\\move({pos_x},{pos_y + hook_lift},"
+                    f"{pos_x},{pos_y},0,160)\\fad(0,250)}}"
+                )
+            else:
+                hook_pos_tag = f"{{{hook_align}\\pos({pos_x},{pos_y})\\fad(0,250)}}"
+            hook_end_ms = (
+                min(HOOK_EDITORIAL_MS, clip_duration_ms)
+                if clip_duration_ms is not None
+                else HOOK_EDITORIAL_MS
+            )
+            # D-373: Balance Kurdish editorial hook titles cleanly into 2 even lines (eliminating
+            # 1-word 3rd-line orphans) with responsive font sizing and a crisp 160 ms pop-in.
+            raw_hook = " ".join(title_ckb.split())
+            hook_words = raw_hook.split(" ") if raw_hook else []
+            if len(raw_hook) <= hook_max_chars or len(hook_words) < 2:
+                balanced_lines = wrap_title_lines(title_ckb, max_chars=hook_max_chars)
+            else:
+                best_pair: tuple[str, str] | None = None
+                best_key: tuple[int, int] | None = None
+                for split_i in range(1, len(hook_words)):
+                    left = " ".join(hook_words[:split_i])
+                    right = " ".join(hook_words[split_i:])
+                    key = (max(len(left), len(right)), abs(len(left) - len(right)))
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best_pair = (left, right)
+                if best_pair is not None and max(len(best_pair[0]), len(best_pair[1])) <= 36:
+                    balanced_lines = [best_pair[0], best_pair[1]]
+                else:
+                    balanced_lines = wrap_title_lines(title_ckb, max_chars=hook_max_chars)
+            max_line_len = max((len(ln) for ln in balanced_lines), default=0)
+            hook_fs = 86 if max_line_len <= 24 else (76 if max_line_len <= 32 else 68)
+            hook_anim_tag = f"{{\\fs{hook_fs}\\fscx93\\fscy93\\t(0,160,\\fscx100\\fscy100)}}"
+            events.append(
+                f"Dialogue: 1,{_ass_time(0)},{_ass_time(hook_end_ms)},Hook,,0,0,0,,"
+                + hook_pos_tag
+                + hook_anim_tag
+                + "\\N".join(_escape_ass_text(line) for line in balanced_lines)
+            )
+    if valid_callouts:
+        # Layer 2: contextual kinetic Kurdish keyword/phrase callout cards (D-379).
+        callout_top_band_limit = round(_HOOK_TOP_BAND_MAX_Y * play_res_y / 1920)
+        callout_pos_x = play_res_x // 2
+        callout_lift_px = round(_CALLOUT_LIFT_PX * play_res_y / 1920)
+        for c_start_rel, c_end_rel, c_phrase in valid_callouts:
+            callout_face_overlaps_top = bool(
+                face_intervals
+                and any(
+                    f_start < clip_in_ms + c_end_rel
+                    and f_end > clip_in_ms + c_start_rel
+                    and f_top < callout_top_band_limit
+                    for f_start, f_end, f_top, _f_bottom in face_intervals
+                )
+            )
+            if callout_face_overlaps_top:
+                c_pos_y = round(_CALLOUT_RELOCATED_Y * play_res_y / 1920)
+                c_align = r"\an2"
+            else:
+                c_pos_y = round(_CALLOUT_TOP_Y * play_res_y / 1920)
+                c_align = r"\an8"
+            if kinetic_entrance:
+                c_place_tag = (
+                    f"\\move({callout_pos_x},{c_pos_y + callout_lift_px},"
+                    f"{callout_pos_x},{c_pos_y},0,140)"
+                )
+            else:
+                c_place_tag = f"\\pos({callout_pos_x},{c_pos_y})"
+            callout_tag = (
+                f"{{{c_align}{c_place_tag}\\fscx86\\fscy86"
+                f"\\t(0,140,\\fscx100\\fscy100)\\fad(60,220)}}"
+            )
+            events.append(
+                f"Dialogue: 2,{_ass_time(c_start_rel)},{_ass_time(c_end_rel)},"
+                f"Callout,,0,0,0,,{callout_tag}{c_phrase}"
+            )
     if speaker_metadata and speaker_turns:
         # Layer 2, above hook card and karaoke: introduce speaker with lower-third badge
         last_speaker: str | None = None
@@ -1885,7 +2985,22 @@ def build_ass(
                 )
                 if ev_end > ev_start:
                     escaped_name = _escape_ass_text(bio.name_ckb)
-                    if bio.title_ckb:
+                    if kinetic_entrance:
+                        spk_x = play_res_x - SPEAKER_TAG_THEME.margin_r
+                        spk_y = play_res_y - SPEAKER_TAG_THEME.margin_v
+                        spk_lift = round(_SPEAKER_TAG_LIFT_PX * play_res_y / 1920)
+                        spk_open = (
+                            f"{{\\an3\\move({spk_x},{spk_y + spk_lift},"
+                            f"{spk_x},{spk_y},0,180)\\fad(180,250)}}"
+                        )
+                        if bio.title_ckb:
+                            escaped_title = _escape_ass_text(bio.title_ckb)
+                            tag_text = (
+                                f"{spk_open}{escaped_name}\\N{{\\fs28\\c&H00D7FF&}}{escaped_title}"
+                            )
+                        else:
+                            tag_text = f"{spk_open}{escaped_name}"
+                    elif bio.title_ckb:
                         escaped_title = _escape_ass_text(bio.title_ckb)
                         tag_text = (
                             f"{{\\fad(250,250)}}{escaped_name}\\N"
@@ -1932,17 +3047,7 @@ def build_ass(
     for sentence in sentences:
         if style is CaptionStyle.BROADCAST_STUDIO:
             b_words = max_words_per_event if max_words_per_event is not None else 4
-            chunks = chunk_caption_events(
-                sentence.words,
-                max_words=b_words,
-                max_chars=max_chars_per_line,
-                max_width_px=max_popup_width_px,
-                font_name=font_name,
-                font_size=font_size,
-                fonts_dir=fonts_dir,
-                canvas_width=play_res_x,
-                canvas_height=play_res_y,
-            )
+            chunks = chunk_sentence(sentence.words, b_words)
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
                 end_ms = chunk[-1].end_ms
@@ -1968,22 +3073,14 @@ def build_ass(
                     chunk_text = " ".join(parts)
                 else:
                     chunk_text = " ".join(_escape_ass_text(w.w) for w in chunk)
+                if kinetic_entrance:
+                    chunk_text = f"{{\\fad(50,0)}}{chunk_text}"
                 events.append(event(chunk[0].start_ms, end_ms, chunk_text, style_name=style_name))
             continue
 
         if style is CaptionStyle.KINETIC_POP:
             k_words = max_words_per_event if max_words_per_event is not None else 3
-            chunks = chunk_caption_events(
-                sentence.words,
-                max_words=k_words,
-                max_chars=max_chars_per_line,
-                max_width_px=max_popup_width_px,
-                font_name=font_name,
-                font_size=font_size,
-                fonts_dir=fonts_dir,
-                canvas_width=play_res_x,
-                canvas_height=play_res_y,
-            )
+            chunks = chunk_sentence(sentence.words, k_words)
             for chunk_idx, chunk in enumerate(chunks):
                 following = (
                     chunks[chunk_idx + 1][0].start_ms if chunk_idx + 1 < len(chunks) else None
@@ -2052,17 +3149,7 @@ def build_ass(
 
         if style is CaptionStyle.VIRAL_POPUP:
             v_words = max_words_per_event if max_words_per_event is not None else 2
-            chunks = chunk_caption_events(
-                sentence.words,
-                max_words=v_words,
-                max_chars=max_chars_per_line,
-                max_width_px=max_popup_width_px,
-                font_name=font_name,
-                font_size=font_size,
-                fonts_dir=fonts_dir,
-                canvas_width=play_res_x,
-                canvas_height=play_res_y,
-            )
+            chunks = chunk_sentence(sentence.words, v_words)
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
                 end_ms = chunk[-1].end_ms
@@ -2092,17 +3179,7 @@ def build_ass(
 
         if style is CaptionStyle.RTL_WORD_HIGHLIGHT:
             r_words = max_words_per_event if max_words_per_event is not None else POPUP_MAX_WORDS
-            chunks = chunk_caption_events(
-                sentence.words,
-                max_words=r_words,
-                max_chars=max_chars_per_line,
-                max_width_px=max_popup_width_px,
-                font_name=font_name,
-                font_size=font_size,
-                fonts_dir=fonts_dir,
-                canvas_width=play_res_x,
-                canvas_height=play_res_y,
-            )
+            chunks = chunk_sentence(sentence.words, r_words)
             for index, chunk in enumerate(chunks):
                 following = chunks[index + 1][0].start_ms if index + 1 < len(chunks) else None
                 end_ms = chunk[-1].end_ms
@@ -2165,29 +3242,25 @@ def build_ass(
                 canvas_width=play_res_x,
                 canvas_height=play_res_y,
             )
-            style_name = choose_style(sentence.start_ms, sentence.end_ms)
-            events.append(
-                event(
-                    sentence.start_ms,
-                    sentence.end_ms,
-                    "\\N".join(render(line) for line in lines),
-                    style_name=style_name,
+            if style is CaptionStyle.WORD_HIGHLIGHT:
+                emit_word_highlight_events(sentence.start_ms, sentence.end_ms, lines)
+            else:
+                style_name = choose_style(sentence.start_ms, sentence.end_ms)
+                line_body = "\\N".join(render(line) for line in lines)
+                if kinetic_entrance:
+                    line_body = f"{{\\fad(50,0)}}{line_body}"
+                events.append(
+                    event(
+                        sentence.start_ms,
+                        sentence.end_ms,
+                        line_body,
+                        style_name=style_name,
+                    )
                 )
-            )
             continue
         # One event per popup. Each is short enough to fit one line, so no newline appears and
         # libass is never asked to lay a paragraph over live video.
-        chunks = chunk_caption_events(
-            sentence.words,
-            max_words=max_words_per_event,
-            max_chars=max_chars_per_line,
-            max_width_px=max_popup_width_px,
-            font_name=font_name,
-            font_size=font_size,
-            fonts_dir=fonts_dir,
-            canvas_width=play_res_x,
-            canvas_height=play_res_y,
-        )
+        chunks = chunk_sentence(sentence.words, max_words_per_event)
         for index, chunk in enumerate(chunks):
             # Hold a popup until the next one starts when the hole between them is short: a
             # caption that vanishes for a fifth of a second reads as a glitch, not as a beat.
@@ -2197,8 +3270,14 @@ def build_ass(
             end_ms = chunk[-1].end_ms
             if following is not None and following - end_ms <= _POPUP_HOLD_MS:
                 end_ms = following
-            style_name = choose_style(chunk[0].start_ms, end_ms)
-            events.append(event(chunk[0].start_ms, end_ms, render(chunk), style_name=style_name))
+            if style is CaptionStyle.WORD_HIGHLIGHT:
+                emit_word_highlight_events(chunk[0].start_ms, end_ms, (chunk,))
+            else:
+                style_name = choose_style(chunk[0].start_ms, end_ms)
+                chunk_body = render(chunk)
+                if kinetic_entrance:
+                    chunk_body = f"{{\\fad(50,0)}}{chunk_body}"
+                events.append(event(chunk[0].start_ms, end_ms, chunk_body, style_name=style_name))
 
     return header + "\n" + "\n".join(_mark_right_to_left(e) for e in events) + "\n"
 
@@ -2461,7 +3540,17 @@ def verify_caption_text(
                 clean_text = re.sub(r"\\[Nn]", " ", clean_text).strip()
                 if clean_text:
                     all_lines.append(clean_text)
-                    if style_name not in {"Hook", "SpeakerTag", "EndCard", "HookBanner"}:
+                    if style_name not in {
+                        "Hook",
+                        "Callout",
+                        "SpeakerTag",
+                        "EndCard",
+                        "HookBanner",
+                        "KurdishHighlight",
+                        "KurdishTopHighlight",
+                        "KurdishPlateHighlight",
+                        "KurdishTopPlateHighlight",
+                    }:
                         dialogue_lines.append(clean_text)
 
     if not dialogue_lines and all_lines:
@@ -2682,7 +3771,7 @@ def verify_caption_integrity(
 def mobile_caption_layout(
     sentences: Sequence[Sentence],
     *,
-    font_name: str = "Noto Naskh Arabic",
+    font_name: str = DEFAULT_CAPTION_FONT,
     font_size: int = RESTRAINED_MOBILE_FONT_SIZE,
     play_res_x: int = 1080,
     play_res_y: int = 1920,
@@ -2704,6 +3793,10 @@ def mobile_caption_layout(
     hook_banner: HookBannerConfig | None = None,
     keyword_emphasis: bool = True,
     margin_v: int | None = None,
+    merge_short_orphans: bool = False,
+    excited_intervals_ms: Sequence[tuple[int, int]] = (),
+    callout_cards: Sequence[tuple[int, int, str]] = (),
+    kinetic_entrance: bool = False,
 ) -> str:
     """Generate and verify restrained, phone-optimized Kurdish captions (T12).
 
@@ -2742,6 +3835,10 @@ def mobile_caption_layout(
         hook_banner=hook_banner,
         keyword_emphasis=keyword_emphasis,
         margin_v=margin_v,
+        merge_short_orphans=merge_short_orphans,
+        excited_intervals_ms=excited_intervals_ms,
+        callout_cards=callout_cards,
+        kinetic_entrance=kinetic_entrance,
     )
 
     expected_words: Sequence[str] | None = (

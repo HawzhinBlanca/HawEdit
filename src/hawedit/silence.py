@@ -11,8 +11,13 @@ clip's duration and its source span.
 
 from __future__ import annotations
 
+import array
+import math
+import sys
+import wave
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Final
 
 from hawedit.clip import Clip, ClipTranscript, Output
@@ -20,21 +25,47 @@ from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
 
 __all__ = [
+    "CUT_AUDIO_FADE_MS",
     "DEFAULT_SILENCE_THRESHOLD_MS",
     "DEFAULT_TARGET_GAP_MS",
     "KURDISH_FILLER_TOKENS",
     "SilencePlan",
     "SilencePolicy",
+    "audio_cut_fade_filters",
     "plan_silence_tightening",
     "remap_timestamp",
     "silence_trim_filter",
     "tighten_clip",
+    "tighten_ctc_word_onsets",
     "tighten_sentences",
     "tighten_silence",
 ]
 
+CUT_AUDIO_FADE_MS: Final = 30
 DEFAULT_SILENCE_THRESHOLD_MS: Final = 600
 DEFAULT_TARGET_GAP_MS: Final = 150
+_MIN_CUT_PADDING_MS: Final = 30
+_MAX_CUT_PADDING_MS: Final = 200
+_SILENCE_FLOOR_DB: Final = -120.0
+_MIN_VOICED_WORD_MS: Final = 120
+_MAX_LEADING_BLEED_MS: Final = 60
+_BLEED_BELOW_PEAK_DB: Final = 6.0
+
+
+def _two_sided_keep_ms(
+    target_gap_ms: int,
+    *,
+    enforce_min_padding: bool = False,
+) -> tuple[int, int]:
+    """Split retained silence across both cut edges (capped at 200 ms; >=30 ms when gap permits)."""
+    if enforce_min_padding or target_gap_ms >= 2 * _MIN_CUT_PADDING_MS:
+        keep_before = min(_MAX_CUT_PADDING_MS, max(_MIN_CUT_PADDING_MS, target_gap_ms // 2))
+        keep_after = min(_MAX_CUT_PADDING_MS, max(_MIN_CUT_PADDING_MS, target_gap_ms - keep_before))
+        return keep_before, keep_after
+    keep_before = min(_MAX_CUT_PADDING_MS, target_gap_ms // 2)
+    keep_after = min(_MAX_CUT_PADDING_MS, target_gap_ms - keep_before)
+    return keep_before, keep_after
+
 
 # Conversational Kurdish filler tokens and hesitation markers that add zero semantic value
 KURDISH_FILLER_TOKENS: Final[frozenset[str]] = frozenset(
@@ -42,6 +73,8 @@ KURDISH_FILLER_TOKENS: Final[frozenset[str]] = frozenset(
         "یەعنی",
         "یەعنى",
         "ئەها",
+        "ئێ",
+        "ئا",
         "وەڵا",
         "وەڵڵا",
         "بەوەڵا",
@@ -65,6 +98,24 @@ KURDISH_FILLER_TOKENS: Final[frozenset[str]] = frozenset(
         "بۆ نموونە",
         "وەک وتم",
         "وەکو وتم",
+        "نازانم چی و چی",
+        "نازانم چی",
+        "و نازانم چی",
+    }
+)
+
+# Intentional Kurdish emphatic reduplications (e.g. `زۆر زۆر` = "very very", `هێواش هێواش` =
+# "slowly slowly") that must never be mistaken for 1-word stutters when `preserve_emphatic_repeats`
+# is enabled (D-369).
+_KURDISH_EMPHATIC_REPEATS: Final[frozenset[str]] = frozenset(
+    {
+        "زۆر",
+        "جوان",
+        "هێواش",
+        "خێرا",
+        "یەک",
+        "کەم",
+        "تۆزێک",
     }
 )
 
@@ -75,7 +126,8 @@ def _identify_filler_words(
     words: Sequence[Word],
     filler_tokens: Collection[str] | None,
     *,
-    detect_restarts: bool = True,
+    detect_restarts: bool = False,
+    preserve_emphatic_repeats: bool = False,
 ) -> tuple[list[bool], int]:
     """Identify filler words in a sequence, handling punctuation and multi-word phrases.
 
@@ -104,10 +156,19 @@ def _identify_filler_words(
     if detect_restarts and len(words) >= 2:
         # 1. False-start detection: truncated word prefixed to following word within 1.5s
         for i in range(len(words) - 1):
-            w1 = cleaned_words[i]
+            # A shared prefix is also ordinary morphology (e.g. "we went").
+            # Only an explicitly marked partial token supplies restart evidence.
+            marked = cleaned_words[i].endswith(("-", "…"))
+            w1 = cleaned_words[i].rstrip("-…")
             w2 = cleaned_words[i + 1]
             gap_ms = words[i + 1].start_ms - words[i].end_ms
-            if 0 <= gap_ms <= 1500 and len(w1) >= 2 and len(w2) > len(w1) and w2.startswith(w1):
+            if (
+                marked
+                and 0 <= gap_ms <= 1500
+                and len(w1) >= 2
+                and len(w2) > len(w1)
+                and w2.startswith(w1)
+            ):
                 is_filler[i] = True
 
         # 2. Repeated n-gram detection (n=3, 2, 1 within 3s)
@@ -115,6 +176,13 @@ def _identify_filler_words(
             for i in range(len(words) - 2 * n + 1):
                 chunk1 = tuple(cleaned_words[i : i + n])
                 chunk2 = tuple(cleaned_words[i + n : i + 2 * n])
+                if (
+                    preserve_emphatic_repeats
+                    and n == 1
+                    and chunk1
+                    and chunk1[0] in _KURDISH_EMPHATIC_REPEATS
+                ):
+                    continue
                 if chunk1 and chunk1 == chunk2 and not any(is_filler[i + k] for k in range(n)):
                     gap_ms = words[i + n].start_ms - words[i + n - 1].end_ms
                     if 0 <= gap_ms <= 3000:
@@ -143,6 +211,7 @@ class SilencePlan:
     protected_intervals_ms: tuple[tuple[int, int], ...] = ()
     review_required: bool = False
     review_reasons: tuple[str, ...] = ()
+    filler_cut_edges_ms: tuple[int, ...] = ()
 
     @property
     def effective_duration_ms(self) -> int:
@@ -245,6 +314,8 @@ def plan_silence_tightening(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    detect_restarts: bool = False,
+    preserve_emphatic_repeats: bool = False,
     speech_intervals: Sequence[tuple[int, int]] = (),
     protected_intervals: Sequence[tuple[int, int] | Any] = (),
     uncertain_intervals: Sequence[tuple[int, int]] = (),
@@ -348,7 +419,14 @@ def plan_silence_tightening(
             review_reasons=(),
         )
 
-    is_filler, excised_count = _identify_filler_words(clip_words, filler_tokens)
+    enforce_min_cut_padding = threshold_ms >= 2 * _MIN_CUT_PADDING_MS
+    is_filler, excised_count = _identify_filler_words(
+        clip_words,
+        filler_tokens,
+        detect_restarts=detect_restarts,
+        preserve_emphatic_repeats=preserve_emphatic_repeats,
+    )
+    filler_cut_edges: set[int] = set()
 
     if excised_count == 0:
         if len(clip_words) <= 1:
@@ -374,8 +452,12 @@ def plan_silence_tightening(
             gap = gap_end - gap_start
 
             if gap > threshold_ms:
-                cut_start = gap_start + target_gap_ms
-                cut_end = gap_end
+                keep_before, keep_after = _two_sided_keep_ms(
+                    target_gap_ms,
+                    enforce_min_padding=enforce_min_cut_padding,
+                )
+                cut_start = gap_start + keep_before
+                cut_end = gap_end - keep_after
                 if cut_end > cut_start:
                     raw_removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
     else:
@@ -387,10 +469,12 @@ def plan_silence_tightening(
             first_surv = clip_words[surviving_indices[0]]
             lead_cut_start = max(0, clip_words[0].start_ms - clip_in_ms)
             sil_lead = max(0, first_surv.start_ms - clip_words[surviving_indices[0] - 1].end_ms)
-            keep_lead = min(target_gap_ms, sil_lead)
+            keep_lead = min(_MAX_CUT_PADDING_MS, target_gap_ms, sil_lead)
             lead_cut_end = (first_surv.start_ms - keep_lead) - clip_in_ms
             if lead_cut_end > lead_cut_start:
                 raw_removed.append((lead_cut_start, lead_cut_end))
+                if keep_lead < _MIN_CUT_PADDING_MS:
+                    filler_cut_edges.add(clip_in_ms + lead_cut_end)
 
         # 2. Gaps between consecutive surviving words
         for idx in range(1, len(surviving_indices)):
@@ -405,8 +489,12 @@ def plan_silence_tightening(
             if not fillers_in_gap:
                 gap = gap_end - gap_start
                 if gap > threshold_ms:
-                    cut_start = gap_start + target_gap_ms
-                    cut_end = gap_end
+                    keep_before, keep_after = _two_sided_keep_ms(
+                        target_gap_ms,
+                        enforce_min_padding=enforce_min_cut_padding,
+                    )
+                    cut_start = gap_start + keep_before
+                    cut_end = gap_end - keep_after
                     if cut_end > cut_start:
                         raw_removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
             else:
@@ -414,12 +502,16 @@ def plan_silence_tightening(
                 f_last = fillers_in_gap[-1]
                 sil_before = max(0, f_first.start_ms - gap_start)
                 sil_after = max(0, gap_end - f_last.end_ms)
-                keep_before = min(target_gap_ms // 2, sil_before)
-                keep_after = min(target_gap_ms - keep_before, sil_after)
+                keep_before = min(_MAX_CUT_PADDING_MS, target_gap_ms // 2, sil_before)
+                keep_after = min(_MAX_CUT_PADDING_MS, target_gap_ms - keep_before, sil_after)
                 cut_start = gap_start + keep_before
                 cut_end = gap_end - keep_after
                 if cut_end > cut_start:
                     raw_removed.append((cut_start - clip_in_ms, cut_end - clip_in_ms))
+                    if keep_before < _MIN_CUT_PADDING_MS:
+                        filler_cut_edges.add(cut_start)
+                    if keep_after < _MIN_CUT_PADDING_MS:
+                        filler_cut_edges.add(cut_end)
 
         # 3. Trailing filler words after last surviving word
         if surviving_indices[-1] < len(clip_words) - 1:
@@ -427,11 +519,13 @@ def plan_silence_tightening(
             first_trail = clip_words[surviving_indices[-1] + 1]
             last_trail = clip_words[-1]
             sil_trail = max(0, first_trail.start_ms - last_surv.end_ms)
-            keep_trail = min(target_gap_ms, sil_trail)
+            keep_trail = min(_MAX_CUT_PADDING_MS, target_gap_ms, sil_trail)
             trail_cut_start = (last_surv.end_ms + keep_trail) - clip_in_ms
             trail_cut_end = min(clip_dur, last_trail.end_ms - clip_in_ms)
             if trail_cut_end > trail_cut_start:
                 raw_removed.append((trail_cut_start, trail_cut_end))
+                if keep_trail < _MIN_CUT_PADDING_MS:
+                    filler_cut_edges.add(clip_in_ms + trail_cut_start)
 
     # Detect preserved intervals and review triggers
     preserved_source_spans: list[tuple[int, int]] = []
@@ -484,6 +578,9 @@ def plan_silence_tightening(
         retained.append((curr_pos, clip_dur))
 
     total_removed = sum(r_end - r_start for r_start, r_end in merged_removed)
+    actual_edges = {clip_in_ms + r_start for r_start, _ in merged_removed} | {
+        clip_in_ms + r_end for _, r_end in merged_removed
+    }
 
     return SilencePlan(
         clip_in_ms=clip_in_ms,
@@ -497,6 +594,7 @@ def plan_silence_tightening(
         protected_intervals_ms=tuple(_merge_intervals(preserved_source_spans)),
         review_required=review_needed or (review_uncertain and bool(uncertain_preserve)),
         review_reasons=tuple(review_reasons),
+        filler_cut_edges_ms=tuple(sorted(filler_cut_edges & actual_edges)),
     )
 
 
@@ -518,28 +616,67 @@ def remap_timestamp(t_source_ms: int, plan: SilencePlan) -> int:
     return t_clip - cumulative_shift
 
 
-def silence_trim_filter(retained_intervals_ms: Sequence[tuple[int, int]]) -> str:
-    """Generate FFmpeg filtergraph segments to trim and concatenate retained intervals.
+def audio_cut_fade_filters(
+    duration_ms: int,
+    *,
+    fade_in: bool = False,
+    fade_out: bool = False,
+    fade_ms: int = CUT_AUDIO_FADE_MS,
+) -> tuple[str, ...]:
+    """Return `qsin` audio fade filter term(s) clamped safely for segment cut boundaries (D-351).
+
+    Clamps fade duration to half the segment length (`duration_ms / 2`) so segments shorter
+    than `2 * fade_ms` (`60 ms`) never overlap fade-in and fade-out or produce negative `st`.
+    """
+    if duration_ms <= 0 or fade_ms <= 0 or (not fade_in and not fade_out):
+        return ()
+    dur_s = duration_ms / 1000.0
+    fade_s = min(fade_ms / 1000.0, dur_s / 2.0)
+    if fade_s <= 0.0:
+        return ()
+    terms: list[str] = []
+    if fade_in:
+        terms.append(f"afade=t=in:st=0:d={fade_s:.3f}:curve=qsin")
+    if fade_out:
+        fade_out_st = max(0.0, dur_s - fade_s)
+        terms.append(f"afade=t=out:st={fade_out_st:.3f}:d={fade_s:.3f}:curve=qsin")
+    return tuple(terms)
+
+
+def silence_trim_filter(
+    retained_intervals_ms: Sequence[tuple[int, int]],
+    *,
+    video_in: str = "[0:v]",
+) -> str:
+    """Generate FFmpeg filtergraph segments to trim, fade cuts, and concat retained intervals.
 
     Returns empty string if retained_intervals_ms has <= 1 interval.
     Outputs video pad [v_tightened] and audio pad [a_tightened].
+    When ``video_in`` is an intermediate filter pad (not ``"[0:v]"``), splits it across
+    all retained intervals so FFmpeg can fan it into each ``trim`` branch.
     """
     if len(retained_intervals_ms) <= 1:
         return ""
 
     parts: list[str] = []
     concat_inputs: list[str] = []
+    n = len(retained_intervals_ms)
+    use_split = video_in != "[0:v]"
+    if use_split:
+        split_pads = "".join(f"[v_in_{idx}]" for idx in range(n))
+        parts.append(f"{video_in}split={n}{split_pads}")
     for idx, (start_ms, end_ms) in enumerate(retained_intervals_ms):
         s_sec = start_ms / 1000.0
         e_sec = end_ms / 1000.0
+        fades = audio_cut_fade_filters(end_ms - start_ms, fade_in=(idx > 0), fade_out=(idx < n - 1))
+        a_chain = ",".join(["asetpts=PTS-STARTPTS", *fades])
+        v_src = f"[v_in_{idx}]" if use_split else video_in
         parts.append(
-            f"[0:v]trim=start={s_sec:.3f}:end={e_sec:.3f},setpts=PTS-STARTPTS[v{idx}];"
-            f"[0:a]atrim=start={s_sec:.3f}:end={e_sec:.3f},asetpts=PTS-STARTPTS[a{idx}]"
+            f"{v_src}trim=start={s_sec:.3f}:end={e_sec:.3f},setpts=PTS-STARTPTS[v{idx}];"
+            f"[0:a]atrim=start={s_sec:.3f}:end={e_sec:.3f},{a_chain}[a{idx}]"
         )
         concat_inputs.append(f"[v{idx}][a{idx}]")
-    parts.append(
-        f"{''.join(concat_inputs)}concat=n={len(retained_intervals_ms)}:v=1:a=1[v_tightened][a_tightened]"
-    )
+    parts.append(f"{''.join(concat_inputs)}concat=n={n}:v=1:a=1[v_tightened][a_tightened]")
     return ";".join(parts)
 
 
@@ -549,6 +686,8 @@ def tighten_silence(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    detect_restarts: bool = False,
+    preserve_emphatic_repeats: bool = False,
     speech_intervals: Sequence[tuple[int, int]] = (),
     protected_intervals: Sequence[tuple[int, int] | Any] = (),
     uncertain_intervals: Sequence[tuple[int, int]] = (),
@@ -584,7 +723,12 @@ def tighten_silence(
     if not words:
         return (), 0
 
-    is_filler, excised_count = _identify_filler_words(words, filler_tokens)
+    is_filler, excised_count = _identify_filler_words(
+        words,
+        filler_tokens,
+        detect_restarts=detect_restarts,
+        preserve_emphatic_repeats=preserve_emphatic_repeats,
+    )
     surviving_words = [w for i, w in enumerate(words) if not is_filler[i]]
     if len(surviving_words) <= 1 and excised_count == 0:
         return tuple(words), 0
@@ -598,6 +742,8 @@ def tighten_silence(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         filler_tokens=filler_tokens,
+        detect_restarts=detect_restarts,
+        preserve_emphatic_repeats=preserve_emphatic_repeats,
         speech_intervals=speech_intervals,
         protected_intervals=protected_intervals,
         uncertain_intervals=uncertain_intervals,
@@ -631,6 +777,8 @@ def tighten_sentences(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    detect_restarts: bool = False,
+    preserve_emphatic_repeats: bool = False,
     speech_intervals: Sequence[tuple[int, int]] = (),
     protected_intervals: Sequence[tuple[int, int] | Any] = (),
     uncertain_intervals: Sequence[tuple[int, int]] = (),
@@ -657,6 +805,8 @@ def tighten_sentences(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         filler_tokens=filler_tokens,
+        detect_restarts=detect_restarts,
+        preserve_emphatic_repeats=preserve_emphatic_repeats,
         speech_intervals=speech_intervals,
         protected_intervals=protected_intervals,
         uncertain_intervals=uncertain_intervals,
@@ -665,7 +815,7 @@ def tighten_sentences(
         policy=policy,
     )
 
-    if not filler_tokens:
+    if filler_tokens is None and not detect_restarts:
         reconstructed: list[Sentence] = []
         word_offset = 0
         for s in sentences:
@@ -675,7 +825,12 @@ def tighten_sentences(
             word_offset += count
         return tuple(reconstructed), total_removed
 
-    is_filler, _ = _identify_filler_words(all_words, filler_tokens)
+    is_filler, _ = _identify_filler_words(
+        all_words,
+        filler_tokens,
+        detect_restarts=detect_restarts,
+        preserve_emphatic_repeats=preserve_emphatic_repeats,
+    )
 
     surviving_tags = [sentence_word_tags[i] for i, f in enumerate(is_filler) if not f]
     by_sentence: dict[int, list[Word]] = {i: [] for i in range(len(sentences))}
@@ -700,6 +855,8 @@ def tighten_clip(
     threshold_ms: int = DEFAULT_SILENCE_THRESHOLD_MS,
     target_gap_ms: int = DEFAULT_TARGET_GAP_MS,
     filler_tokens: Collection[str] | None = None,
+    detect_restarts: bool = False,
+    preserve_emphatic_repeats: bool = False,
     speech_intervals: Sequence[tuple[int, int]] = (),
     protected_intervals: Sequence[tuple[int, int] | Any] = (),
     uncertain_intervals: Sequence[tuple[int, int]] = (),
@@ -716,6 +873,8 @@ def tighten_clip(
         threshold_ms=threshold_ms,
         target_gap_ms=target_gap_ms,
         filler_tokens=filler_tokens,
+        detect_restarts=detect_restarts,
+        preserve_emphatic_repeats=preserve_emphatic_repeats,
         speech_intervals=speech_intervals,
         protected_intervals=protected_intervals,
         uncertain_intervals=uncertain_intervals,
@@ -752,3 +911,278 @@ def tighten_clip(
     )
 
     return updated_clip, total_removed
+
+
+def _decode_pcm_frame_rms_db(
+    raw: bytes,
+    *,
+    sampwidth: int,
+    nchannels: int,
+    frames_per_win: int,
+) -> list[float]:
+    """Compute per-frame RMS energy in dBFS from uncompressed little-endian PCM bytes."""
+    samples_per_win = frames_per_win * nchannels
+    if samples_per_win <= 0:
+        return []
+
+    samples: Sequence[int]
+    if sampwidth == 2:
+        arr_i16 = array.array("h")
+        arr_i16.frombytes(raw)
+        if sys.byteorder != "little":
+            arr_i16.byteswap()
+        samples = arr_i16
+        full_scale = 32768.0
+    elif sampwidth == 1:
+        arr_u8 = array.array("B")
+        arr_u8.frombytes(raw)
+        samples = [b - 128 for b in arr_u8]
+        full_scale = 128.0
+    elif sampwidth == 3:
+        samples = [
+            int.from_bytes(raw[k : k + 3], "little", signed=True) for k in range(0, len(raw) - 2, 3)
+        ]
+        full_scale = 8388608.0
+    elif sampwidth == 4:
+        arr_i32 = array.array("i")
+        arr_i32.frombytes(raw)
+        if sys.byteorder != "little":
+            arr_i32.byteswap()
+        samples = arr_i32
+        full_scale = 2147483648.0
+    else:
+        raise ValueError(f"unsupported PCM sample width: {sampwidth} bytes")
+
+    total_samples = len(samples)
+    dbs: list[float] = []
+    for start in range(0, total_samples - samples_per_win + 1, samples_per_win):
+        win = samples[start : start + samples_per_win]
+        mean_sq = sum(s * s for s in win) / samples_per_win
+        if mean_sq <= 0.0:
+            dbs.append(_SILENCE_FLOOR_DB)
+        else:
+            dbs.append(20.0 * math.log10(math.sqrt(mean_sq) / full_scale))
+    return dbs
+
+
+def _find_voiced_onset_index(
+    frame_dbs: Sequence[float],
+    voiced: Sequence[bool],
+    *,
+    peak_db: float,
+    frame_ms: int,
+    min_leading_silence_ms: int,
+) -> int:
+    """Locate the true voiced onset frame index inside a CTC-aligned word span.
+
+    Starts from the first voiced frame and also advances past a genuine leading silence run
+    (>= ``min_leading_silence_ms``) when preceded only by brief, weak previous-word decay
+    bleed or a single-frame click (<= 60 ms total voiced, >= 6 dB below the word peak).
+    """
+    onset_idx = next(i for i, is_v in enumerate(voiced) if is_v)
+    max_bleed_frames = _MAX_LEADING_BLEED_MS // frame_ms
+    min_sil_frames = math.ceil(min_leading_silence_ms / frame_ms)
+    bleed_ceiling_db = peak_db - _BLEED_BELOW_PEAK_DB
+
+    voiced_before = 0
+    idx = 0
+    n_frames = len(voiced)
+    while idx < n_frames:
+        if voiced[idx]:
+            voiced_before += 1
+            if voiced_before > max_bleed_frames or frame_dbs[idx] > bleed_ceiling_db:
+                break
+            idx += 1
+        else:
+            run_end = idx
+            while run_end < n_frames and not voiced[run_end]:
+                run_end += 1
+            if (run_end - idx) >= min_sil_frames and run_end < n_frames:
+                onset_idx = run_end
+            idx = run_end
+    return onset_idx
+
+
+def tighten_ctc_word_onsets(
+    words: Sequence[Word],
+    audio_path: str | Path,
+    *,
+    min_word_ms: int = 550,
+    min_leading_silence_ms: int = 180,
+    pad_before_onset_ms: int = 25,
+    frame_ms: int = 20,
+    drop_db: float = 22.0,
+    floor_db: float = -38.0,
+    trim_trailing: bool = True,
+    min_trailing_silence_ms: int = 250,
+    pad_after_offset_ms: int = 35,
+) -> tuple[Word, ...]:
+    """Tighten CTC-aligned word boundaries using PCM audio energy VAD (D-377).
+
+    CTC forced alignment can stretch a word's start timestamp backward across a pre-word pause
+    (or stretch its end timestamp across a post-word pause), hiding 0.5-0.9 s dead-air spans
+    behind a 0 ms word-to-word gap so ``plan_silence_tightening`` never sees them.
+
+    For each word with duration >= ``min_word_ms``, computes ``frame_ms`` RMS dBFS windows
+    inside ``[word.start_ms, word.end_ms]`` using stdlib ``wave`` + ``array``. Advances
+    ``start_ms`` to ``onset_ms - pad_before_onset_ms`` when the leading unvoiced span is at
+    least ``min_leading_silence_ms`` and the remaining voiced span is at least 120 ms.
+    Optionally retracts ``end_ms`` to ``offset_ms + pad_after_offset_ms`` when the trailing
+    unvoiced tail is at least ``min_trailing_silence_ms`` and the remaining voiced span is
+    at least 120 ms.
+
+    Fails loudly on missing, unreadable, compressed, empty, or truncated WAV files (zero
+    silent fallbacks).
+    """
+    if min_word_ms <= 0:
+        raise ValueError(f"min_word_ms must be positive, got {min_word_ms}")
+    if min_leading_silence_ms <= 0:
+        raise ValueError(f"min_leading_silence_ms must be positive, got {min_leading_silence_ms}")
+    if pad_before_onset_ms < 0:
+        raise ValueError(f"pad_before_onset_ms cannot be negative, got {pad_before_onset_ms}")
+    if frame_ms <= 0:
+        raise ValueError(f"frame_ms must be positive, got {frame_ms}")
+    if not math.isfinite(drop_db) or drop_db <= 0.0:
+        raise ValueError(f"drop_db must be finite and positive, got {drop_db}")
+    if not math.isfinite(floor_db) or floor_db > 0.0:
+        raise ValueError(f"floor_db must be finite and <= 0.0 dBFS, got {floor_db}")
+    if min_trailing_silence_ms <= 0:
+        raise ValueError(f"min_trailing_silence_ms must be positive, got {min_trailing_silence_ms}")
+    if pad_after_offset_ms < 0:
+        raise ValueError(f"pad_after_offset_ms cannot be negative, got {pad_after_offset_ms}")
+
+    wav_path = Path(audio_path)
+    if not wav_path.exists():
+        raise FileNotFoundError(f"audio WAV not found: {wav_path}")
+    if not wav_path.is_file():
+        raise ValueError(f"audio path is not a regular file: {wav_path}")
+
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            comptype = wf.getcomptype()
+            if comptype != "NONE":
+                raise ValueError(f"unsupported compressed WAV format {comptype!r} in {wav_path}")
+            sample_rate = wf.getframerate()
+            nchannels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            nframes = wf.getnframes()
+            if sample_rate <= 0 or nchannels <= 0 or sampwidth not in (1, 2, 3, 4):
+                raise ValueError(
+                    f"invalid WAV parameters in {wav_path}: "
+                    f"rate={sample_rate}, channels={nchannels}, sampwidth={sampwidth}"
+                )
+            if nframes <= 0:
+                raise ValueError(f"audio WAV contains zero frames: {wav_path}")
+
+            if not words:
+                return ()
+
+            frames_per_win = max(1, (sample_rate * frame_ms) // 1000)
+            bytes_per_frame = sampwidth * nchannels
+
+            tightened: list[Word] = []
+            for word in words:
+                dur_ms = word.end_ms - word.start_ms
+                if dur_ms < min_word_ms:
+                    tightened.append(word)
+                    continue
+
+                s_frame = (word.start_ms * sample_rate) // 1000
+                e_frame = min(nframes, (word.end_ms * sample_rate) // 1000)
+                if s_frame >= nframes or e_frame - s_frame < frames_per_win:
+                    tightened.append(word)
+                    continue
+
+                wf.setpos(s_frame)
+                raw = wf.readframes(e_frame - s_frame)
+
+                expected_bytes = (e_frame - s_frame) * bytes_per_frame
+                if len(raw) != expected_bytes:
+                    raise ValueError(
+                        f"truncated WAV audio data in {wav_path}: "
+                        f"expected {expected_bytes} bytes, got {len(raw)}"
+                    )
+
+                frame_dbs = _decode_pcm_frame_rms_db(
+                    raw,
+                    sampwidth=sampwidth,
+                    nchannels=nchannels,
+                    frames_per_win=frames_per_win,
+                )
+                if not frame_dbs:
+                    tightened.append(word)
+                    continue
+
+                peak_db = max(frame_dbs)
+                threshold_db = max(floor_db, peak_db - drop_db)
+                voiced = [db >= threshold_db for db in frame_dbs]
+                if not any(voiced):
+                    tightened.append(word)
+                    continue
+
+                onset_idx = _find_voiced_onset_index(
+                    frame_dbs,
+                    voiced,
+                    peak_db=peak_db,
+                    frame_ms=frame_ms,
+                    min_leading_silence_ms=min_leading_silence_ms,
+                )
+                last_voiced_idx = (
+                    len(voiced) - 1 - next(i for i, is_v in enumerate(reversed(voiced)) if is_v)
+                )
+                if last_voiced_idx < onset_idx:
+                    tightened.append(word)
+                    continue
+
+                leading_unvoiced_ms = onset_idx * frame_ms
+                onset_ms = word.start_ms + leading_unvoiced_ms
+                offset_end_ms = min(word.end_ms, word.start_ms + (last_voiced_idx + 1) * frame_ms)
+                voiced_span_ms = offset_end_ms - onset_ms
+
+                new_start = word.start_ms
+                new_end = word.end_ms
+
+                if (
+                    leading_unvoiced_ms >= min_leading_silence_ms
+                    and voiced_span_ms >= _MIN_VOICED_WORD_MS
+                ):
+                    cand_start = max(word.start_ms, onset_ms - pad_before_onset_ms)
+                    if word.end_ms - cand_start >= _MIN_VOICED_WORD_MS:
+                        new_start = cand_start
+
+                if trim_trailing:
+                    trailing_unvoiced_ms = (len(voiced) - 1 - last_voiced_idx) * frame_ms
+                    if (
+                        trailing_unvoiced_ms >= min_trailing_silence_ms
+                        and voiced_span_ms >= _MIN_VOICED_WORD_MS
+                    ):
+                        cand_end = min(word.end_ms, offset_end_ms + pad_after_offset_ms)
+                        if cand_end - new_start >= _MIN_VOICED_WORD_MS:
+                            new_end = cand_end
+
+                if tightened and new_start < tightened[-1].start_ms:
+                    new_start = tightened[-1].start_ms
+
+                if (
+                    new_end - new_start < _MIN_VOICED_WORD_MS
+                    or new_start < word.start_ms
+                    or new_end > word.end_ms
+                ):
+                    new_start = word.start_ms
+                    new_end = word.end_ms
+
+                if new_start == word.start_ms and new_end == word.end_ms:
+                    tightened.append(word)
+                else:
+                    tightened.append(
+                        Word(
+                            w=word.w,
+                            start_ms=new_start,
+                            end_ms=new_end,
+                            conf=word.conf,
+                        )
+                    )
+    except (wave.Error, EOFError) as exc:
+        raise ValueError(f"corrupt or unreadable WAV file {wav_path}: {exc}") from exc
+
+    return tuple(tightened)

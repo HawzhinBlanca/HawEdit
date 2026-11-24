@@ -22,13 +22,17 @@ from typing import Any
 import pytest
 
 from hawedit.gemini import API_ROOT, GeminiJudge, VertexGeminiJudge
+from hawedit.judge import JUDGE_SHADOW, KURDISH_EDITORIAL_JUDGE
 from hawedit.studio_billing import BillingPolicy, GuardedGeminiTransport
 from hawedit.studio_submissions import StudioStorageError
 from hawedit.windows_security import create_private_directory
 from hawedit.workflow_recovery import ExternalReconciliationError
 
-BASE = API_ROOT + "/models/gemini-2.5-pro"
-VERTEX = "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/models/gemini-2.5-pro"
+BASE = API_ROOT + "/models/" + KURDISH_EDITORIAL_JUDGE
+VERTEX = (
+    "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/"
+    f"publishers/google/models/{KURDISH_EDITORIAL_JUDGE}"
+)
 JOB = "studio-" + "a" * 64
 KEY = "local-protocol-test-not-a-credential"
 
@@ -415,7 +419,7 @@ def test_studio_billing_invalid_provider_count_cannot_generate(
     "url",
     [
         BASE + ":generateContent?key=bad",
-        BASE.replace("2.5", "3.1") + ":generateContent",
+        API_ROOT + "/models/" + JUDGE_SHADOW + ":generateContent",
         "http://127.0.0.1/generateContent",
     ],
 )
@@ -536,7 +540,12 @@ def test_studio_builder_routes_judging_with_real_frames_through_injected_transpo
         if "candidates" in schema["properties"]:
             fields = {
                 "candidates": [
-                    {"in_ms": 100, "out_ms": 1700, "score": 0.9, "reason_ckb": fields["reason_ckb"]}
+                    {
+                        "start_sentence": 0,
+                        "end_sentence": 0,
+                        "score": 0.9,
+                        "reason_ckb": fields["reason_ckb"],
+                    }
                 ]
             }
         return json.dumps(

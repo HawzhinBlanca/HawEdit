@@ -39,6 +39,7 @@ from hawedit.credentials import (
     validate_hf_token,
     write_credential,
 )
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 
 __all__ = [
     "CredentialSlot",
@@ -78,11 +79,11 @@ _SLOTS: Final = (
         blocker=3,
         where="https://aistudio.google.com/apikey",
         validate=validate_gemini_key,
-        # §4 pins gemini-2.5-pro and its free tier is exactly zero. A panel that said "key
-        # accepted" and stopped would send the operator away believing Stage 4 works.
+        # §4 / D-339 pins KURDISH_EDITORIAL_JUDGE (Pro tier with zero free quota). A panel that
+        # said "key accepted" and stopped would send the operator away believing Stage 4 works.
         caveat=(
-            "A valid key is not enough on its own: §4 pins gemini-2.5-pro, whose free-tier "
-            "limit is exactly zero, so the key's Google Cloud project also needs billing "
+            f"A valid key is not enough on its own: Stage 4 pins {KURDISH_EDITORIAL_JUDGE}, whose "
+            "free-tier limit is zero, so the key's Google Cloud project also needs billing "
             "enabled (BLOCKED.md #3)."
         ),
     ),

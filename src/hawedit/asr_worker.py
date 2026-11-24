@@ -15,6 +15,10 @@ import json
 import os
 import re
 import tempfile
+
+# Prevent 1.4+ GiB CUDA allocator fragmentation on 24 GiB cards when 7B OmniASR handles
+# continuous 35-38 s music+speech regions (observed 2026-11-20 on k_jxP903t5w speech-0000).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -164,9 +168,21 @@ def _infer_request(
     raw_segments = payload.get("segments")
     if not isinstance(raw_segments, list) or not raw_segments:
         raise ValueError("ASR worker request must contain at least one speech segment")
+    raw_validate = payload.get("validate_hard_segments")
+    if raw_validate is None:
+        validate_hard_segments = True
+    elif type(raw_validate) is not bool:
+        raise ValueError("ASR worker validate_hard_segments must be a boolean")
+    else:
+        validate_hard_segments = raw_validate
     validator_path = payload.get("validator_model_dir")
-    if not isinstance(validator_path, str) or not validator_path.strip():
-        raise ValueError("ASR worker validator_model_dir must be a non-empty path")
+    if validate_hard_segments:
+        if not isinstance(validator_path, str) or not validator_path.strip():
+            raise ValueError("ASR worker validator_model_dir must be a non-empty path")
+    elif validator_path is not None:
+        raise ValueError(
+            "ASR worker cannot accept validator_model_dir when validate_hard_segments is False"
+        )
 
     root = request_path.resolve().parent
     prepared: list[_PreparedSpeechSegment] = []
@@ -175,8 +191,33 @@ def _infer_request(
             raise ValueError(f"ASR worker segment {index} must be an object")
         start_ms = _integer(item.get("start_ms"), "start_ms", index)
         end_ms = _integer(item.get("end_ms"), "end_ms", index)
+        raw_subs = item.get("sub_segments")
+        sub_segments: list[tuple[int, int]] = []
+        if raw_subs is not None:
+            if not isinstance(raw_subs, list) or len(raw_subs) < 2:
+                raise ValueError(
+                    f"ASR worker segment {index} sub_segments must be a list of at least 2 items"
+                )
+            prev_sub_end = start_ms
+            for sub_idx, sub_item in enumerate(raw_subs):
+                if not isinstance(sub_item, dict):
+                    raise ValueError(
+                        f"ASR worker segment {index} sub_segment {sub_idx} must be an object"
+                    )
+                s_start = _integer(sub_item.get("start_ms"), "sub_segments.start_ms", index)
+                s_end = _integer(sub_item.get("end_ms"), "sub_segments.end_ms", index)
+                if not prev_sub_end <= s_start < s_end <= end_ms:
+                    raise ValueError(
+                        f"ASR worker segment {index} sub_segment {sub_idx} "
+                        f"{s_start}..{s_end} escapes or overlaps {start_ms}..{end_ms}"
+                    )
+                sub_segments.append((s_start, s_end))
+                prev_sub_end = s_end
         segment = _PreparedSpeechSegment(
-            _segment_path(root, item.get("path"), index), start_ms, end_ms
+            _segment_path(root, item.get("path"), index),
+            start_ms,
+            end_ms,
+            sub_segments=tuple(sub_segments),
         )
         if not 0 < segment.duration_s <= LONG_AUDIO_THRESHOLD_S:
             raise ValueError(
@@ -237,7 +278,11 @@ def _infer_request(
         journal = (
             leases.enter_context(
                 worker_journal(
-                    checkpoint_root, request_path, prepared, Path(validator_path), expected_identity
+                    checkpoint_root,
+                    request_path,
+                    prepared,
+                    Path(validator_path) if validator_path is not None else None,
+                    expected_identity,
                 )
             )
             if checkpoint_root is not None
@@ -255,6 +300,8 @@ def _infer_request(
         def validator_factory() -> SoraniValidator:
             nonlocal selected_validator
             if selected_validator is None:
+                if validator_path is None:
+                    raise RuntimeError("ASR worker validator requested while validation is off")
                 model_dir = Path(validator_path)
                 if not model_dir.is_dir():
                     raise FileNotFoundError(
@@ -266,7 +313,11 @@ def _infer_request(
             )
 
         results, validated_by, rejected_corrections, origins = _validate_hard_segments(
-            initial, active_model, validator_factory, stop_on_failure=True
+            initial,
+            active_model,
+            validator_factory,
+            stop_on_failure=True,
+            enabled=validate_hard_segments,
         )
         if getattr(model, "adapter_name", None) != expected_identity:
             raise ValueError("ASR worker adapter identity changed during inference")

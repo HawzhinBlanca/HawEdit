@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from hawedit import models
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.models import (
     CheckpointIntegrityError,
     ModelNotProvisioned,
@@ -163,7 +164,7 @@ def test_silero_and_klpt_come_from_pip_not_a_download() -> None:
 
 
 def test_the_judge_needs_credentials_not_disk() -> None:
-    assert REGISTRY["gemini-2.5-pro"].provisioning is Provisioning.CLOUD
+    assert REGISTRY[KURDISH_EDITORIAL_JUDGE].provisioning is Provisioning.CLOUD
 
 
 def test_forced_alignment_is_our_own_code() -> None:
@@ -445,7 +446,7 @@ def test_missing_weights_lists_only_downloadable_components(tmp_path: Path) -> N
     missing = {e.model_id for e in store(tmp_path).missing_weights()}
     assert "Qwen3-VL-Embedding-2B" in missing
     assert "KLPT" not in missing, "pip components are not downloads"
-    assert "gemini-2.5-pro" not in missing, "a cloud API is not a download"
+    assert KURDISH_EDITORIAL_JUDGE not in missing, "a cloud API is not a download"
 
 
 # --- refusing to start without what a stage needs -----------------------------------------

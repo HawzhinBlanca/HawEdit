@@ -189,6 +189,7 @@ def test_studio_status_never_fabricates_readiness_or_reel(
 ) -> None:
     import hawedit.web as web
 
+    monkeypatch.setenv("HAWEDIT_PROTECTED_STUDIO", "1")
     manager = web.JobManager(tmp_path / "jobs")
     manager._jobs["old"] = web.JobInfo(
         "old", "old.mp4", legacy_status, "render", 6, 100, 1, 1, "old"

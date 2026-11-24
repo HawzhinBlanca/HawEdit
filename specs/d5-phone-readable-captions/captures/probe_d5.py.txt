@@ -1,0 +1,221 @@
+# Probe D5 (read-only against repo and D:\HawEdit-media):
+# Measure real Zar Podcast 9:16 crop geometry (faces, table objects, burned-in teaser label)
+# and test caption size/outline/safe-zone readability on real frames.
+from __future__ import annotations
+
+import subprocess
+import sys
+from dataclasses import replace
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from hawedit.captions import (
+    DEFAULT_TOP_MARGIN_V,
+    POPUP_MAX_WORDS,
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
+    CaptionStyle,
+    build_ass,
+    find_ffmpeg,
+    subtitle_filter,
+)
+from hawedit.sentences import Sentence
+from hawedit.transcripts import Word
+
+OUT = Path(sys.argv[1])
+OUT.mkdir(parents=True, exist_ok=True)
+FONTS = Path("assets/fonts").resolve()
+FF = find_ffmpeg()
+assert FF is not None
+
+EXCERPT = Path(r"D:\HawEdit-media\excerpts\zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4")
+COOKING = Path(r"D:\HawEdit-media\sources\zar-mjewr-cooking-with-hawzhin-2026-10-26__k_jxP903t5w.mp4")
+AI_FULL = Path(r"D:\HawEdit-media\sources\zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4")
+
+
+def grab_9x16(src: Path, t_s: float, out_png: Path, cx_norm: float = 0.5) -> Path:
+    # Source is 3840x2160. 9:16 crop is 1214x2160 scaled to 1080x1920.
+    crop_w = 1214
+    x_off = max(0, min(3840 - crop_w, int(round(cx_norm * 3840 - crop_w / 2))))
+    vf = f"crop={crop_w}:2160:{x_off}:0,scale=1080:1920:flags=lanczos"
+    subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{t_s:.2f}",
+            "-i",
+            str(src),
+            "-vf",
+            vf,
+            "-frames:v",
+            "1",
+            "-y",
+            str(out_png),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30.0,
+    )
+    return out_png
+
+
+def grab_16x9(src: Path, t_s: float, out_png: Path) -> Path:
+    subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{t_s:.2f}",
+            "-i",
+            str(src),
+            "-vf",
+            "scale=1280:720",
+            "-frames:v",
+            "1",
+            "-y",
+            str(out_png),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30.0,
+    )
+    return out_png
+
+
+# 1. Grab representative frames (note: cooking opening has the "لەم پۆدکاستەدا:" teaser pill!)
+frames_to_grab = []
+if EXCERPT.is_file():
+    # Sample excerpt at 5s (closeup), 40s, 90s (check wide/other closeup)
+    for t_s, tag in [(5.0, "excerpt_05s"), (35.0, "excerpt_35s"), (65.0, "excerpt_65s"), (110.0, "excerpt_110s")]:
+        p16 = grab_16x9(EXCERPT, t_s, OUT / f"{tag}_16x9.png")
+        p9 = grab_9x16(EXCERPT, t_s, OUT / f"{tag}_9x16.png")
+        frames_to_grab.append((tag, p16, p9))
+
+if COOKING.is_file():
+    p16 = grab_16x9(COOKING, 5.0, OUT / "cooking_teaser_05s_16x9.png")
+    p9 = grab_9x16(COOKING, 5.0, OUT / "cooking_teaser_05s_9x16.png")
+    frames_to_grab.append(("cooking_teaser_05s", p16, p9))
+
+if AI_FULL.is_file():
+    # Opening has lower-third nameplates at ~3s and wide two-shot around ~12s
+    for t_s, tag in [(3.0, "ai_open_03s"), (12.0, "ai_open_12s")]:
+        p16 = grab_16x9(AI_FULL, t_s, OUT / f"{tag}_16x9.png")
+        p9 = grab_9x16(AI_FULL, t_s, OUT / f"{tag}_9x16.png")
+        frames_to_grab.append((tag, p16, p9))
+
+# 2. Measure Haar faces and dark-blue teaser pill position on the 9:16 crops
+casc_dir = Path(cv2.data.haarcascades)
+frontal = cv2.CascadeClassifier(str(casc_dir / "haarcascade_frontalface_default.xml"))
+for tag, _p16, p9 in frames_to_grab:
+    im = cv2.imread(str(p9))
+    gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+    faces = frontal.detectMultiScale(gray, 1.1, 5, minSize=(40, 40))
+    face_info = [
+        (int(x), int(y), int(w), int(h), round((y + h / 2) / 1920, 3), round(h / 1920, 3))
+        for (x, y, w, h) in faces
+    ]
+    # Detect dark blue teaser pill / lower third (high B, low R, low G) in bottom half
+    b, g, r = (im[..., c].astype(int) for c in range(3))
+    blue_pill = (b > 90) & (r < 45) & (g < 50)
+    ys, xs = np.where(blue_pill[960:, :])
+    pill_info = None
+    if len(xs) > 500:
+        ys_full = ys + 960
+        pill_info = (int(xs.min()), int(ys_full.min()), int(xs.max()), int(ys_full.max()),
+                     round(float(ys_full.min()) / 1920, 3), round(float(ys_full.max()) / 1920, 3))
+    print(f"{tag:20s}: faces={face_info} blue_overlay_9x16={pill_info}")
+
+# 3. Render caption size/outline comparison over a real 9:16 Zar close-up frame
+sample_bg = OUT / "excerpt_05s_9x16.png"
+if sample_bg.is_file():
+    sent = Sentence(
+        words=(
+            Word("ژیری", 0, 400, 0.95),
+            Word("دەستکرد", 400, 900, 0.95),
+            Word("داهاتووە.", 900, 1400, 0.95),
+        ),
+        complete=True,
+    )
+    configs = [
+        ("current_64_out3_mv140", "Noto Naskh Arabic", 64, replace(VIRAL_THEME, bold=False, outline=3.0, margin_v=140)),
+        ("viral_108_out4_mv360", "Noto Naskh Arabic", 108, VIRAL_THEME),
+        ("vazir_120_out6_mv420", "Vazirmatn", 120, replace(VIRAL_THEME, outline=6.0, shadow=2.0, margin_v=420)),
+        ("vazir_128_out6_mv450", "Vazirmatn", 128, replace(VIRAL_THEME, outline=6.0, shadow=2.0, margin_v=450)),
+    ]
+    tiles = []
+    for name, fname, fsize, theme in configs:
+        ass = build_ass(
+            (sent,),
+            font_name=fname,
+            font_size=fsize,
+            theme=theme,
+            style=CaptionStyle.LINE,
+            max_words_per_event=3,
+            clip_in_ms=0,
+            clip_duration_ms=2000,
+        )
+        ass_p = OUT / f"{name}.ass"
+        ass_p.write_text(ass, encoding="utf-8")
+        out_p = OUT / f"{name}.png"
+        subprocess.run(
+            [
+                str(FF),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(sample_bg),
+                "-vf",
+                subtitle_filter(ass_p, FONTS),
+                "-frames:v",
+                "1",
+                "-y",
+                str(out_p),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30.0,
+        )
+        # Measure ink height on black background too
+        blk_p = OUT / f"{name}_blk.png"
+        subprocess.run(
+            [
+                str(FF),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=1080x1920:d=1",
+                "-vf",
+                subtitle_filter(ass_p, FONTS),
+                "-frames:v",
+                "1",
+                "-y",
+                str(blk_p),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30.0,
+        )
+        bim = cv2.imread(str(blk_p), cv2.IMREAD_GRAYSCALE)
+        ys, xs = np.where(bim > 150)
+        ink_h = int(ys.max() - ys.min() + 1) if len(ys) else 0
+        ink_w = int(xs.max() - xs.min() + 1) if len(xs) else 0
+        y_center = int((ys.min() + ys.max()) // 2) if len(ys) else 0
+        print(f"  {name:24s}: font={fname:18s} size={fsize} ink_h={ink_h}px ink_w={ink_w}px y_center={y_center}px")
+
+        im = cv2.imread(str(out_p))
+        # Downscale side-by-side tile to 540x960 for easy visual inspection
+        sm = cv2.resize(im, (540, 960))
+        cv2.putText(sm, f"{name} (ink={ink_h}px)", (10, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+        tiles.append(sm)
+    cv2.imwrite(str(OUT / "grid_d5_sizes.png"), cv2.hconcat(tiles))

@@ -26,6 +26,10 @@ class NoNaturalEos(DecodeIncomplete):
     """
 
 
+class DecoderContractError(DecodeIncomplete):
+    """Decoder implementation, SHA-256 contract, or device binding failed (never split-retried)."""
+
+
 _LOCK = threading.RLock()
 _ABSENT = object()
 _DECODER_SHA256 = "91233570765a2fbd3199f3b65508e53b1be0199cf9e33bcddf9c9b9c2f575481"
@@ -80,13 +84,15 @@ def transcribe_completed(pipeline: Any, audio_path: Path, language: str, *, nbes
         model_module = importlib.import_module("omnilingual_asr.models.wav2vec2_llama.model")
         generator = getattr(pipeline, "beam_search_generator", None)
         if importlib.metadata.version("omnilingual-asr") != "0.2.0":
-            raise DecodeIncomplete("Decoder completion contract is not validated for this version")
+            raise DecoderContractError(
+                "Decoder completion contract is not validated for this version"
+            )
         if type(generator) is not module.Wav2Vec2LlamaBeamSearchSeq2SeqGenerator:
-            raise DecodeIncomplete("Unsupported decoder implementation")
+            raise DecoderContractError("Unsupported decoder implementation")
         with Path(inspect.getfile(module)).open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if digest != _DECODER_SHA256:
-            raise DecodeIncomplete(
+            raise DecoderContractError(
                 "Installed decoder differs from the validated completion contract"
             )
         with Path(inspect.getfile(model_module)).open("rb") as stream:
@@ -95,9 +101,11 @@ def transcribe_completed(pipeline: Any, audio_path: Path, language: str, *, nbes
             model_digest != _MODEL_SHA256
             or type(generator.model) is not model_module.Wav2Vec2LlamaModel
         ):
-            raise DecodeIncomplete("Model embedding differs from the validated completion contract")
+            raise DecoderContractError(
+                "Model embedding differs from the validated completion contract"
+            )
         if "generate_hypotheses_one_segment" in vars(generator):
-            raise DecodeIncomplete("Decoder generation method was already overridden")
+            raise DecoderContractError("Decoder generation method was already overridden")
         with require_natural_completion(pipeline, nbest=nbest):
             return pipeline.transcribe([str(audio_path)], lang=[language], batch_size=1)
 
@@ -207,7 +215,7 @@ def require_natural_completion(pipeline: Any, *, nbest: int = 1) -> Iterator[Non
     with _LOCK:
         generator = getattr(pipeline, "beam_search_generator", None)
         if generator is None:
-            raise DecodeIncomplete("Decoder completion observation contract is unavailable")
+            raise DecoderContractError("Decoder completion observation contract is unavailable")
         config = getattr(generator, "config", None)
         if (
             nbest not in (1, BEAM_RETRY_NBEST)
@@ -215,17 +223,17 @@ def require_natural_completion(pipeline: Any, *, nbest: int = 1) -> Iterator[Non
             or type(getattr(config, "nbest", None)) is not int
             or config.nbest != nbest
         ):
-            raise DecodeIncomplete(
+            raise DecoderContractError(
                 "Completion observation supports the validated one-beam decoder only"
                 if nbest == 1
                 else "Completion observation supports the validated beam-5 retry decoder only"
             )
         window = getattr(config, "compression_window", None)
         if nbest != 1 and (type(window) is not int or window < 0):
-            raise DecodeIncomplete("Beam decoder compression window is unavailable")
+            raise DecoderContractError("Beam decoder compression window is unavailable")
         eos = getattr(generator, "eos_idx", None)
         if type(eos) is not int or eos < 0:
-            raise DecodeIncomplete("Decoder EOS identity is unavailable")
+            raise DecoderContractError("Decoder EOS identity is unavailable")
         model = getattr(generator, "model", None)
         method = getattr(generator, "generate_hypotheses_one_segment", None)
         if (
@@ -233,7 +241,7 @@ def require_natural_completion(pipeline: Any, *, nbest: int = 1) -> Iterator[Non
             or not callable(method)
             or not callable(getattr(model, "embed_text", None))
         ):
-            raise DecodeIncomplete("Decoder completion observation contract is unavailable")
+            raise DecoderContractError("Decoder completion observation contract is unavailable")
         config_values = dict(vars(config))
         old_override = vars(generator).get("generate_hypotheses_one_segment", _ABSENT)
         calls = 0
@@ -247,23 +255,25 @@ def require_natural_completion(pipeline: Any, *, nbest: int = 1) -> Iterator[Non
                 or type(generator.eos_idx) is not int
                 or generator.eos_idx != eos
             ):
-                raise DecodeIncomplete("Decoder identity/configuration changed during observation")
+                raise DecoderContractError(
+                    "Decoder identity/configuration changed during observation"
+                )
 
         def checked(*args: Any, **kwargs: Any) -> Any:
             nonlocal calls
             check_configuration()
             if generator.model is not model:
-                raise DecodeIncomplete("Decoder model changed before observation")
+                raise DecoderContractError("Decoder model changed before observation")
             observed = _ObservedModel(model) if nbest == 1 else _ObservedBeamModel(model)
             context_len = _one_length(kwargs.get("decoder_context_seq_lens"))
             if nbest != 1 and context_len is None:
-                raise DecodeIncomplete("Beam observation needs one segment's context length")
+                raise DecoderContractError("Beam observation needs one segment's context length")
             beam_window = window if type(window) is int else 0
             generator.model = observed
             try:
                 result = method(*args, **kwargs)
                 if generator.model is not observed:
-                    raise DecodeIncomplete("Decoder model changed during observation")
+                    raise DecoderContractError("Decoder model changed during observation")
                 if observed.last_tokens is None:
                     raise NoNaturalEos("Decoder returned without a sampled completion token")
                 if isinstance(observed, _ObservedBeamModel):
@@ -301,11 +311,11 @@ def require_natural_completion(pipeline: Any, *, nbest: int = 1) -> Iterator[Non
             yield
             check_configuration()
             if generator.generate_hypotheses_one_segment is not checked:
-                raise DecodeIncomplete("Decoder generation method changed during observation")
+                raise DecoderContractError("Decoder generation method changed during observation")
             if generator.model is not model:
-                raise DecodeIncomplete("Decoder model changed after observation")
+                raise DecoderContractError("Decoder model changed after observation")
             if calls == 0:
-                raise DecodeIncomplete("Pipeline returned without observed decoding")
+                raise DecoderContractError("Pipeline returned without observed decoding")
         finally:
             generator.model = model
             if old_override is _ABSENT:

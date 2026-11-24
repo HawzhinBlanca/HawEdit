@@ -578,7 +578,7 @@ class SegmentOrigin:
                 raise ValueError("segment origin words differ from the selected clock")
         if not isinstance(self.outcome, str):
             raise ValueError("segment origin outcome must be text")
-        if self.outcome == "not-routed":
+        if self.outcome in {"not-routed", "validator-disabled"}:
             if (
                 self.escalated
                 or self.draft != self.selected
@@ -839,8 +839,19 @@ class RawTranscript:
             )
             for origin in origins
         )
+        disabled_flags = [origin.outcome == "validator-disabled" for origin in origins]
+        if any(disabled_flags) and not all(disabled_flags):
+            raise ValueError(
+                "segment origins cannot mix validator-disabled and active validation outcomes"
+            )
+        validator_disabled = all(disabled_flags)
         for origin, decision in zip(origins, select_for_validation(scores), strict=True):
-            if origin.escalated != decision.escalate or origin.route_reason != decision.reason:
+            if validator_disabled:
+                if origin.escalated or origin.route_reason != decision.reason:
+                    raise ValueError(
+                        "validator-disabled segment origin differs from batch counterfactual policy"
+                    )
+            elif origin.escalated != decision.escalate or origin.route_reason != decision.reason:
                 raise ValueError("segment origin routing differs from original batch policy")
         accepted = {
             origin.validator

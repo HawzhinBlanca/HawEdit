@@ -44,6 +44,8 @@ from hawedit.discovery import Candidate, merge_candidates
 from hawedit.judge import (
     CANDIDATE_SLICE_TOKENS_PER_HOUR,
     FULL_TRANSCRIPT_TOKENS_PER_HOUR,
+    JUDGE_SHADOW,
+    KURDISH_EDITORIAL_JUDGE,
     MAX_JUDGE_FRAME_BYTES,
     MAX_PERSISTED_VERDICT_BYTES,
     PRO_TIER_TOKEN_CEILING,
@@ -64,10 +66,10 @@ from hawedit.judge import (
 )
 from hawedit.registry import WrongRole
 
-JUDGE = "gemini-2.5-pro"
+JUDGE = KURDISH_EDITORIAL_JUDGE
 
 
-SHADOW = "gemini-3.1-pro"
+SHADOW = JUDGE_SHADOW
 
 
 TITLE = "ڕۆژنامەوانی کوردی لە هەولێر"

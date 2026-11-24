@@ -112,7 +112,7 @@ def test_studio_profile_has_one_exact_hash_per_package() -> None:
         for line in text.splitlines()
         if line.startswith("# selected wheel ")
     ]
-    assert len(entries) == len(urls) == 133
+    assert len(entries) == len(urls) == 136
     assert len({name for name, _version, _digest in entries}) == len(entries)
     for url in urls:
         parsed = urlsplit(url)

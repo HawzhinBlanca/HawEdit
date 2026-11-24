@@ -20,7 +20,7 @@ from hawedit.clip import DiscoveryPath
 from hawedit.discovery import Candidate
 from hawedit.events import EventPersistenceError, RunEvent, RunState
 from hawedit.ingest import IngestResult
-from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import StageSkipped, run_pipeline
 from hawedit.transcripts import AsrProvenance, NormalizedTranscript, RawTranscript, Word
 
@@ -188,13 +188,13 @@ def test_pipeline_resume_is_byte_identical_after_kill_at_every_stage(
         title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
         description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
         hashtags_ckb=("#کوردی",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=100,
         clip_out_ms=4100,
     )
 
     class MockJudge:
-        model_id = "gemini-2.5-pro"
+        model_id = KURDISH_EDITORIAL_JUDGE
 
         def judge(self, request: JudgeRequest) -> JudgeVerdict:
             return replace(

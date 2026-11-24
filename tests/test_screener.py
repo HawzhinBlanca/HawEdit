@@ -13,7 +13,7 @@ import pytest
 from hawedit.clip import DiscoveryPath
 from hawedit.credentials import CredentialError
 from hawedit.discovery import Candidate, MergedCandidate
-from hawedit.judge import JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeRequest, JudgeVerdict
 from hawedit.pipeline import run_pipeline
 from hawedit.screener import (
     GeminiFlashScreener,
@@ -104,6 +104,8 @@ def test_gemini_flash_screener_success() -> None:
     }
 
     def mock_transport(req: urllib.request.Request) -> bytes:
+        assert "key=" not in req.full_url
+        assert req.get_header("X-goog-api-key") == "mock_key"
         return json.dumps(mock_response).encode("utf-8")
 
     screener = GeminiFlashScreener(api_key="mock_key", transport=mock_transport)
@@ -201,7 +203,7 @@ def _a_transcript(media_id: str = "fixture") -> RawTranscript:
 
 
 class MockEditorialJudge:
-    model_id = "gemini-2.5-pro"
+    model_id = KURDISH_EDITORIAL_JUDGE
     requires_keyframes = False
 
     def __init__(self) -> None:

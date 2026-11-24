@@ -1,0 +1,206 @@
+# Probe D7 (read-only against repo): measure Latin fallback mismatch in Noto Naskh Arabic
+# vs bundled Vazirmatn (OFL-1.1, covers both Sorani and Latin).
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from hawedit.captions import (
+    REPORT_THEME,
+    RTL_MARK,
+    VIRAL_FONT_SIZE,
+    VIRAL_THEME,
+    CaptionStyle,
+    assert_font_covers_kurdish,
+    build_ass,
+    find_ffmpeg,
+    subtitle_filter,
+)
+from hawedit.sentences import Sentence
+from hawedit.transcripts import Word
+
+OUT = Path(sys.argv[1])
+OUT.mkdir(parents=True, exist_ok=True)
+FONTS = Path("assets/fonts").resolve()
+FF = find_ffmpeg()
+assert FF is not None
+
+assert_font_covers_kurdish(FONTS / "NotoNaskhArabic-Regular.ttf")
+assert_font_covers_kurdish(FONTS / "Vazirmatn.ttf")
+print("Both NotoNaskhArabic-Regular.ttf and Vazirmatn.ttf pass assert_font_covers_kurdish.")
+
+
+def make_sentence(words_list: list[str]) -> Sentence:
+    return Sentence(
+        words=tuple(
+            Word(w=w, start_ms=i * 400, end_ms=(i + 1) * 400, conf=0.95)
+            for i, w in enumerate(words_list)
+        ),
+        complete=True,
+    )
+
+
+CASES = {
+    "mixed_brand": make_sentence(["OpusClip", "زۆر", "باشە."]),
+    "mixed_sentence": make_sentence(["ئێمە", "لە", "2026", "OpusClip", "بەکاردەهێنین."]),
+    "mixed_two_brands": make_sentence(["بەکارهێنانی", "ChatGPT", "و", "Gemini", "لە", "کوردستان."]),
+    "pure_golden": make_sentence(["ڕۆژنامەوانی", "کوردی", "لە", "هەولێر."]),
+}
+
+
+def render_png(ass_text: str, name: str, shaping: str = "complex", t_s: float = 0.2) -> Path:
+    ass_path = OUT / f"{name}.ass"
+    ass_path.write_text(ass_text, encoding="utf-8")
+    vf = subtitle_filter(ass_path, FONTS)
+    if shaping != "complex":
+        vf = vf.replace("shaping=complex", f"shaping={shaping}", 1)
+    png_path = OUT / f"{name}.png"
+    subprocess.run(
+        [
+            str(FF),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:d=2",
+            "-vf",
+            vf,
+            "-ss",
+            f"{t_s:.3f}",
+            "-frames:v",
+            "1",
+            "-y",
+            str(png_path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    return png_path
+
+
+def measure_ink_bbox(png_path: Path, x_range: tuple[int, int] | None = None) -> dict[str, int | float]:
+    img = cv2.imread(str(png_path), cv2.IMREAD_GRAYSCALE)
+    assert img is not None
+    # Bright text fill (> 150) separates ink from dark outline/shadow
+    mask = img > 150
+    if x_range is not None:
+        sub = np.zeros_like(mask)
+        sub[:, x_range[0] : x_range[1]] = mask[:, x_range[0] : x_range[1]]
+        mask = sub
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return {"w": 0, "h": 0, "px": 0, "x0": 0, "x1": 0, "y0": 0, "y1": 0}
+    return {
+        "w": int(xs.max() - xs.min() + 1),
+        "h": int(ys.max() - ys.min() + 1),
+        "px": int(len(xs)),
+        "x0": int(xs.min()),
+        "x1": int(xs.max() + 1),
+        "y0": int(ys.min()),
+        "y1": int(ys.max() + 1),
+    }
+
+
+def render_isolated_word_metrics(word_str: str, font_name: str, font_size: int, theme, tag: str) -> dict[str, int | float]:
+    s = make_sentence([word_str])
+    ass = build_ass((s,), font_name=font_name, font_size=font_size, theme=theme, style=CaptionStyle.LINE)
+    safe = "".join(c if c.isascii() and c.isalnum() else "_" for c in f"{font_name}_{font_size}_{theme.bold}_{tag}")
+    p = render_png(ass, f"iso_{safe}")
+    return measure_ink_bbox(p)
+
+
+print("\n=== Isolated Latin vs Sorani ink heights (LINE style) ===")
+for theme_name, theme, fsize in [
+    ("REPORT(64,bold=0)", REPORT_THEME, 64),
+    ("VIRAL(108,bold=1)", VIRAL_THEME, 108),
+]:
+    for font_name in ("Noto Naskh Arabic", "Vazirmatn"):
+        latin_m = render_isolated_word_metrics("OpusClip", font_name, fsize, theme, "opus")
+        digits_m = render_isolated_word_metrics("2026", font_name, fsize, theme, "2026")
+        sorani_m = render_isolated_word_metrics("کوردستان", font_name, fsize, theme, "kurd")
+        sorani_tall_m = render_isolated_word_metrics("بەکاردەهێنین", font_name, fsize, theme, "bekar")
+        ratio = round(latin_m["h"] / max(1, sorani_m["h"]), 3)
+        ratio_tall = round(latin_m["h"] / max(1, sorani_tall_m["h"]), 3)
+        print(
+            f"{theme_name:18s} | {font_name:18s} | "
+            f"OpusClip h={latin_m['h']:3d}px px={latin_m['px']:5d} | "
+            f"2026 h={digits_m['h']:3d}px | "
+            f"کوردستان h={sorani_m['h']:3d}px | "
+            f"بەکاردەهێنین h={sorani_tall_m['h']:3d}px | "
+            f"ratio(Opus/Kurd)={ratio:.3f} ratio(Opus/Bekar)={ratio_tall:.3f}"
+        )
+
+print("\n=== Mixed-line renders (VIRAL_THEME, 108pt, LINE & VIRAL_POPUP/LINE) ===")
+tiles_brand = []
+tiles_sentence = []
+for font_name in ("Noto Naskh Arabic", "Vazirmatn"):
+    tag = "noto" if font_name == "Noto Naskh Arabic" else "vazir"
+    for cname, sent in CASES.items():
+        ass = build_ass(
+            (sent,),
+            font_name=font_name,
+            font_size=VIRAL_FONT_SIZE,
+            theme=VIRAL_THEME,
+            style=CaptionStyle.LINE,
+            clip_in_ms=0,
+            clip_duration_ms=3000,
+        )
+        p = render_png(ass, f"{tag}_{cname}_viral108")
+        full_m = measure_ink_bbox(p)
+        print(f"  {tag:5s} {cname:16s} full_bbox={full_m}")
+        if cname == "mixed_brand":
+            tiles_brand.append((f"{font_name} 108pt bold", p))
+        if cname == "mixed_sentence":
+            tiles_sentence.append((f"{font_name} 108pt bold", p))
+
+    # Also test REPORT_THEME 64pt
+    p_rep = render_png(
+        build_ass((CASES["mixed_brand"],), font_name=font_name, font_size=64, theme=REPORT_THEME, style=CaptionStyle.LINE),
+        f"{tag}_mixed_brand_rep64",
+    )
+    tiles_brand.append((f"{font_name} 64pt reg", p_rep))
+
+# Also test Vazirmatn at 96pt and 84pt bold & unbolded for comparison
+from dataclasses import replace
+VAZIR_REG = replace(VIRAL_THEME, bold=False)
+for label, fsize, th in [
+    ("Vazirmatn 108pt reg", 108, VAZIR_REG),
+    ("Vazirmatn 96pt bold", 96, VIRAL_THEME),
+    ("Vazirmatn 84pt bold", 84, VIRAL_THEME),
+]:
+    p = render_png(
+        build_ass((CASES["mixed_brand"],), font_name="Vazirmatn", font_size=fsize, theme=th, style=CaptionStyle.LINE),
+        label.replace(" ", "_"),
+    )
+    tiles_brand.append((label, p))
+    print(f"  {label:20s}: {measure_ink_bbox(p)}")
+
+# Negative control check: Vazirmatn shaping=complex vs shaping=simple on pure_golden
+ass_v_gold = build_ass((CASES["pure_golden"],), font_name="Vazirmatn", font_size=64, theme=REPORT_THEME, style=CaptionStyle.LINE)
+p_vc = render_png(ass_v_gold, "vazir_golden_complex", shaping="complex")
+p_vs = render_png(ass_v_gold, "vazir_golden_simple", shaping="simple")
+im_vc = cv2.imread(str(p_vc))
+im_vs = cv2.imread(str(p_vs))
+diff_shaping = int(np.sum(np.abs(im_vc.astype(int) - im_vs.astype(int)).max(axis=2) > 5))
+print(f"\nVazirmatn shaping=complex vs simple pixel diff count: {diff_shaping}")
+
+# Build comparison grid for mixed_brand (zoomed on caption band)
+def save_crop_grid(items, out_name, y0=1400, y1=1840, x0=60, x1=1020):
+    crops = []
+    for label, p in items:
+        im = cv2.imread(str(p))
+        c = im[y0:y1, x0:x1].copy()
+        cv2.putText(c, label, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (150, 255, 150), 2)
+        cv2.rectangle(c, (0, 0), (c.shape[1] - 1, c.shape[0] - 1), (80, 80, 80), 2)
+        crops.append(c)
+    cv2.imwrite(str(OUT / out_name), cv2.vconcat(crops))
+
+save_crop_grid(tiles_brand, "grid_d7_mixed_brand.png", y0=1420, y1=1820)
+save_crop_grid(tiles_sentence, "grid_d7_mixed_sentence.png", y0=1300, y1=1640)

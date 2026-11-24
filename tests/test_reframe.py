@@ -1527,3 +1527,51 @@ def test_layout_policy_holds_on_ambiguity_and_switches_on_verified_turn() -> Non
             0,
             6000,
         )
+
+
+def test_opencv_face_tracker_prefers_active_speaker_in_two_person_wide_shot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a 2-person wide shot, prefer the moving speaker over a larger silent listener."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "two_person_wide.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+    for i in range(6):
+        frame = np.full((480, 640, 3), 60, dtype=np.uint8)
+        # Left person: static face + light shirt
+        cv2.rectangle(frame, (80, 100), (170, 190), (160, 160, 160), -1)
+        cv2.rectangle(frame, (60, 200), (190, 340), (220, 220, 220), -1)
+        # Right person: slightly smaller box, active mouth motion + warm brown shirt
+        cv2.rectangle(frame, (450, 100), (530, 180), (150, 150, 150), -1)
+        mouth_val = 240 if i % 2 == 0 else 20
+        cv2.rectangle(frame, (455, 145), (525, 178), (mouth_val, mouth_val, mouth_val), -1)
+        cv2.rectangle(frame, (430, 190), (550, 330), (40, 90, 160), -1)
+        writer.write(frame)
+    writer.release()
+
+    class _TwoFaceClassifier:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self.kind != "frontal":
+                return []
+            # Left box is slightly larger (90x90) than Right box (80x80)
+            return [(80, 100, 90, 90), (450, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _TwoFaceClassifier("frontal" if "frontal" in str(p) else "profile"),
+    )
+
+    tracker = OpenCvFaceTracker(sample_fps=5.0, enable_tracker=False)
+    points = tracker.track(video_path, 0, 1_200)
+    assert len(points) >= 4
+    assert all(p.center_x == 490 for p in points)

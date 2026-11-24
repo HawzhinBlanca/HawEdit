@@ -133,7 +133,9 @@ def test_models_profile_is_minimal_production_provisioning_not_the_gate() -> Non
 def test_gpu_profile_is_the_one_measured_windows_cuda_target() -> None:
     path = _lock("gpu", "windows", "3.11")
     packages = _packages(path)
-    assert len(packages) == 46
+    assert len(packages) == 49
+    assert packages["skia-python"][0] == "144.0.post2"
+    assert packages["uharfbuzz"][0] == "0.56.0"
     assert packages["torch"][0] == "2.13.0+cu130"
     assert packages["torchvision"][0] == "0.28.0+cu130"
     assert packages["torchaudio"][0] == "2.11.0+cu130"

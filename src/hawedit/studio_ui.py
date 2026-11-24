@@ -25,6 +25,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         --accent: #67dce8;
         --gold: #ffdc8a;
         --error: #ffb7af;
+        --ok: #7ef2a6;
       }
       * {
         box-sizing: border-box;
@@ -330,6 +331,170 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         inset-block-start: 12px;
         z-index: 10;
       }
+      input[type='text'] {
+        min-block-size: 44px;
+        inline-size: 100%;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 12px;
+      }
+      .health-strip {
+        max-inline-size: 1280px;
+        margin: 12px auto 0;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .health-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .health-pill[data-status='ok'] {
+        border-color: var(--ok);
+        color: var(--ok);
+      }
+      .health-pill[data-status='warn'] {
+        border-color: var(--gold);
+        color: var(--gold);
+      }
+      .health-pill[data-status='fail'] {
+        border-color: var(--error);
+        color: var(--error);
+      }
+      .v8-panel {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        background: #16191d;
+      }
+      .field-label {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+        gap: 8px;
+      }
+      .preset-card {
+        display: grid;
+        gap: 6px;
+        text-align: start;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        min-block-size: 44px;
+      }
+      .preset-card[aria-pressed='true'] {
+        border-color: var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold);
+        background: #232830;
+      }
+      .preset-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .preset-desc {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .swatch-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .swatch {
+        inline-size: 18px;
+        block-size: 18px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        flex: none;
+      }
+      .brand-kit-grid {
+        display: grid;
+        gap: 10px;
+        padding-block-start: 10px;
+      }
+      .grill-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        border: 1px solid var(--border);
+      }
+      .grill-badge.pass {
+        border-color: var(--ok);
+        color: var(--ok);
+        background: #12291e;
+      }
+      .grill-badge.fail {
+        border-color: var(--error);
+        color: var(--error);
+        background: #2e1515;
+      }
+      .clip-card-inner {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .clip-thumb {
+        inline-size: 44px;
+        block-size: 78px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: #000;
+        flex: none;
+      }
+      .clip-card-meta {
+        display: grid;
+        gap: 4px;
+      }
+      .cover-preview {
+        max-inline-size: 120px;
+        aspect-ratio: 9/16;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+      }
+      .download-bar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .download-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-block-size: 44px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--accent);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .download-chip:hover {
+        border-color: var(--gold);
+        color: var(--gold);
+      }
       @media (max-width: 860px) {
         main {
           grid-template-columns: minmax(0, 1fr);
@@ -382,6 +547,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
         <p id="engineStatus" role="status" aria-live="polite">پشکنینی ئامادەیی…</p>
       </div>
+      <div
+        id="v8HealthStrip"
+        class="health-strip"
+        role="status"
+        aria-live="polite"
+        aria-label="V8 Preflight Health"
+      >
+        <span class="health-pill" data-status="warn">V8 Preflight…</span>
+      </div>
     </header>
     <main id="studio" tabindex="-1">
       <section class="source-column stack" aria-labelledby="sourceHeading">
@@ -407,6 +581,105 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         ></progress>
         <p id="uploadMessage" role="status" aria-live="polite" class="muted"></p>
         <p id="sourceError" role="alert" class="error" hidden></p>
+        <div class="field">
+          <label for="optEngine">بزوێنەری ستۆدیۆ — Studio Engine</label>
+          <select id="optEngine">
+            <option value="v8" selected>V8 Lean Director (Agency)</option>
+            <option value="legacy">Legacy Pipeline</option>
+          </select>
+        </div>
+        <fieldset id="v8Controls" class="v8-panel stack">
+          <div class="field">
+            <span class="field-label">شێوازی براندی کڕیار — Client Style Presets</span>
+            <div
+              id="stylePresetGrid"
+              class="preset-grid"
+              role="group"
+              aria-label="Client Style Presets"
+            ></div>
+            <p id="presetStatus" class="muted">بارکردنی شێوازەکان…</p>
+          </div>
+          <div class="settings-grid">
+            <div class="field">
+              <label for="optDirector">دەرهێنەر — Director Brain</label>
+              <select id="optDirector">
+                <option value="offline" selected>Offline Restrained (Local)</option>
+                <option value="gemini">Gemini Video Director</option>
+                <option value="local-omni">Local Qwen-Omni (GPU)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="optSubEngine">بزوێنەری ژێرنووس — Subtitles</label>
+              <select id="optSubEngine">
+                <option value="skia" selected>Skia TikTok Pills</option>
+                <option value="libass">libass</option>
+              </select>
+            </div>
+          </div>
+          <label class="checkbox">
+            <input id="optCondense" type="checkbox" checked />
+            چڕکردنەوە بۆ ٣٥–٤٨ چرکە — Condense to 35–48 s
+          </label>
+          <label class="checkbox">
+            <input id="optColdOpen" type="checkbox" checked />
+            پێشەکیی سەرنجڕاکێش — Cold-Open Hook
+          </label>
+          <details id="clientBrandKit">
+            <summary>کیتی براندی کڕیار — Client Brand Kit</summary>
+            <div class="brand-kit-grid">
+              <div class="field">
+                <label for="optBrandAccent">ڕەنگی سەرەکی — Accent Hex</label>
+                <input
+                  id="optBrandAccent"
+                  type="text"
+                  dir="ltr"
+                  placeholder="#FFD700"
+                  maxlength="7"
+                />
+              </div>
+              <div class="field">
+                <label for="optSpeakerName">ناوی قسەکەر — Speaker Name</label>
+                <input
+                  id="optSpeakerName"
+                  type="text"
+                  dir="auto"
+                  placeholder="هاوژین"
+                  maxlength="120"
+                />
+              </div>
+              <div class="field">
+                <label for="optSpeakerRole">پۆستی قسەکەر — Speaker Role</label>
+                <input
+                  id="optSpeakerRole"
+                  type="text"
+                  dir="auto"
+                  placeholder="پێشکەشکار"
+                  maxlength="120"
+                />
+              </div>
+              <div class="field">
+                <label for="optEndCardTitle">ناونیشانی کۆتایی — Outro CTA</label>
+                <input
+                  id="optEndCardTitle"
+                  type="text"
+                  dir="auto"
+                  placeholder="بۆ ڤیدیۆی زیاتر فۆڵۆمان بکە"
+                  maxlength="120"
+                />
+              </div>
+              <div class="field">
+                <label for="optEndCardHandle">هاندڵ — Outro Handle</label>
+                <input
+                  id="optEndCardHandle"
+                  type="text"
+                  dir="ltr"
+                  placeholder="@hawedit"
+                  maxlength="80"
+                />
+              </div>
+            </div>
+          </details>
+        </fieldset>
         <details id="advancedSettings">
           <summary>ڕێکخستنی پێشکەوتوو</summary>
           <fieldset id="settingsFields">
@@ -436,6 +709,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                   <option value="2">٢</option>
                   <option value="3" selected>٣</option>
                   <option value="5">٥</option>
+                  <option value="10">١٠</option>
                 </select>
               </div>
               <div class="field">
@@ -519,6 +793,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           ></div>
           <div id="previewPanel" class="stack" hidden>
             <h3 id="headlineText" dir="auto"></h3>
+            <div id="grillBadgeRow" class="toolbar" hidden>
+              <span id="grillBadge" class="grill-badge"></span>
+              <span id="grillSummaryText" class="muted" dir="auto"></span>
+            </div>
             <p class="warning">پێشبینینی تایبەت؛ بۆ بڵاوکردنەوە پشتڕاست نەکراوەتەوە.</p>
             <div class="player-area">
               <video
@@ -530,6 +808,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 aria-label="پێشبینینی بڕگە"
               ></video>
               <div class="stack">
+                <img
+                  id="clipCoverImg"
+                  class="cover-preview"
+                  alt="کەڤەری بڕگە"
+                  hidden
+                />
                 <p
                   id="previewStatus"
                   role="status"
@@ -547,8 +831,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                   <dd id="qualityScore">نەزانراو</dd>
                   <dt>ماوەی پلەیەر</dt>
                   <dd id="playerDuration">نەزانراو</dd>
+                  <dt>ڕێژەی دەموچاو</dt>
+                  <dd id="faceShare">نەزانراو</dd>
                 </dl>
                 <a id="privateCopy" class="action" hidden>داگرتنی کۆپی تایبەت</a>
+                <div
+                  id="clipDownloads"
+                  class="download-bar"
+                  aria-label="داگرتنی فایلەکانی بڕگە"
+                  hidden
+                ></div>
               </div>
             </div>
           </div>
@@ -603,7 +895,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         historyLoaded: false,
         historyTruncated: false,
         readinessEpoch: 0,
+        doctorEpoch: 0,
+        presetsEpoch: 0,
+        stylePreset: 'viral_gold',
+        presets: [],
         previewController: null,
+        eventSource: null,
       };
       const statusLabels = {
         queued: 'لە ڕیزدایە',
@@ -666,6 +963,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       function controls() {
         const locked = state.busy || state.requestUncertain;
         $('videoFile').disabled = locked || state.uploadUncertain;
+        $('optEngine').disabled = locked;
+        $('v8Controls').disabled = locked;
         $('settingsFields').disabled = locked;
         $('uploadBtn').disabled =
           locked || !state.file || Boolean(state.source) ||
@@ -854,6 +1153,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         }
       }
       function options() {
+        if ($('optEngine').value === 'v8') {
+          const trimOrNull = (id) => {
+            const val = $(id).value.trim();
+            return val || null;
+          };
+          return {
+            engine: 'v8',
+            style_preset: state.stylePreset || 'viral_gold',
+            director: $('optDirector').value,
+            sub_engine: $('optSubEngine').value,
+            condense: $('optCondense').checked,
+            cold_open: $('optColdOpen').checked,
+            max_clips: Number($('optMaxClips').value),
+            brand_accent_hex: trimOrNull('optBrandAccent'),
+            speaker_name_ckb: trimOrNull('optSpeakerName'),
+            speaker_role_ckb: trimOrNull('optSpeakerRole'),
+            end_card_title_ckb: trimOrNull('optEndCardTitle'),
+            end_card_handle: trimOrNull('optEndCardHandle'),
+            use_omni_asr: true,
+          };
+        }
         const result = {
           preset: $('optPreset').value,
           max_clips: Number($('optMaxClips').value),
@@ -866,12 +1186,54 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         return result;
       }
       function validOptions(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+        if (value.engine === 'v8') {
+          const v8Keys = [
+            'engine',
+            'style_preset',
+            'director',
+            'sub_engine',
+            'condense',
+            'cold_open',
+            'max_clips',
+            'brand_accent_hex',
+            'speaker_name_ckb',
+            'speaker_role_ckb',
+            'end_card_title_ckb',
+            'end_card_handle',
+            'use_omni_asr',
+          ];
+          const optText = (val, maxLen) =>
+            val === null || val === undefined || (typeof val === 'string' && val.length <= maxLen);
+          return (
+            Object.keys(value).every((key) => v8Keys.includes(key)) &&
+            [
+              'viral_gold',
+              'crimson_punch',
+              'executive_cyan',
+              'luxury_minimal',
+              'broadcast_news',
+            ].includes(value.style_preset) &&
+            ['offline', 'gemini', 'local-omni'].includes(value.director) &&
+            ['skia', 'libass'].includes(value.sub_engine) &&
+            typeof value.condense === 'boolean' &&
+            typeof value.cold_open === 'boolean' &&
+            [1, 2, 3, 5, 10].includes(value.max_clips) &&
+            (value.brand_accent_hex === null ||
+              value.brand_accent_hex === undefined ||
+              /^#[0-9A-Fa-f]{6}$/.test(value.brand_accent_hex)) &&
+            optText(value.speaker_name_ckb, 120) &&
+            optText(value.speaker_role_ckb, 120) &&
+            optText(value.end_card_title_ckb, 120) &&
+            optText(value.end_card_handle, 80) &&
+            (value.use_omni_asr === undefined || typeof value.use_omni_asr === 'boolean')
+          );
+        }
         const keys = ['preset', 'max_clips', 'screener', 'hook_banner',
           'silence_tightening', 'caption_style'];
-        return value && typeof value === 'object' && !Array.isArray(value) &&
-          Object.keys(value).every(key => keys.includes(key)) &&
+        return Object.keys(value).every(key => keys.includes(key)) &&
           ['viral', 'broadcast', 'split'].includes(value.preset) &&
-          [1, 2, 3, 5].includes(value.max_clips) && value.screener === 'none' &&
+          [1, 2, 3, 5, 10].includes(value.max_clips) && value.screener === 'none' &&
           typeof value.hook_banner === 'boolean' &&
           typeof value.silence_tightening === 'boolean' &&
           (value.caption_style === undefined ||
@@ -884,12 +1246,31 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           message('storageError', 'ڕێکخستنی پاشەکەوتکراو نادروست یان ئامادە نییە.');
           return;
         }
+        if (value.engine === 'v8') {
+          $('optEngine').value = 'v8';
+          state.stylePreset = value.style_preset || 'viral_gold';
+          $('optDirector').value = value.director || 'offline';
+          $('optSubEngine').value = value.sub_engine || 'skia';
+          $('optCondense').checked = value.condense !== false;
+          $('optColdOpen').checked = value.cold_open !== false;
+          $('optMaxClips').value = String(value.max_clips);
+          $('optBrandAccent').value = value.brand_accent_hex || '';
+          $('optSpeakerName').value = value.speaker_name_ckb || '';
+          $('optSpeakerRole').value = value.speaker_role_ckb || '';
+          $('optEndCardTitle').value = value.end_card_title_ckb || '';
+          $('optEndCardHandle').value = value.end_card_handle || '';
+          syncEngineVisibility();
+          renderPresets();
+          return;
+        }
+        $('optEngine').value = 'legacy';
         $('optPreset').value = value.preset;
         $('optCaptionStyle').value = value.caption_style || '';
         $('optMaxClips').value = String(value.max_clips);
         $('optScreener').value = value.screener;
         $('optHookBanner').checked = value.hook_banner;
         $('optSilence').checked = value.silence_tightening;
+        syncEngineVisibility();
       }
       async function generate() {
         if (state.busy || !state.source || !state.storageReady) return;
@@ -947,16 +1328,65 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         player.load();
         player.hidden = true;
         $('previewPanel').hidden = true;
+        $('grillBadgeRow').hidden = true;
+        $('grillBadge').textContent = '';
+        $('grillBadge').className = 'grill-badge';
+        $('grillSummaryText').textContent = '';
+        $('clipCoverImg').hidden = true;
+        $('clipCoverImg').removeAttribute('src');
+        $('clipDownloads').hidden = true;
+        $('clipDownloads').replaceChildren();
         $('privateCopy').hidden = true;
         $('privateCopy').removeAttribute('href');
         $('privateCopy').removeAttribute('download');
         $('retryPreviewBtn').hidden = true;
-        for (const id of ['measuredDuration', 'qualityScore', 'playerDuration'])
+        for (const id of ['measuredDuration', 'qualityScore', 'playerDuration', 'faceShare'])
           $(id).textContent = unknown;
         message('previewError', '');
         message('previewStatus', '');
       }
+      function closeJobEvents() {
+        if (state.eventSource) {
+          state.eventSource.close();
+          state.eventSource = null;
+        }
+      }
+      function connectJobEvents(jobId, epoch) {
+        closeJobEvents();
+        if (typeof EventSource !== 'function') return;
+        const source = new EventSource(
+          '/api/jobs/' + encodeURIComponent(jobId) + '/events',
+        );
+        state.eventSource = source;
+        const onStage = (event) => {
+          if (epoch !== state.selectionEpoch || !state.job) {
+            source.close();
+            return;
+          }
+          try {
+            const payload = JSON.parse(event.data);
+            const rows = Array.isArray(state.job.stages) ? [...state.job.stages] : [];
+            const idx = rows.findIndex((row) => row.stage === payload.stage);
+            const entry = { stage: payload.stage, state: payload.state };
+            if (idx >= 0) rows[idx] = entry;
+            else rows.push(entry);
+            state.job.stages = rows;
+            stages(state.job);
+          } catch {}
+        };
+        const onTerminal = async () => {
+          source.close();
+          if (state.eventSource === source) state.eventSource = null;
+          if (epoch !== state.selectionEpoch) return;
+          await readiness();
+          await refreshHistory(jobId);
+        };
+        source.addEventListener('stage', onStage);
+        source.addEventListener('completed', onTerminal);
+        source.addEventListener('failed', onTerminal);
+      }
       function clearJob() {
+        closeJobEvents();
         state.job = null;
         clearPreview();
         $('clipTabs').replaceChildren();
@@ -1066,7 +1496,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           $('jobIdentity').textContent =
             jobId + ' · ' + recordedDate(job.created_at);
           let label = statusLabels[job.status] || unknown;
-          if (job.status === 'completed' && job.publication_verified !== true)
+          if (job.historical && job.status === 'completed' && job.publication_verified !== true)
             label = statusLabels['unverified-historical'];
           message(
             'jobMessage',
@@ -1082,6 +1512,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             jobDiagnostics.push({ code: job.code, job_id: jobId, message: job.error });
           diagnostics('jobDiagnostics', jobDiagnostics);
           stages(job);
+          if (!job.historical && (job.status === 'queued' || job.status === 'running')) {
+            connectJobEvents(jobId, epoch);
+          }
           const clips = Array.isArray(job.clips) ? job.clips : [];
           message(
             'candidateMessage',
@@ -1095,7 +1528,29 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             button.className = 'candidate';
             button.dir = 'auto';
             button.setAttribute('aria-pressed', 'false');
-            button.textContent = index + 1 + ' · ' + (clip.headline || clip.clip_id);
+            const cardInner = document.createElement('div');
+            cardInner.className = 'clip-card-inner';
+            if (typeof clip.cover_url === 'string' && clip.cover_url.startsWith('/api/')) {
+              const thumb = document.createElement('img');
+              thumb.className = 'clip-thumb';
+              thumb.src = clip.cover_url;
+              thumb.alt = clip.hook_title_ckb || clip.headline || clip.clip_id;
+              cardInner.append(thumb);
+            }
+            const meta = document.createElement('div');
+            meta.className = 'clip-card-meta';
+            const title = document.createElement('span');
+            title.textContent =
+              index + 1 + ' · ' + (clip.hook_title_ckb || clip.headline || clip.clip_id);
+            meta.append(title);
+            if (typeof clip.grill_passed === 'boolean') {
+              const badge = document.createElement('span');
+              badge.className = 'grill-badge ' + (clip.grill_passed ? 'pass' : 'fail');
+              badge.textContent = clip.grill_passed ? 'GRILL PASSED ✓' : 'GRILL FAILED';
+              meta.append(badge);
+            }
+            cardInner.append(meta);
+            button.append(cardInner);
             button.addEventListener('click', () => selectClip(clip, button));
             $('clipTabs').append(button);
           }
@@ -1113,7 +1568,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         for (const item of $('clipTabs').children)
           item.setAttribute('aria-pressed', String(item === button));
         $('previewPanel').hidden = false;
-        $('headlineText').textContent = clip.headline || clip.clip_id;
+        $('headlineText').textContent = clip.hook_title_ckb || clip.headline || clip.clip_id;
+        if (typeof clip.grill_passed === 'boolean') {
+          $('grillBadgeRow').hidden = false;
+          $('grillBadge').className = 'grill-badge ' + (clip.grill_passed ? 'pass' : 'fail');
+          $('grillBadge').textContent = clip.grill_passed ? 'GRILL PASSED ✓' : 'GRILL FAILED';
+          $('grillSummaryText').textContent =
+            typeof clip.grill_summary === 'string' ? clip.grill_summary : '';
+        }
         if (
           Number.isFinite(clip.duration_s) &&
           clip.duration_s > 0 &&
@@ -1122,6 +1584,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           $('measuredDuration').textContent = clip.duration_s + ' چرکە';
         if (Number.isFinite(clip.hook_score))
           $('qualityScore').textContent = String(clip.hook_score);
+        if (Number.isFinite(clip.face_share) && clip.face_share >= 0)
+          $('faceShare').textContent = Math.round(clip.face_share * 100) + '%';
+        if (typeof clip.cover_url === 'string' && clip.cover_url.startsWith('/api/')) {
+          $('clipCoverImg').src = clip.cover_url;
+          $('clipCoverImg').hidden = false;
+          $('player').poster = clip.cover_url;
+        }
+        renderClipDownloads(clip);
         const path =
           '/api/jobs/' +
           encodeURIComponent(jobId) +
@@ -1289,6 +1759,156 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           controls();
         }
       }
+      function syncEngineVisibility() {
+        const isV8 = $('optEngine').value === 'v8';
+        $('v8Controls').hidden = !isV8;
+      }
+      function renderDoctor(report) {
+        const strip = $('v8HealthStrip');
+        strip.replaceChildren();
+        const labels = {
+          gpu_nvenc: 'GPU / NVENC',
+          ffmpeg_rtl: 'FFmpeg RTL',
+          skia_harfbuzz: 'Skia + HarfBuzz',
+          wsl_asr: 'WSL ASR',
+          gemini_director: 'Gemini',
+          local_omni_director: 'Local Omni',
+          disk_space: 'Disk',
+        };
+        const checks = report && Array.isArray(report.checks) ? report.checks : [];
+        if (!checks.length) {
+          const pill = document.createElement('span');
+          pill.className = 'health-pill';
+          pill.dataset.status = 'warn';
+          pill.textContent = 'V8 Preflight: Unavailable';
+          strip.append(pill);
+          return;
+        }
+        for (const check of checks) {
+          const pill = document.createElement('span');
+          pill.className = 'health-pill';
+          const status = ['ok', 'warn', 'fail'].includes(check.status) ? check.status : 'warn';
+          pill.dataset.status = status;
+          pill.dataset.check = String(check.name || '');
+          const label = Object.hasOwn(labels, check.name)
+            ? labels[check.name]
+            : String(check.name || 'check');
+          const icon = status === 'ok' ? '✓' : status === 'warn' ? '!' : '✗';
+          pill.textContent = label + ' ' + icon;
+          if (typeof check.summary === 'string' && check.summary) pill.title = check.summary;
+          strip.append(pill);
+        }
+      }
+      async function loadDoctor() {
+        const epoch = ++state.doctorEpoch;
+        try {
+          const report = await api('/api/v8/doctor');
+          if (epoch !== state.doctorEpoch) return;
+          renderDoctor(report);
+        } catch (error) {
+          if (epoch !== state.doctorEpoch) return;
+          renderDoctor(null);
+        }
+      }
+      function renderPresets() {
+        const grid = $('stylePresetGrid');
+        grid.replaceChildren();
+        if (!state.presets.length) return;
+        for (const preset of state.presets) {
+          const name = String(preset.name || '');
+          if (!name) continue;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'preset-card';
+          btn.dataset.preset = name;
+          btn.setAttribute('aria-pressed', String(state.stylePreset === name));
+          const swatches = document.createElement('div');
+          swatches.className = 'swatch-row';
+          const colors =
+            Array.isArray(preset.swatches) && preset.swatches.length
+              ? preset.swatches
+              : [
+                  preset.active_pill_hex,
+                  preset.power_pill_hex,
+                  preset.progress_bar_hex,
+                ].filter(Boolean);
+          for (const hex of colors) {
+            if (typeof hex === 'string' && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
+              const dot = document.createElement('span');
+              dot.className = 'swatch';
+              dot.style.background = hex;
+              dot.title = hex;
+              swatches.append(dot);
+            }
+          }
+          const title = document.createElement('span');
+          title.className = 'preset-title';
+          title.textContent = String(preset.display_name || name);
+          const desc = document.createElement('span');
+          desc.className = 'preset-desc';
+          desc.textContent = String(preset.description || '');
+          btn.append(swatches, title, desc);
+          btn.addEventListener('click', () => {
+            if (state.busy || state.requestUncertain) return;
+            state.stylePreset = name;
+            renderPresets();
+            save('options', options());
+            controls();
+          });
+          grid.append(btn);
+        }
+      }
+      async function loadPresets() {
+        const epoch = ++state.presetsEpoch;
+        try {
+          const data = await api('/api/v8/presets');
+          if (epoch !== state.presetsEpoch) return;
+          const rows = Array.isArray(data) ? data : Array.isArray(data.presets) ? data.presets : [];
+          state.presets = rows;
+          message('presetStatus', rows.length ? '' : 'هیچ شێوازێک نەدۆزرایەوە.');
+          renderPresets();
+        } catch (error) {
+          if (epoch !== state.presetsEpoch) return;
+          message('presetStatus', 'شێوازەکان ئامادە نین: ' + error.message);
+        }
+      }
+      function renderClipDownloads(clip) {
+        const bar = $('clipDownloads');
+        bar.replaceChildren();
+        const links = [];
+        const dl = clip && typeof clip.download_urls === 'object' && clip.download_urls
+          ? clip.download_urls
+          : {};
+        const specs = [
+          ['MP4', dl.mp4, true],
+          ['SRT', dl.srt, true],
+          ['EDL', dl.edl, true],
+          ['OTIO', dl.otio, true],
+          ['Cover', clip && clip.cover_url, true],
+          ['Director JSON', dl.director_json, true],
+          ['Grill JSON', dl.grill_json, true],
+          [
+            'Review Sheet',
+            (clip && clip.review_sheet_url) || (state.job && state.job.review_sheet_url),
+            false,
+          ],
+        ];
+        for (const [label, url, isDownload] of specs) {
+          if (typeof url !== 'string' || !url.startsWith('/api/')) continue;
+          const anchor = document.createElement('a');
+          anchor.className = 'download-chip';
+          anchor.href = url;
+          anchor.textContent = label;
+          if (isDownload) anchor.setAttribute('download', '');
+          else {
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+          }
+          links.push(anchor);
+        }
+        bar.hidden = !links.length;
+        for (const anchor of links) bar.append(anchor);
+      }
       $('videoFile').addEventListener('change', () => {
         state.file = $('videoFile').files[0] || null;
         state.source = null;
@@ -1314,6 +1934,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       $('settingsFields').addEventListener('change', () => {
         save('options', options()); controls();
       });
+      $('optEngine').addEventListener('change', () => {
+        syncEngineVisibility();
+        save('options', options());
+        controls();
+      });
+      $('v8Controls').addEventListener('change', () => {
+        const opts = options();
+        if (validOptions(opts)) {
+          message('sourceError', '');
+          save('options', opts);
+        } else {
+          message('sourceError', 'ڕەنگی براند دەبێت بە شێوەی #RRGGBB بێت (بۆ نموونە #FF2E63).');
+        }
+        controls();
+      });
       $('historySearch').addEventListener('input', () => renderHistory());
       $('jobSelect').addEventListener('change', () => {
         state.historySelected = $('jobSelect').value;
@@ -1322,6 +1957,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       });
       $('refreshBtn').addEventListener('click', async () => {
         await readiness();
+        await loadDoctor();
         await refreshHistory();
       });
       $('retryPreviewBtn').addEventListener('click', () => {
@@ -1407,8 +2043,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             );
           }
         }
+        syncEngineVisibility();
         controls();
-        await readiness();
+        await Promise.all([readiness(), loadDoctor(), loadPresets()]);
         await refreshHistory(read('selected') || '');
         if (state.ticket) await recoverUpload();
       }

@@ -48,6 +48,7 @@ from hawedit.delivery import (
     promote_candidate,
     reconcile_delivery,
 )
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 from hawedit.measure import ClipMeasurement
 from hawedit.sentences import Sentence, UndeliverableOrder
 from hawedit.transcripts import Word
@@ -801,7 +802,7 @@ def _make_valid_reconciliation_pair() -> tuple[Clip, ClipMeasurement]:
             misleading_edit_risk=0.05,
             cultural_landing=0.7,
             narrative_role="payoff",
-            judge="gemini-2.5-pro",
+            judge=KURDISH_EDITORIAL_JUDGE,
         ),
         output=Output(
             title_ckb="سەردێڕ",
@@ -1335,3 +1336,41 @@ def test_build_effective_source_cuts(tmp_path: Path) -> None:
     )
     expected = (500, 1150, 1300, 1800, 2000, 3500, 4000, 5000)
     assert cuts == expected
+
+
+def test_opening_face_size_does_not_lower_whole_clip_presence_floor() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    broken = replace(measurement, faces=replace(measurement.faces, face_detected_share=0.10))
+    with pytest.raises(DeliveryRefused, match="face_tracking_unsubstantiated"):
+        reconcile_delivery(
+            clip,
+            broken,
+            source_shot_cuts_ms=[clip.in_ms + 500],
+            min_first_frame_face_share=0.08,
+        )
+
+
+def test_speaker_face_without_threshold_override_still_requires_observed_faces() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    assert clip.output is not None
+    clip = replace(clip, output=replace(clip.output, crop_target="speaker_face"))
+    broken = replace(measurement, faces=replace(measurement.faces, face_detected_share=0.0))
+    with pytest.raises(DeliveryRefused, match="face_tracking_unsubstantiated"):
+        reconcile_delivery(
+            clip,
+            broken,
+            source_shot_cuts_ms=[clip.in_ms + 500],
+            speaker_turns=[(clip.in_ms, clip.out_ms, "speaker-1")],
+        )
+
+
+def test_explicit_opening_face_gate_refuses_unmeasured_opening_frame() -> None:
+    clip, measurement = _make_valid_reconciliation_pair()
+    broken = replace(measurement, faces=replace(measurement.faces, first_frame_face_share=None))
+    with pytest.raises(DeliveryRefused, match="first_frame_lacks_subject"):
+        reconcile_delivery(
+            clip,
+            broken,
+            source_shot_cuts_ms=[clip.in_ms + 500],
+            min_first_frame_face_share=0.08,
+        )

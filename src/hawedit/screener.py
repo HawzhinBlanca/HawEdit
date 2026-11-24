@@ -18,6 +18,7 @@ from typing import Any, Final, NoReturn, Protocol
 
 from hawedit.credentials import CredentialError
 from hawedit.discovery import MergedCandidate
+from hawedit.http_transport import open_without_redirects
 
 TYPESAFE_API_KEY_ENV: Final[str] = "TYPESAFE_API_KEY"
 TYPESAFE_API_URL: Final[str] = "https://api.typesafe.ai/v1/systemone"
@@ -86,7 +87,7 @@ def _response(data: bytes) -> dict[str, Any]:
 
 
 def _http_response(request: urllib.request.Request) -> bytes:
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with open_without_redirects(request, timeout=30) as response:
         data: bytes = response.read(_MAX_RESPONSE_BYTES + 1)
     if len(data) > _MAX_RESPONSE_BYTES:
         raise ValueError("Screener HTTP response exceeds its byte bound")
@@ -271,7 +272,7 @@ class GeminiFlashScreener:
 
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model_id}:generateContent?key={self.api_key}"
+            f"{self.model_id}:generateContent"
         )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -285,7 +286,10 @@ class GeminiFlashScreener:
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
             method="POST",
         )
 

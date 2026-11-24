@@ -746,3 +746,23 @@ def test_condense_story_with_evaluator_guidance() -> None:
     assert plan.retained_spans[0] == (0, 12000)
     assert plan.retained_spans[1] == (29000, 57000)
     assert plan.condensed_duration_ms == 12000 + (57000 - 29000)
+
+
+def test_gemini_story_evaluator_uses_header_key_and_rejects_empty_candidates() -> None:
+    """Regressions for ponytail-audit round 2 (#2, #4)."""
+    s0 = _make_sentence([_make_word("سڵاو", 0, 1000)])
+    captured_reqs: list[urllib.request.Request] = []
+
+    def _empty_candidates_transport(req: urllib.request.Request) -> bytes:
+        captured_reqs.append(req)
+        return json.dumps({"candidates": []}).encode("utf-8")
+
+    evaluator = GeminiStoryEvaluator(
+        api_key="secret-test-key", transport=_empty_candidates_transport
+    )
+    with pytest.raises(StoryCondensationError, match="no candidates"):
+        evaluator.evaluate_story((s0,))
+
+    assert len(captured_reqs) == 1
+    assert "key=" not in captured_reqs[0].full_url
+    assert captured_reqs[0].get_header("X-goog-api-key") == "secret-test-key"

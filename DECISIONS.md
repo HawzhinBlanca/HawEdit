@@ -16671,3 +16671,784 @@ its approval covers, and the owner chose "Approve plan". `security/wsl-asr-vex.j
 VEX control is affected: no new loader, input, asset or dependency. As in D-333's and D-334's
 addenda, the owner approved the change but did not separately re-review the digest; `reviewed`
 stays 2026-10-15. `expires` stays 2026-11-14, already past; it was not extended.
+
+## D-336 - Desktop one-command multi-clip reels: plain WSL runtime, configurable ingest threads, fused v12 auto-discovery, and --output-dir export
+
+2026-11-19; owner approval: Hawa approved `specs/a2-one-command-reels/plan.md` in chat (2026-11-19, all Phase A plans approved; coordinator Option 1 in board #25).
+Blueprint ref: §3 Stage 0/Stage 1, §6, §7. Type: desktop production ergonomics + operational unblocking, preserving strict-mode and pre-existing Stage-0-only tests. D-136, D-331, D-337, D-339.
+
+**Problem measured (`HawaPC01`, 2026-11-18).** On the 5-minute 4K VP9 excerpt `zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4` (`264,329,839` B, SHA-256 `6f784e239a371306313882d3377906eb6d3d0afd3927804dc37c68d567aaf4e0`), Stage 0 ingest took `341.341 s` (`0.88x` RT) under hardcoded `-threads 1`, whereas a 1440p H.264 derived copy (`bbc2acc40...`) took `136.554 s` (`2.20x` RT) with identical `33` shot cuts and `61` speech regions. `extract_proxy` hardcoded `-threads 1`, Stage 1 required a sealed `.ready` receipt missing on desktop (`evidence/a2-pipeline-refusal-2026-11-18.md`), `VALIDATOR_MODEL_ID` was resolved unconditionally even without `qwen-asr` in WSL, fused v12 (`kurdish_omniasr_7b_v12_c750.pt`) required manual checkpoint flags, and `pipeline` lacked `--output-dir` reel export and per-stage timings.
+
+**Decision.**
+1. Plain WSL resolution (`/home/ai/.venv-wsl-whisper/bin/python` + checkout `src` on `PYTHONPATH`) runs by default unless `--strict-runtime` / `HAWEDIT_STRICT_RUNTIME=1` is active (D-337). `WslOmniAsrProducer` accepts `validate_hard_segments` (CLI `--validate-asr`, default `False` on CLI desktop runs, retaining `True` default on direct `WslOmniAsrProducer()` / `asr_worker` calls without the flag); `asr_resume.worker_journal` skips `"qwen-asr"` and `ModelStore().verify_checkpoint` when `validate_hard_segments=False` and selects `_FUSED_HELD_ASSETS` for `fused:` identities (D-331).
+2. `asr.discover_default_champion_checkpoint()` checks `DEFAULT_CHAMPION_CHECKPOINT_PATHS` (`F:\Kurdish Sorani Dataset\omni_7b_v3_continuation\runs\champion_v12_lora64_750_fused\kurdish_omniasr_7b_v12_c750.pt`) via `fused_checkpoint_asset` allowlisting before falling back to LoRA lookup.
+3. `ingest.ingest(..., *, threads=...)` parameterizes ffmpeg threads (direct `extract_audio`/`extract_proxy` retain default `threads=1`), and `pipeline.build_parser` adds `--reels`, `--ingest-threads`, `--output-dir`, `--strict-runtime`, `--validate-asr`. Passing `--reels` or `--output-dir` activates desktop multi-clip defaults (`omni_asr=True` unless `--transcript`, `gemini=True` unless `--verdict`/`--vertex-project`, `auto_select=True`, `max_clips=10` if unset, `ingest_threads=0` if unset), leaving bare `--work-dir` Stage-0-only so all existing CLI and `test_durable` parity tests remain intact.
+4. `PipelineRun.stage_timings_s` records monotonic stage durations; `pipeline.cli_json_report` includes `"stage_timings_s"` in CLI `--json` output while keeping `PipelineRun.to_dict()` deterministic; `--output-dir` atomically exports `.mp4` and `.mp4.measured.json` sidecars.
+
+**Derived 1440p full episode (`evidence/a2-1440p-transcode-2026-11-19.md`).** Read-only source `zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4` (`17a54701...`, `2,391.694 s`) transcoded on GPU 0 NVENC (`CUDA_VISIBLE_DEVICES=0`, `363.391 s`) into `D:\HawEdit-media\excerpts\zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM__1440p.mp4` (`2,559,797,435` B, SHA-256 `dff407fd45bd25eb3a1d7801c09d6a4bd3d1736ac72c52b5f8a3444e2d071b56`). Final 10-reel episode production waits for Phase 3 post-merge integration.
+
+## D-337 - Park heavy runtime isolation controls behind --strict-runtime / HAWEDIT_STRICT_RUNTIME and --protected-studio / HAWEDIT_PROTECTED_STUDIO
+
+2026-11-19; owner approval: Hawa approved `specs/a3-park-heavy-runtime-controls/plan.md` in chat (2026-11-19; lead Option 2 in coordinator #16 keeping VEX files untouched for merge-time re-pin).
+Blueprint ref: §3 Stage 1, §6. Type: policy gate separation (parked, never deleted). D-134, D-333, D-336, D-338.
+
+**Decision.**
+1. Single-user desktop execution is unblocked by defaulting `strict_runtime_enabled()` (`HAWEDIT_STRICT_RUNTIME`) and `protected_studio_enabled()` (`HAWEDIT_PROTECTED_STUDIO`) to `False` when unset, while preserving every sealed control intact behind explicit opt-in flags (`--strict-runtime` / `HAWEDIT_STRICT_RUNTIME=1` in `asr.py` / `pipeline.py`, `--protected-studio` / `HAWEDIT_PROTECTED_STUDIO=1` in `web.py`).
+2. `WslOmniAsrProducer` continues defaulting `strict_runtime=True` on direct instantiation so strict unit tests remain active without env mutation; `create_omni_asr_producer()` resolves `strict_runtime_enabled(strict=strict_runtime)` cleanly. `CUDA_VISIBLE_DEVICES` forwarding into WSL happens only when `not self.strict_runtime`.
+3. `security/wsl-asr-vex.json` and `tests/test_vex.py` remain untouched on the feature lane for coordinated lead re-pinning after parallel lane integration (Option 2 in board #16).
+
+## D-338 - Connect Studio POST /api/repurpose to desktop JobManager pipeline queue with SSE stage progress and verified clip previews
+
+2026-11-19; owner approval: Hawa approved `specs/a4-studio-pipeline-runner/plan.md` in chat (2026-11-19).
+Blueprint ref: §3, §5, §6. Type: Studio local orchestration, preserving protected 503 mode behind `--protected-studio`. D-336, D-337.
+
+**Decision.**
+1. `web.py` replaces the unconditional `503 studio_runner_unavailable` stub on `POST /api/repurpose` and `GET /api/status` when `protected_studio_enabled()` is `False`: `/api/status` reports `runner_ready: True` and `status: "ready"`/`"running"` (still honoring `503` when historical storage itself is unavailable), and `POST /api/repurpose` enqueues a real serialized desktop job in `JobManager` returning HTTP `202` with `events_url`. When `HAWEDIT_PROTECTED_STUDIO=1` or `--protected-studio` is set, the exact `503 studio_runner_unavailable` behavior remains intact.
+2. `JobManager` desktop jobs invoke `pipeline._build_and_run` with `--reels` (defaulting `max_clips=5`, configurable up to `10` via `{1, 2, 3, 5, 10}` in `studio_generation.py` and `studio_ui.py`), persist `report.json` alongside delivered bundles, and serve verified MP4 previews via `/api/jobs/<id>/clips/<clip_id>/preview` (`studio_artifacts.open_preview`).
+3. `GET /api/jobs/<id>/events` streams live `text/event-stream` SSE stage events (`id:`, `event:`, `data:`) using `threading.Condition(self._lock)` and closes cleanly on terminal `completed`/`failed`. `studio_ui.py` consumes `EventSource` with zero `setInterval` polling while preserving historical disk job read-only guarantees in `studio_history.py`.
+
+## D-339 - Upgrade Stage 4 editorial judge to gemini-4-carbon and shadow to gemini-4-argon
+
+2026-11-19; owner approval: Hawa approved `specs/a5-judge-model-upgrade/plan.md` in chat (2026-11-19; coordinator #16).
+Blueprint ref: §3 Stage 3/4, §4.4, §7 (diverges from frozen §7 `gemini-2.5-pro` / `gemini-3.1-pro` cells ahead of vendor `gemini-2.5-pro` December 2026 auto-routing).
+
+**Decision.**
+1. `judge.KURDISH_EDITORIAL_JUDGE` is updated from `"gemini-2.5-pro"` to `"gemini-4-carbon"` and `judge.JUDGE_SHADOW` from `"gemini-3.1-pro"` to `"gemini-4-argon"`. `registry.py` registers both models while preserving `blueprint_model_cell` provenance strings for claim tracing, and all runtime modules (`judge.py`, `path_a.py`, `pipeline.py`, `credentials.py`, `setup_panel.py`, `smoke.py`) route through `KURDISH_EDITORIAL_JUDGE` without hardcoded legacy literals.
+2. `gemini.extract_response_text` skips `thought: True` thinking parts when parsing structured JSON outputs from thinking-capable Gemini 4 responses in both `GeminiJudge` and `PathADiscovery`.
+3. **Live verification (`evidence/a5-live-judge-smoke-2026-11-19.md`, `HawaPC01`, 2026-11-19):** Live `hawedit.smoke --yes` against `zar-ai-lamo__RO1PmSoqmCM__05m00-10m00__1440p.mp4` (`bbc2acc40...`) completed HTTP `200` `countTokens` + K=5 Path A calls on `gemini-4-carbon` (`44.860 s`, `1,498` tokens, `~0.0030 USD`), and live Stage 4 `GeminiJudge.judge_with_count` on `20` real keyframes (`0..35,000 ms`) returned a schema-valid Sorani `JudgeVerdict` (`18.469 s`, `23,520` tokens, `~0.047040 USD`, title `"داهاتووی ڕۆژنامەوانی و ژیریی دەستکرد لە هەولێر"`).
+
+## D-340 - Scope final strict ASR to padded chosen clip regions when a draft transcript exists
+
+2026-11-19; owner approval: in chat (`/goal ... all approved`), implementing `specs/b2-clip-scoped-final-asr/plan.md`. Blueprint ref: §3 Stage 1, §4.1, §4.2, §7. Amends Stage 1 whole-episode execution; preserves `D-136`, `D-281`, `D-331`, `D-332`, and Kurdish invariants #1–#5.
+
+**Measured.** `HawaPC01` (Threadripper 3990X, WSL2 `Linux-6.18.58.1`, isolated `/home/ai/.cache/hawedit-plain-wsl-venv` CPython 3.12.13, PyTorch 2.8.0+cu128 CUDA 12.8, `fairseq2 0.6`, `omnilingual-asr 0.2.0`, `klpt 0.1.7`, GPU 1 RTX 3090 Ti `CUDA_VISIBLE_DEVICES=1`, fused `kurdish_omniasr_7b_v12_c750.pt` + `omniASR-CTC-3B-v2.pt`, validator off).
+- On the 5-min Zar AI excerpt (`zar-ai-lamo__RO1PmSoqmCM__05m00-10m00.mp4`, `300.014 s`, SHA-256 `6f784e239a371306313882d3377906eb6d3d0afd3927804dc37c68d567aaf4e0`): whole-excerpt Stage 1 transcribed `21` context-grouped regions (`290,366 ms` from `61` Silero VAD segments) into `749` words (`0` unaligned) in `256.041 s` cold load + `194.378 s` inference (`RTF 0.6479` excl. load; peak `21,831.3 MiB` allocated / `23,364.0 MiB` reserved). Running Stage 1 via `select_contextual_regions_for_spans(..., pad_ms=4_000)` on two representative 40 s clip spans (`25..65 s` and `185..225 s`) transcribed `8` grouped regions (`121,984 ms`, `42.01%` of speech audio) in `52.154 s` inference (`3.73x` speedup over whole-excerpt inference) with **`335/335` exact word text, ms timestamp, and confidence parity** (`0` mismatches).
+- On the full 40-min AI episode (`zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4`, `2,391.694 s`, SHA-256 `17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72`): Stage 0 extracted `540` VAD segments grouped into `175` context regions (`2,247,876 ms`). Whole-episode Stage 1 transcribed regions `0..76` (`2,608` words; median `5.08 s/region`, mean `5.35 s/region` for regions `2..77`, `3` beam-5 retries) before failing stop per D-332 at region `78/175` (`1,048,834..1,062,334 ms`, `speech-0077.wav`, greedy+beam-5 repetition loop). Whole-episode strict ASR is therefore sensitive to any single non-clip loop anywhere in 40+ min episodes, whereas clip-scoped final ASR runs strict CTC-3B Viterbi alignment only on chosen clip context regions.
+
+**Decision.**
+1. Add `select_contextual_regions_for_spans(speech_segments, clip_spans_ms, *, duration_ms, pad_ms=4000)` in `src/hawedit/asr.py`, bounded by `CLIP_ASR_MIN_PAD_MS = 3000`, `CLIP_ASR_DEFAULT_PAD_MS = 4000`, and `CLIP_ASR_MAX_PAD_MS = 5000`. Selected regions snap cleanly to `_contextual_speech_regions(speech_segments)` bounds (never slicing mid-utterance at the pad edge) and remain ordered and deduplicated so per-word decoding and CTC-3B Viterbi timestamps match a whole-episode run on those regions.
+2. Add `--clip-scoped-asr` and `--clip-asr-pad-ms` to `pipeline.py` (CLI and `run_pipeline(..., clip_asr=..., clip_asr_pad_ms=...)`). Stage 0–4 run against the draft `--transcript`, all selected clips (single-clip or `--max-clips` episode batch) are refined in a single `clip_asr.transcribe(...)` invocation, sentences are re-segmented and remapped strictly before Stage 5/6, and `clip_scoped_asr_wall_s` / `clip_scoped_asr_regions` / `clip_scoped_asr_audio_ms` are reported on `PipelineRun`.
+3. Persist clip-scoped final transcripts inside an isolated `work_dir/clip_asr/transcripts` `TranscriptStore` keyed with sorted `clip_regions` in `admission_policy`, never mutating the draft `work_dir/transcripts` store (`D-136`) and failing stop with zero renders if clip-scoped final ASR fails (`GEMINI.md` zero-fallback rule).
+
+**Not established.** End-to-end speedup when `--transcript` is produced by a live fast external/draft ASR rather than supplied as an existing JSON file; paired VEX source digest re-pin (`security/wsl-asr-vex.json`) stays separate for lead integration (`tests/test_vex.py` is unpinned for lane branches).
+
+## D-341 - Default OmniASR hard-segment validation to off (--validate-asr opts in) pending paired WER ablation
+
+2026-11-19; owner approval: in chat (`/goal ... all approved`), implementing `specs/b6-validator-ablation/plan.md`. Blueprint ref: §3 Stage 1, §7. Amends D-281, D-285, D-286, D-324 (`BLOCKED.md` #1, #24).
+
+**Context.** On `HawaPC01`, `rzgar/qwen3-asr-sorani-kurdish-ckb-v1` weights and `qwen-asr==0.0.6` are not provisioned, and no paired WER benchmark on real Sorani episodes established that validator rewrites improve fused v12 + CTC-3B output enough to justify model load, VRAM churn, and correction-failure risk. Unconditional validator admission in `asr.py` (`WslOmniAsrProducer`, `OmniAsrProducer`) and `asr_resume.worker_journal` blocked all v12 Stage 1 execution whenever `qwen-asr` or `rzgar` was absent.
+
+**Decision.**
+1. Set `validate_hard_segments=False` by default in `create_omni_asr_producer` (`src/hawedit/asr.py`) and add `--validate-asr` / `--no-validate-asr` (`BooleanOptionalAction`) in `src/hawedit/pipeline.py` (`--validate-asr` opts back in cleanly with strict D-285 / D-324 `ModelStore`, `qwen-asr`, and `validator_model_dir` enforcement).
+2. Thread `validate_hard_segments` cleanly through `WslOmniAsrProducer`, `OmniAsrProducer`, `asr_worker.py` (legacy schema-2 requests without the field stay `True`), and `asr_resume.worker_journal(..., validator_path: Path | None)` (skipping `ModelStore`, `verified_checkpoint_access`, and `qwen-asr` metadata lookup only when disabled). Append `+validator-off` to `admission_policy` so validator-off and validator-on cached `RawTranscript` stores never collide (`D-136`).
+3. Add uniform `"validator-disabled"` `SegmentOrigin` validation in `src/hawedit/transcripts.py` (`RawTranscript._validate_origins` refuses mixed `"validator-disabled"` and validator-active origins) and explicit `"asr_routing_status": "validator-disabled"` / `"validator_enabled": False` / `"escalated": 0` (preserving counterfactual `"would_escalate"`) reporting in `PipelineRun.to_dict()` and `_print_report`.
+4. Add `normalized_wer` (`src/hawedit/metrics.py`) and `score_validator_ablation` (`src/hawedit/bench.py`) so T4 can score `--no-validate-asr` vs `--validate-asr` once `B5` reference text (`>= 20` clips, `BLOCKED.md` #1) and staged `rzgar` + `qwen-asr` are available.
+
+**Not established.** Live paired WER delta between `--no-validate-asr` and `--validate-asr` on `>= 20` human-transcribed Sorani clips (`specs/b6-validator-ablation/tasks.md` `T4` remains open awaiting #1 + `rzgar`); keep-or-retire judgment will amend this ADR once measured.
+
+## D-342 - Split a failed multi-segment _ContextSpeechRegion back into constituent raw Silero VAD segments on DecodeIncomplete (amends D-332)
+
+2026-11-19; owner approval: coordinator assignment `#38` (amending D-332 under `BLUEPRINT.md` §3 Stage 1 while preserving strict fail-stop). Affects `_ContextSpeechRegion`, `_cut_speech_regions`, `transcribe_prepared_segments`, `WslOmniAsrProducer`, `asr_completion.py`, `asr_worker.py`, `asr_resume.py`; preserves `D-281`, `D-331`, `D-332`, `D-340`, `D-341`, and `GEMINI.md` zero-fallback rule.
+
+**Context.** During full-episode validation of `RO1PmSoqmCM` (`zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4`, SHA-256 `17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72`, `540` Silero VAD segments coalesced into `175` `_ContextSpeechRegion`s), Stage 1 halted under `D-332` at grouped region `77` (`speech-0077.wav`, `1,048,834..1,062,334 ms`, RMS `0.0589`, peak `0.3238`), which merged `3` raw Silero VAD segments across `132 ms` pauses (`speech[223]`: `1,048,834..1,052,510 ms`; `speech[224]`: `1,052,642..1,055,006 ms`; `speech[225]`: `1,055,138..1,062,334 ms`).
+
+**Measured.** `HawaPC01` (WSL2 `Linux-6.18.58.1`, isolated `/home/ai/.cache/hawedit-plain-wsl-venv` Python 3.12.13, `CUDA_VISIBLE_DEVICES=1` RTX 3090 Ti, fused `kurdish_omniasr_7b_v12_c750.pt` + `omniASR-CTC-3B-v2.pt`, validator off):
+- Standalone GPU 1 probe of the `3` constituent raw Silero VAD sub-segments of grouped region `77` decoded `3/3` cleanly on first-pass greedy (`223.229 s` model load, `0` beam-5 retries): `speech[223]` (`3,676 ms`, `2.314 s` wall, `7` words, `mean_logprob = -9.4666`), `speech[224]` (`2,364 ms`, `1.064 s` wall, `7` words, `mean_logprob = -6.807`), `speech[225]` (`7,196 ms`, `3.39 s` wall, `21` words, `mean_logprob = -5.2487`).
+- Re-running `RO1PmSoqmCM` via `OmniAsrProducer(..., context_grouping=True, validate_hard_segments=False)` with constituent splitting active automatically triggered `[D-342 split #1]` on `speech-0077.wav` (`1,048,834..1,062,334 ms`), sliced `speech-0077-sub-00.wav` (`117,676` bytes), `speech-0077-sub-01.wav` (`75,692` bytes), and `speech-0077-sub-02.wav` (`230,316` bytes), decoded all `3` on greedy (`1.25 s` / `7` words, `0.91 s` / `7` words, `3.22 s` / `21` words), and progressed cleanly through grouped region `89`. At grouped region `90` (`speech-0090.wav`, `1,229,858..1,243,998 ms`, `14,140 ms`, a singleton raw Silero VAD segment with `1` constituent), `DecodeIncomplete` (`greedy: no natural EOS; beam-5 retry: loop`) triggered strict fail-stop (`AsrProductionFailure`), leaving no partial raw transcript written.
+
+**Decision.**
+1. Add `DecoderContractError(DecodeIncomplete)` in `src/hawedit/asr_completion.py` and raise it for decoder installation/contract violations (`transcribe_completed`, `require_natural_completion`, `_restore_ctc` in `src/hawedit/asr.py`) so runtime contract breaks always fail stop immediately without split recovery.
+2. Carry raw VAD `(start_ms, end_ms)` boundaries across `_ContextSpeechRegion.constituents`, `_cut_speech_regions` -> `_PreparedSpeechSegment.sub_segments` (only when `len >= 2`), `WslOmniAsrProducer` segment JSON (`sub_segments` omitted on singletons), `asr_worker.py` strict request parsing, and `asr_resume.worker_journal` (`binding["inputs"]["audio"][*]["sub_segments"]` plus `_assert_bound_subsegment` parent-slice PCM verification on resume).
+3. On non-`DecoderContractError` `DecodeIncomplete` inside `transcribe_prepared_segments`, when a failing prepared segment carries `len(sub_segments) >= 2`, slice per-constituent `-sub-NN.wav` PCM16 clips (`_cut_pcm_subsegments` using stdlib `wave`) and retry each constituent sub-segment strictly; if ANY constituent fails or the failing segment is already a singleton raw Silero VAD segment (`len(sub_segments) < 2`), fail stop immediately via `AsrProductionFailure`.
+
+**Not established.** Whole-episode completion past unbroken singleton raw Silero VAD turns that loop on OmniASR-7B (`RO1PmSoqmCM` `speech-0090.wav`, `14,140 ms`), which remain handled cleanly by `D-340` (`--clip-scoped-asr`) unless a separate VAD max-speech ADR is approved; VEX digest re-pin (`security/wsl-asr-vex.json`) stays reserved for lead integration.
+
+## D-343 - Split a failing long singleton speech segment once at a deep sliding RMS dip, else halt (amends D-332 and D-342)
+
+2026-11-19; owner approval: coordinator directive `#49` (amending `D-332` and `D-342`, lane-2 reserved slot `D-343`). Affects `src/hawedit/asr.py` (`silence_dip_split_ms`, `_cut_pcm_dip_halves`, `_write_pcm_slices`, `transcribe_prepared_segments`) and `src/hawedit/asr_resume.py` (`OperationJournal._assert_bound_subsegment`); preserves `D-281`, `D-331`, `D-340`, `D-341`, `omni-asr-request.json` schema, and `GEMINI.md` zero-fallback rule.
+
+**Context.** After `D-342` cleared all multi-segment context-grouping loops on `RO1PmSoqmCM` (`zar-ai-half-episode-lamo-2026-07-08__RO1PmSoqmCM.mp4`, SHA-256 `17a547016e05c1748a17ec59dc183cd7b1808387f1d7df1efdfd375cc0b1ec72`, `540` Silero VAD segments -> `175` grouped regions), diagnostic scanning of all remaining regions (`91..174`, `84` regions) on GPU 1 succeeded `84/84` (`0` unaligned, `2,850` words, with `D-342` splitting `speech-0149.wav` `5/5` and `speech-0169.wav` `5/5`), proving grouped region `90` (`speech-0090.wav`, `1,229,858..1,243,998 ms`, `14,140 ms`) was the sole singleton failure across the entire 40-min episode.
+
+**Measured.** `HawaPC01` (WSL2 `Linux-6.18.58.1`, isolated `/home/ai/.cache/hawedit-plain-wsl-venv` Python 3.12.13, `CUDA_VISIBLE_DEVICES=1` RTX 3090 Ti, fused `kurdish_omniasr_7b_v12_c750.pt` + `omniASR-CTC-3B-v2.pt`, validator off):
+- Sliding RMS dip analysis of singleton `speech-0090.wav` (`14,140 ms`, `overall_rms = 0.055895`) inside `[3_000, 11_140] ms` (`200 ms` window, `10 ms` hop) located a `0.001335` RMS breath dip (`<= 0.15 * overall_rms`) centered at `9,340 ms` (`1,239,198 ms` media clock). Decoding `[0, 9,340] ms` and `[9,340, 14,140] ms` succeeded `2/2` on first-pass greedy with natural EOS (`6.218 s` / `32` words / `mean_logprob = -4.4269`, and `2.341 s` / `16` words / `mean_logprob = -4.9452`).
+- Complete end-to-end 40-min `RO1PmSoqmCM` Stage 1 execution with `D-342` + `D-343` active (`task-1463`) completed **`175 / 175` grouped regions** (`186` decoded items, **`5,951` aligned words**, **`0` unaligned**, `mean_logprob = -6.3986`) in `202.405 s` model load + `1,024.241 s` inference (`RTF 0.4282` excl. load, `1,226.646 s` / `RTF 0.5129` incl. load, peak `21,894.0 MiB` alloc / `23,402.0 MiB` reserved), firing `3` `D-342` constituent splits (`speech-0077`, `speech-0149`, `speech-0169`), `1` `D-343` singleton dip split (`speech-0090` -> `1,229,858..1,239,198` & `1,239,198..1,243,998 ms`), and `5` `beam5_retry` rescues. Saved canonical raw transcript at `D:\HawEdit-media\excerpts\zar-ai-lamo__RO1PmSoqmCM.transcript.raw.json` (`2,152,666 B`, SHA-256 `9286cab3d58eeb5bae8f72621c26bf9c4e64678f19e317ea2e39eda9110c1d9e`).
+
+**Decision.**
+1. Trigger singleton energy-dip splitting ONLY when a singleton segment (`len(sub_segments) < 2`) with duration >= `SINGLETON_DIP_MIN_DURATION_MS = 8_000` ms raises non-`DecoderContractError` `DecodeIncomplete` (never on `DecoderContractError`, never inside `D-342` constituent retries, never recursively).
+2. `silence_dip_split_ms(path)` scans exact integer 16 kHz mono PCM16 frames inside `[3_000, duration_ms - 3_000] ms` (`SINGLETON_DIP_EDGE_GUARD_MS = 3_000`, `SINGLETON_DIP_WINDOW_MS = 200`, `SINGLETON_DIP_HOP_MS = 10`). Require `overall_rms > 0` and `min_window_rms <= 0.15 * overall_rms` (`SINGLETON_DIP_MAX_RMS_RATIO = 0.15`); otherwise return `None` and halt immediately via `AsrProductionFailure`.
+3. `_cut_pcm_dip_halves` slices `{stem}-dip-00.wav` and `{stem}-dip-01.wav` ONCE via shared `_write_pcm_slices(..., contiguous_to_end=True)` covering contiguous `[0, split_frame]` and `[split_frame, total_frames]`; both halves must succeed strictly or `AsrProductionFailure` halts immediately.
+4. Keep `omni-asr-request.json` schema unchanged; extend `asr_resume.OperationJournal._assert_bound_subsegment` to verify `{parent_stem}-dip-(0|1).wav` deterministically against the bound singleton parent WAV hash (`parent["sha256"]`), recomputed `silence_dip_split_ms(parent_path)`, and exact PCM slice bytes.
+
+**Not established.** Recovery of continuous-speech `>= 8_000 ms` singletons that lack a `<= 0.15 * overall_rms` silence dip, which continue to fail stop intentionally (`AsrProductionFailure`); VEX source digest re-pin (`security/wsl-asr-vex.json`) stays reserved for lead integration.
+
+## D-344 - Path A discovery uses 0-based sentence numbers mapped to CTC word times instead of a 4,000-word millisecond table
+
+2026-11-19; owner approval (`Approved-by: Hawa` in `specs/c1-sentence-number-discovery/plan.md`).
+Blueprint ref: §3 Stage 3, §4.1, §4.2, §5. Supersedes `D-036`'s word-timing table mechanism.
+
+**Problem.** `src/hawedit/path_a.py` formatted up to 4,000 aligned words as `<start_ms>-<end_ms> <word>` above the transcript (`_timing_table(limit=4000)`) and asked Gemini for `in_ms` / `out_ms` integers. Real long episodes such as `zar-ep54-younis-gardwni-cosmos-2026-11-12__xMEcurfWjic.mp4` (~16,000 words) lost all timestamps past word 4,000, duplicating tokens below 4,000 words and tempting the model to invent millisecond offsets or cut inside incomplete fragments.
+
+**Decision.**
+1. Delete `_timing_table(limit=4000)` completely and prompt Gemini with all 0-based numbered sentences `[i] <normalized sentence text>` derived from `Sentence` boundaries via `normalize_sorani` (Kurdish invariant #3, unlimited length).
+2. Replace `in_ms` / `out_ms` in `CANDIDATE_SCHEMA` with inclusive integer indices `start_sentence` and `end_sentence`, mapped deterministically in code to `(sentences[start_sentence].start_ms, sentences[end_sentence].end_ms)`.
+3. Fail-stop (`JudgeUnusable`) on non-integer/boolean indices, out-of-range indices, `end_sentence < start_sentence`, or any candidate boundary where `Sentence.complete` is `False` (§5 sentence-completeness invariant).
+4. Bind sentence boundaries into `PathADiscovery`'s K-run SHA-256 cache digest, pass pre-segmented `sentences` from `pipeline.py:3289` cleanly when supported by the discoverer signature, and import `KURDISH_EDITORIAL_JUDGE` from `hawedit.judge` instead of hardcoding model strings.
+
+## D-345 - Clean-room MIT TextTiling topic-segmentation candidates via Sorani word and n-gram embeddings
+
+2026-11-19; owner approval (`Approved-by: Hawa` in `specs/c4-topic-segmentation-candidates/plan.md`).
+Blueprint ref: §2, §3 Stage 3, §4.1, §4.2, §5, §8.2.
+
+**Problem.** Path A relies on a single hosted Gemini call (`KURDISH_EDITORIAL_JUDGE` / Pro judge), while local Stage 3 has no zero-API verbal candidate source. We want a deterministic, CPU-only topical boundary detector over normalized Sorani sentences with zero AGPL code copied from external clip tools.
+
+**Decision.**
+1. Implement clean-room Hearst (1997) TextTiling (`text_tile_depths`, `discover_topics`) in `src/hawedit/topic_segmenter.py` behind a `SentenceEmbedder` Protocol (MIT method, written from first principles, zero AGPL code or extra runtime dependencies).
+2. Default `SoraniTfIdfEmbedder` reuses `hawedit.index.index_tokens` and `character_ngrams` (`DEFAULT_NGRAM_SIZE=3`, `DEFAULT_NGRAM_WEIGHT=0.5`, matching `D-016`) over normalized Sorani (`assert_model_input` at entry).
+3. Restrict candidates to contiguous complete-sentence runs (`Sentence.complete == True`), splitting over-long segments at deepest internal valleys and merging adjacent sub-floor segments across shallowest valleys along sentence boundaries within `[MIN_CANDIDATE_SPAN_MS, MAX_CANDIDATE_SPAN_MS]` (`30_000..90_000` ms).
+4. Emit `DiscoveryPath.VERBAL` candidates (`{media_id}-topic-{rank}`) preserving §5's frozen three-path enum, united with Path A via `combine_verbal_candidates` in `src/hawedit/discovery.py` (preserving rank precedence ahead of `merge_candidates`) and wired behind `--topic-candidates` / `topic_candidates=True` in `src/hawedit/pipeline.py` without masking Path A `discovery_skipped` errors.
+
+## D-346 - Swiss pairwise editorial ranking via Gemini replaces asserted score weights in judge.py
+
+2026-11-19; owner approval (`Approved-by: Hawa` in `specs/c5-pairwise-ranking/plan.md`).
+Blueprint ref: §2, §3 Stage 4, §4.1, §8.2. Retires the `0.40/0.30/0.20/0.10` composite weights in `src/hawedit/judge.py`.
+
+**Problem.** `tournament_score` in `src/hawedit/judge.py` combined scalar rubric fields using uncalibrated constants (`0.40 * hook_score + 0.30 * payoff_strength + 0.20 * meaning_fidelity + 0.10 * cultural_landing - 0.20 * risk + 0.05 * ends_on_a_beat`) without any empirical calibration set backing those coefficients, overriding how editorial tradeoffs actually hold across Sorani clips.
+
+**Decision.**
+1. Retire `tournament_score` and all asserted composite coefficients from `src/hawedit/judge.py` cleanly, keeping zero `"virality"` fields or prompt tokens anywhere in `judge.py` (`screener.py:167` `0.50/0.35/0.15` and `story.py:981` `0.50/0.50` remain outside C5 scope).
+2. Add `PAIRWISE_SCHEMA`, `PairwiseMatch`, `PairwiseComparator`, and `GeminiPairwiseJudge` (composition over `StructuredJsonClient`, refusing `JUDGE_SHADOW` via `route()` with `NotRoutable`, enforcing `< 200K` token tier, normalized Sorani inputs, and `_kurdish_field` validation on `reason_ckb`) asking which candidate a Kurdish viewer would keep watching through payoff.
+3. Implement bounded `pairwise_rank_verdicts` (`<= 12` eligible candidates, `2..3` Swiss rounds with A/B slot balancing, aggregated via `hawedit.repurposing.pairwise_preference` + Buchholz tiebreak, `0` comparator bouts when `<= 1` eligible verdict) after hard §2 eligibility filtering (`meaning_fidelity >= 0.70`, `misleading_edit_risk <= 0.10`, `self_contained == True`).
+4. Wire `pairwise_rank_verdicts` and `GeminiPairwiseJudge` into `pipeline.py` Stage 4 winner selection (`max_clips=None`) and `episode.py` (`plan_episode` / `select_episode_plan`), failing Stage 4 visibly (`StageSkipped` operational failure) instead of silently falling back if pairwise comparison errors occur.
+
+## D-348 - Replace inline ASS `\kf` in `WORD_HIGHLIGHT` with two-layer per-word `\clip` sweep (RTL for Sorani, LTR for Latin/digits)
+
+2026-11-19; owner approval: approved `specs/d6-rtl-karaoke-fill/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §4.3.1, §4.3.6, §5. Type: defect elimination, not a deviation. Supersedes D-334's open
+limitation on intra-word `\kf` sweep direction (libass #406); builds on D-259 and D-268.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, ffmpeg 8.1.1-full (`libass` + `HarfBuzz`
++ `FriBidi`), raw captures in `specs/d6-rtl-karaoke-fill/captures/` and
+`evidence/d6-d7-picture-baseline-2026-11-18.md`. Inline `\kf` sweeps left-to-right inside every
+Sorani word (libass issue #406): on `"ڕۆژنامەوانی کوردی لە هەولێر."` at `t=0.25s`, highlighted gold
+pixels clustered on the left (`mean_x=739.3`) while unhighlighted white pixels sat to their right
+(`mean_x=870.5`, gap `-131.2 px`), sweeping backwards across connected glyphs. Two-layer compositing
+(`Layer 0` base unspoken style in `theme.secondary` + `Layer 4` identical full-line text with
+`KurdishHighlight` in `theme.primary` and `\clip(x1,y0,x1,y1)\t(0,dur,\clip(x0,y0,x1,y1))`)
+preserves Arabic cursive joining and achieves `max_diff=0` over the unclipped portion when highlight
+style keeps the base outline and shadow (`BorderStyle=1`), or `border_style=1, outline=0, shadow=0`
+over `BorderStyle=3` plates so semi-transparent backing boxes do not double-darken.
+
+**Decision.**
+1. `CaptionStyle.WORD_HIGHLIGHT` in `src/hawedit/captions.py` emits two synchronized layers:
+   - `Layer 0` renders each complete popup/wrapped event using the base `Kurdish*` style set to
+     `PrimaryColour = theme.secondary` (unspoken colour).
+   - `Layer 4` renders one event per word in `Kurdish*Highlight` (`PrimaryColour = theme.primary`,
+     active during `[word_start, event_end]`) animated with `\t(0, dur_ms, \clip(x0, y0, x1, y1))`
+     from `[x1..x1]` (RTL when Arabic-script letters are present) or `[x0..x0]` (LTR for pure
+     Latin/digit tokens). `Layer 4` stays disjoint from `Hook` (`1`), `SpeakerTag` (`2`), and
+     `EndCard`/`HookBanner` (`3`).
+2. Per-word pixel bounding boxes are measured once per unique styled line tuple via
+   `_measure_word_boxes` (single-pass ffmpeg `rgb24` probe painting each batch of up to 12 words in
+   distinct saturated `\1c` colours with transparent outline/shadow, cached under `_WIDTH_LOCK` and
+   keyed by full font/style/file stat context; fails closed with `CaptionVerificationError` if
+   ffmpeg or bound fonts are unavailable). No static center-x formula or silent fallback.
+3. `verify_caption_text` skips `Kurdish*Highlight` styles when collecting primary `dialogue_lines` so
+   repeated words across separate chunks do not collapse, while still inspecting `all_lines` for
+   cursive joining and keeping highlight-only ASS files covered via fallback.
+4. `_karaoke` remains intact only if referenced directly by unit tests; `build_ass` no longer emits
+   `\kf`. All affected goldens are slated for batch regeneration after D6 + D7 + D5 land.
+
+**Considered and not chosen.** Per-word `\pos` events (breaks baseline metrics on mixed script and
+disables `WrapStyle: 2` single-line shaping); `BorderStyle=3` on highlight layer (double-darkens
+semi-transparent caption plates); three-call-per-word `compute_rtl_word_positions` probing (3x slower
+and ignores `\N` line breaks).
+
+**Not established.** Multi-word long events above 256 words in one line (batched cleanly by 12 words
+with transparent fills, only 1–2-line captions tested). Linux CI runner not yet run on this branch.
+
+## D-349 - Switch default caption font to bundled `Vazirmatn` and bind mixed-script Latin glyphs in `assert_ass_fonts_cover_kurdish`
+
+2026-11-19; owner approval: approved `specs/d7-latin-fallback-font/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §4.3.4, §5. Type: defect elimination, not a deviation. Extends D-133 / D-163 font
+binding without adding any new font file (`assets/fonts/Vazirmatn.ttf` is already bundled, OFL-1.1,
+in `release.py` SBOM).
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, `fontTools 4.60.2`, ffmpeg 8.1.1-full
+(`libass` + `HarfBuzz` + `FriBidi`), raw captures in `specs/d7-latin-fallback-font/captures/` and
+`evidence/d6-d7-picture-baseline-2026-11-18.md`. `NotoNaskhArabic-Regular.ttf`
+(`sha256:2f4b88e6ee50...`, OFL-1.1) lacks ASCII `A-Z` / `a-z` glyphs (`cmap` misses Latin entirely),
+so any Latin/brand word inside a Sorani caption triggered Windows host fontconfig fallback to
+unrelated sans-serif glyphs that rendered `1.483x` taller (`86 px` vs `58 px` at `108 pt`) and
+`1.514x` taller (`53 px` vs `35 px` at `64 pt`). Bundled `Vazirmatn.ttf`
+(`sha256:696249a2c74b...`, OFL-1.1) covers both `KURDISH_REQUIRED_GLYPHS` and ASCII Latin/digits,
+measuring `1.017x` (`60 px` vs `59 px` at `108 pt`) and `1.029x` (`36 px` vs `35 px` at `64 pt`),
+and differs cleanly between `shaping=complex` and `shaping=simple` (`5,598 px` diff on the
+1080x1920 fixture).
+
+**Decision.**
+1. Export `DEFAULT_CAPTION_FONT = "Vazirmatn"` in `src/hawedit/captions.py` and make it the default
+   `font_name` across `measure_rendered_caption_width`, `wrap_caption_lines`,
+   `chunk_caption_events`, `compute_rtl_word_positions`, `build_ass`, and `mobile_caption_layout`.
+2. Extend `assert_ass_fonts_cover_kurdish` to inspect visible displayed ASS `Dialogue:` text
+   (excluding `{...}` override tags and `\N`/`\n`/`\h` escapes) per bound family: if `[A-Za-z]`
+   appears under a family, assert those Latin codepoints against the resolved font's `cmap` so host
+   fallback is refused before burn. Pure Sorani captions passed with explicit
+   `font_name="Noto Naskh Arabic"` continue to bind and validate.
+3. No font files are removed; `NotoNaskhArabic-Regular.ttf` stays bundled for explicit callers.
+
+**Considered and not chosen.** Stripping or transliterating Latin words into Sorani (violates
+Kurdish invariant #1 canonical surface forms); inline `\fn` per-word switching (forbidden by
+`assert_ass_fonts_cover_kurdish` `_INLINE_FONT_OVERRIDE` check and splits shaping).
+
+**Not established.** Linux container fontconfig fallback behavior when an explicit font lacks Latin
+is inferred to match Windows DirectWrite mismatch and is blocked symmetrically by the `cmap` gate.
+
+## D-350 - Phone-readable 128 pt captions in lower-middle safe zone and wired protection against faces, tables, and burned-in teaser labels
+
+2026-11-19; owner approval: approved `specs/d5-phone-readable-captions/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §4.3, §5. Type: quality upgrade / defect elimination, not a deviation. Updates D-268
+`VIRAL_FONT_SIZE`, `VIRAL_THEME`, and `POPUP_MAX_CHARS`, and wires VE-10 `caption_layout.py` into
+`pipeline.py`.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, OpenCV 4.12.0, ffmpeg 8.1.1-full,
+captures in `specs/d5-phone-readable-captions/captures/` (`probe_d5.py.txt`, real Zar Podcast
+excerpts/sources):
+- On `1080x1920`, `Vazirmatn` at `128 pt` with `outline=6.0, shadow=2.0, margin_v=450` produces
+  `72 px` glyph ink height (`2.06x` of `64 pt`'s `35 px`) centered at `y = 1405 px` (cleanly above
+  Reels/Shorts/TikTok ~300 px UI bar and above Zar `"لەم پۆدکاستەدا:"` teaser banner measured at
+  `y = 1525..1734 px` / `0.794..0.903`).
+- Across real Zar frames: `"لەم پۆدکاستەدا:"` banner scores `blue_low = 0.300` (`up = 0.000`,
+  `width = 0.87`) vs `0.000` on non-banner frames; wide table shots (`excerpt_35s`, `excerpt_110s`,
+  `ai_open_03s`) score `canny_edge = 0.171..0.174`, `sobel_y = 0.419..0.424`,
+  `hlines = 48..54` vs plain talking-head close-ups (`edge = 0.031..0.048`,
+  `sobel_y = 0.084..0.098`, `hlines = 0..2`).
+
+**Decision.**
+1. `src/hawedit/captions.py`: set `VIRAL_FONT_SIZE = 128`, `VIRAL_THEME` (`outline=6.0, shadow=2.0,
+   margin_v=450`), and `POPUP_MAX_CHARS = 20` (aligning with `sanity_gate.py` `<= 20` char limit).
+2. `src/hawedit/shot_plan.py`: add `ProtectedRegionKind.TABLE_OBJECT` and optional temporal
+   bounds `start_ms: int | None = None`, `end_ms: int | None = None` on `ProtectedContentRegion`.
+3. `src/hawedit/caption_layout.py`: update `BOTTOM_BAND_BOX = (0.05, 0.70, 0.95, 0.80)`, make
+   `_boxes_intersect` symmetric across either region, filter `plan_caption_layout` cues against
+   `active_regions` by temporal overlap and include `TABLE_OBJECT`, add
+   `caption_layout_to_avoidance_intervals` and calibrated `detect_protected_visual_regions`.
+4. `src/hawedit/assembly.py` (`render_assembled_reel`) & `src/hawedit/pipeline.py` (shared
+   `_resolve_caption_avoidance_intervals` at both render entrypoints): wire `VIRAL_FONT_SIZE`,
+   `VIRAL_THEME`, `POPUP_MAX_CHARS`, `POPUP_MAX_WORDS`, `POPUP_MAX_WIDTH_PX`, and detected
+   `face_intervals` into `build_ass`.
+
+**Considered and not chosen.** Shrinking caption font below 100 pt to squeeze between overlays
+(violates phone legibility and `sanity_gate.py:114`); global per-clip top placement when only one
+shot shows a table or teaser card (temporal cue filtering moves only affected cues).
+
+**Not established.** Table threshold behavior on non-Zar vertical studio table layouts outside the
+three audited Zar recordings. Linux CI runner not yet executed.
+
+## D-351 - Apply symmetric 30 ms `qsin` audio boundary fades across cut, splice, and clip edges
+
+2026-11-19; owner approval: approved `specs/d8-cut-audio-fades/plan.md` in chat (`2026-11-19`).
+Blueprint ref: §3 Stage 6. Type: defect elimination, not a deviation. Complements D-269/D-270
+two-pass linear `loudnorm` and keeps A/V duration invariants intact.
+
+**Measured.** HawaPC01, Windows 11, `.venv` CPython 3.12.10, ffmpeg 8.1.1-full, probe in
+`specs/d8-cut-audio-fades/captures/probe_d8.py.txt`:
+- Direct `[0:a]atrim=...,asetpts=PTS-STARTPTS` + `concat=v=1:a=1` produced abrupt step clicks at
+  jump cuts (`±1 ms` peak `26,753` on a `437 Hz` sine cut and `17,843` on `kurdish-speech-3cuts.mp4`).
+- Using `acrossfade` shortens audio relative to concatenated video (`n-1` overlap), breaking A/V
+  span parity. Per-segment `30 ms` `qsin` `afade` out/in keeps exact `1:1` PCM duration (`0.00 ms`
+  drift vs raw concat) while reducing `±1 ms` boundary amplitude by `24.5x–36.8x` (`peak 726` /
+  `1,092`).
+
+**Decision.**
+1. Export `CUT_AUDIO_FADE_MS = 30` and `audio_cut_fade_filters(duration_ms, *, fade_in, fade_out)`
+   from `src/hawedit/silence.py`, safely clamping fade duration to `min(fade_ms / 1000, dur_s / 2)`
+   for segments under `60 ms`.
+2. Wire internal boundary fades (`fade_in=(i > 0)`, `fade_out=(i < n - 1)`) into
+   `silence_trim_filter` (`src/hawedit/silence.py`), `assembled_splice_filter`
+   (`src/hawedit/assembly.py`), and `measure_audio_loudness` (`src/hawedit/render.py`) so Pass 1
+   and Pass 2 evaluate matching audio.
+3. Apply outer clip-edge `30 ms` `qsin` fade-in/out after `audio_filter()` (`loudnorm`) in
+   `render_clip` and before `aformat` in `render_assembled_reel`, keeping Pass 1 and Pass 2
+   `loudnorm` input streams identical and preserving all existing filter-chain tests.
+
+**Considered and not chosen.** `acrossfade` (shortens concatenated audio stream vs video cuts,
+breaking `assert_encoded_span`); zero-crossing search per cut (still leaves slope clicks across
+divergent talker/room tone and is fragile at shot cuts).
+
+**Not established.** Real Zar multi-cut perceptual preference beyond objective PCM discontinuity
+and EBU R128 Pass 1/Pass 2 agreement. Linux CI runner not yet executed.
+
+## D-352 - Usable-rate scoreboard CSV schema and module CLI (Phase A7)
+
+2026-11-19; owner approval: `"all approved"` (`specs/a7-usable-rate-sheet/plan.md`).
+Type: measurement & review ledger; no change to frozen BLUEPRINT §3-§8 pipeline stages.
+
+**Findings (`tests/test_claims.py`).**
+1. `test_new_evidence_names_its_commit_media_and_host` inspects `evidence/*.md` only, so keeping the human review ledger as `evidence/usable-rate.csv` does not collide with Markdown report header checks (while any Phase F3 Markdown summary under `evidence/*.md` must include `commit`, `media_sha256`, `host`, and `command`).
+2. `tests/test_claims.py` asserts exact 16-script parity between `pyproject.toml` `[project.scripts]` and `AUDIT_REPORT.md` (`_NUMBER_WORDS` stops at 16). Adding a 17th `[project.scripts]` entry is therefore rejected.
+
+**Decision.**
+1. Create `evidence/usable-rate.csv` with leading schema columns `episode,reel,verdict,reason` followed by provenance columns `reel_sha256,commit,recorded_at`.
+2. Add stdlib-only `src/hawedit/usable_rate.py` invoked via `python -m hawedit.usable_rate add|summary` (reusing `hawedit.cli.use_utf8_streams` and `hawedit.comparison_kit.wilson_score_interval`) with `USABLE_RATE_BASELINE = 0.62`, `USABLE_RATE_TARGET = 0.80`, and `VALID_VERDICTS = ("publishable", "needs_fix", "unusable")`.
+3. Fail stop when `verdict` is unrecognized, when a non-publishable verdict lacks a non-empty `reason`, or when `(episode, reel)` duplicates an existing row without `--replace`.
+
+## D-353 - Post-publish per-reel contact sheets alongside rendered MP4s (Phase E1)
+
+2026-11-19; owner approval: `"all approved"` (`specs/e1-reel-contact-sheet/plan.md`).
+Type: CPU inspection sidecar; preserves `ArtifactBundle._SUFFIXES` and `candidate_review.REVIEW_SUFFIXES`.
+
+**Findings (`artifact_bundle.py`, `candidate_review.py`, `pipeline.py`).**
+`ArtifactBundle._validate` and `candidate_review` enforce closed suffix sets inside staging and signed review packets. Meanwhile `pipeline.py` already places `.cover.png` into `bundle.final_dir` after `bundle.publish()`.
+
+**Decision.**
+1. Implement CPU-only `src/hawedit/contact_sheet.py` (`python -m hawedit.contact_sheet`) using pinned `find_ffmpeg()`, `measure.probe_container`, `measure.probe_scene_cuts`, `measure._parse_ass_dialogue_cues`, and `VisualEditPlan` cuts with `CONTACT_SHEET_SUFFIX = ".contact-sheet.jpg"`, `GRID_COLUMNS = 4`, `MAX_CUT_PAIRS = 12`, and `CAPTION_BAND_RATIO = 0.34`.
+2. Render `FIRST` (`0 ms`), frame-accurate pre/post cut pairs, explicit slate-grey `FILLER / NO TILE` padding cells (preventing empty grid cells from reading as black frames), and a full-width enlarged caption strip centered on active ASS cue midpoints.
+3. Invoke `render_reel_contact_sheet` post-`bundle.publish()` in both `_render_episode_single_clip` and `run_pipeline` in `src/hawedit/pipeline.py` without modifying `ArtifactBundle._SUFFIXES` or `REVIEW_SUFFIXES`.
+
+## D-354 - Authoritative EDL hard edit rules, two-sided silence cut padding, and wired `render_critic.py` (Phase E3)
+
+2026-11-19; owner approval: `"all approved"` (`specs/e3-hard-edit-rules/plan.md`) and coordinator clarification (#23).
+Type: pre-render and post-render guardrail consolidation; no third critic added.
+
+**Findings (`edit_plan.py`, `silence.py`, `render_critic.py`, `sanity_gate.py`, `pipeline.py`).**
+1. No `validate_edl()` validator existed before E3. `silence.py` set `cut_end = gap_end`, leaving `0 ms` before the post-cut word onset. `render_critic.py` was already called at two `pipeline.py` sites and guarded by 11+ tests (`tests/test_render_critic.py`, `tests/test_robustness_audit.py` RB-11/RB-12), while Check #0 sampled 1 frame at `mid_ms` despite `TemporalCritiqueWindow` claiming `frame_count >= 2` and `sanity_gate.py` had zero `src/` callers.
+2. Pre-existing `test_pipeline.py` `_MeasuredDiarizer` tests assert `(0, 1_950)` (`250 ms` `speaker_turn_end` extension within `SHOT_CUT_WINDOW_MS = 400`), and `test_review_candidate_cache.py` asserts `silence_target_gap_ms = 5` yields `silence_removed_ms = 295` on the 4.16 s fixture.
+
+**Decision.**
+1. Keep and wire `render_critic.py` (no deletion, no third critic, `sanity_gate.py` left unwired), and host authoritative `validate_edl()` in `src/hawedit/edit_plan.py` with standalone defaults `MIN_CUT_PADDING_MS = 30`, `MAX_CUT_PADDING_MS = 200`, `MAX_STAGE5_SIGNAL_EXTENSION_MS = 600`, `DEFAULT_MIN_REEL_DURATION_MS = 30_000`, `DEFAULT_MAX_REEL_DURATION_MS = 90_000`, `SOCIAL_MIN_REEL_DURATION_MS = 30_000`, and `SOCIAL_MAX_REEL_DURATION_MS = 55_000`.
+2. Require zero mid-word cuts (`word.start_ms < cut_ms < word.end_ms`), `[30, 200]` ms cut padding (permitting physical `0` / `media_duration_ms` outer clamps while failing stop if an unselected adjacent word sits `< 30 ms` outside), and output duration bounds. In `pipeline.py`, forward configured clip bounds via `pipeline_edl_duration_bounds` / `pipeline_edl_padding_bounds` (keeping `[30, 200]` strict on internal cuts, unaligned `None`/`tail` outer edges, and bounded runs, while permitting `shot_cut` up to `SHOT_CUT_WINDOW_MS` = 400 ms and measured Stage 5 audio/diarization/visual outer extensions `vad_onset`/`natural_silence`/`speaker_turn_*`/`timelens_interval_end` up to `MAX_STAGE5_SIGNAL_EXTENSION_MS = 600`).
+3. Fix `silence.py` (`plan_silence_tightening` via `_two_sided_keep_ms`) to preserve `[30, 200]` ms padding on both sides whenever `target_gap_ms >= 60` (and symmetric `target_gap_ms // 2` split for explicit sub-60 ms synthetic overrides), wire pre-render `validate_edl()` before `render_clip`, wire `edit_plan` validation into `render_critic.inspect_rendered_sequence`, and fix Check #0 to sample `>= 2` frames per multi-frame temporal window.
+
+## D-356 - CPU Acoustic Excitement Signals for Multimodal Stage 3 Discovery & Teaser Overlap Benchmark
+
+2026-11-20; owner approval: `"set a research grade plan to make it content aware real 10/10, then using swarm implement all whn u sure"` (`specs/content-aware-10-of-10/plan.md`).
+Type: zero-weight multimodal Stage 3 enhancement (`BLUEPRINT.md` §3 Stage 3).
+
+**Findings (`path_a.py`, `topic_segmenter.py`, `evidence/teaser-gold-timestamps.md`).**
+Stage 3 Path A and C4 TextTiling previously read text only, missing vocal energy spikes, laughter bursts, and delivery pace, and had no automated evaluator for human-edited opening teaser overlap on `cooking` (17 gold spans) and `ep54` (16 gold spans).
+
+**Decision.**
+1. Add stdlib/NumPy `src/hawedit/audio_signals.py` computing per-sentence `rms_z`, `peak_burst_count`, `speech_rate_wps`, and `pause_before_ms` directly from Stage 0 `audio.wav` (`< 2 s` on 40 min audio), plus `evaluate_teaser_overlap()` returning deterministic precision/recall/F1 and per-gold-region hit coverage.
+2. Extend `path_a._numbered_sentences` / `discover_verbal` and `topic_segmenter.discover_topics` with optional `audio_metrics` (`None` default preserving full backward compatibility) to surface compact `[high-energy]` / `[burst]` / `[fast]` cues and gently favor `35–65 s` viral arcs.
+
+## D-357 - Intra-Shot Active Speaker Switching, Non-Face `BLURRED_FILL`/Saliency Framing, and Explicit GPU NVENC Resolution
+
+2026-11-20; owner approval: `specs/content-aware-10-of-10/plan.md`.
+Type: computer-vision framing and hardware encode acceleration (`BLUEPRINT.md` §3 Stage 6).
+
+**Findings (`reframe.py`, `render.py`, `pipeline.py`, Pass 6 measurements).**
+1. Per-shot active-speaker clustering fixed 16/16 shots on `RO1PmSoqmCM`, but long uncut 2-person wide shots (`>= 5 s`) locked onto one speaker even if the second speaker took over mid-shot.
+2. Zero-face action shots (e.g., cooking pans/hands) raised `RuntimeError("zero faces detected")` in `pipeline.py` instead of using existing `Reframe.BLURRED_FILL` or motion saliency.
+3. Pass 6 spent ~65 min rendering 6 reels on CPU `libx264` despite `encoder_available(Encoder.NVENC) == True` on HawaPC01's RTX 3090 Ti, and ran Haar detection at full 1440p resolution.
+
+**Decision.**
+1. Add rolling-window intra-shot active-speaker switching (`>= 5 s` multi-person wide shots, `>= 2.0 s` dwell hysteresis, `>= 1.6×` mouth-motion dominance) emitting zero-flash hard cut steps, downscaled (`<= 960 px`) Haar detection mapped cleanly back to source coordinates, and `detect_motion_focus_points()` for non-face visual action in `src/hawedit/reframe.py`.
+2. Add explicit `resolve_encoder(choice, ffmpeg)` (`auto | h264_nvenc | libx264`) in `src/hawedit/render.py`: explicit `h264_nvenc` fails-stop if unavailable (zero silent fallback); `auto` probes `h264_nvenc` once and records exact encoder provenance.
+
+## D-358 - Clip-Only Audio-Grounded Sorani Caption Polish & E3-Safe Dead-Air Tightening
+
+2026-11-20; owner approval: `specs/content-aware-10-of-10/plan.md`.
+Type: display-layer caption hygiene and silence-trimming root-cause fix (`BLUEPRINT.md` §4.1, §4.3, D-343, D-354).
+
+**Findings (`silence.py`, Pass 6 transcript audit).**
+1. Chosen 60 s reels still carried occasional CTC micro-stutters (`تۆپ تۆپ تۆپ`) and minor Sorani orthography/ASR slips (`نابزانی`, `تێئەگە`, `چیت سکۆدس`), while D-343 rightly keeps full-episode validation disabled.
+2. `silence.plan_silence_tightening` ran `_identify_filler_words(..., detect_restarts=True)` even when `filler_tokens is None`, excising Kurdish emphatic repeats (`زۆر زۆر`) with `0 ms` padding and failing E3 `validate_edl` on 6/6 Pass 6 reels.
+
+**Decision.**
+1. Add `src/hawedit/caption_polish.py` providing deterministic micro-stutter deduplication (preserving intentional emphatic Kurdish repeats like `زۆر زۆر`) and optional clip-only multimodal Sorani display-caption polishing (`polish_clip_sentences`) with immutable `raw.json`, strict monotone CTC timestamp preservation, and `<= 25%` character-divergence guardrail.
+2. Fix `src/hawedit/silence.py` so `detect_restarts` runs ONLY when `filler_tokens is not None` (`--excise-fillers`), keeping pure dead-air tightening (`--silence-threshold-ms`) strictly `[30, 200] ms` word-padded and E3-compliant.
+
+## D-359 - End-to-End Content-Aware Pipeline Wiring & Automated Broadcast Scorecard
+
+2026-11-20; owner approval: `specs/content-aware-10-of-10/plan.md`.
+Type: Stage 3–8 integration and objective quality reporting (`BLUEPRINT.md` §3, §8).
+
+**Decision.**
+1. Wire `audio_signals`, explicit `--encoder` (`auto | h264_nvenc | libx264`), zero-face `Reframe.BLURRED_FILL` fallback, and opt-in `--polish-captions` into `src/hawedit/pipeline.py` (preserving all existing defaults and strict fail-stop guarantees).
+2. Add deterministic `BroadcastScorecard` (`double_cuts_count`, `zero_double_cuts`, `loudness_ok`, `contrast_ok`, `face_framing_ok`, `all_passed`) into `src/hawedit/measure.py` and `.measured.json` sidecars.
+
+## D-360 - Zero-Double-Cut `per_shot_boxes`, Broadcast Linear Speech Mastering & Acoustic-Driven Push-Ins
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: render physics and audio mastering upgrade (`BLUEPRINT.md` §4.3, §6, D-264, D-330).
+
+**Findings (measured on `ai-c10/topic-14` and `cooking-30m/verbal-8`).**
+1. `per_shot_boxes` (`y_center_expr` and `sendcmd` `w/h`) switched `31 µs` after `pts_time` on `topic-14` `CUT #5`, producing the sole `double_cuts_count=1` across 6 real reels.
+2. High-crest-factor audio (`input_i=-19.06 LUFS, input_tp=+1.5 dBTP`, crest `20.56 dB > 13.0 dB`) forced `loudnorm` out of linear mode to `-14.7..-15.0 LUFS`, failing delivery on `cooking/verbal-5` and `cooking/verbal-8`. Appending `acompressor=threshold=-22dB:ratio=3:attack=8:release=100:makeup=3,alimiter=limit=-3.0dB:attack=5:release=50:level=disabled` converged `cooking/verbal-8` linearly to `-13.96 LUFS / -1.68 dBTP` (`normalization_type='linear'`).
+
+**Decision.**
+1. Snap `per_shot_boxes` `y_center_expr` and `sendcmd` `w/h` cuts `-2 ms` early matching `_interpolated()`.
+2. Append transparent `acompressor` + `alimiter` peak control to `SPEECH_CHAIN_FILTERS` and add `two_pass_loudness: bool = False` on `render_clip()` so episode review renders achieve pure linear `-14.0 LUFS / <= -1.0 dBTP`.
+3. Add `content_aware_push_schedule()` scaling eased push-in depth by `SentenceAudioMetrics.excitement_score` and `verdict.payoff_at_ms`.
+
+## D-361 - Edge-Guard Smooth-Follow Camera & Per-Shot Zero-Face Cutaway Framing
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: camera stabilization and multi-genre reframe upgrade (`BLUEPRINT.md` §4.2, D-258, D-357).
+
+**Decision.**
+1. Add optional `edge_guard_px` and `edge_settle_ms` to `stabilize()` so leaning speakers approaching crop boundaries trigger a smooth follow pan before half-face clipping occurs, while remaining tripod-locked inside `dead_zone_px`.
+2. In `OpenCvFaceTracker.track()`, frame individual zero-face cutaway shots inside multi-shot clips via `detect_motion_focus_points()` instead of holding the prior shot's speaker X.
+
+## D-362 - Face-Aware 2-Line Hook Card, Zero-Orphan Chunking, Sorani Digit Normalization & Acoustic Karaoke Pop
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: display-layer typography and pacing upgrade (`BLUEPRINT.md` §4.3, D-259, D-350, D-358).
+
+**Decision.**
+1. When `face_intervals` is provided to `build_ass()`, wrap `title_ckb` at `30` chars (sleek 2-line card) and relocate the hook card out of the frame-0 face bounding box (leaving `face_intervals=None` / `GOLDEN_HOOK_CARD` byte-identical).
+2. Add opt-in `merge_short_orphans: bool = False` (merging `<= 4`-char trailing 1-word orphans when gap `<= 250 ms` and width fits) and `excited_intervals_ms` (subtle `\fscx107\fscy107` active-word micro-pop on high-energy bursts) in `build_ass()`.
+3. Add deterministic `normalize_sorani_digits()` in `caption_polish.py` converting isolated numerals `0`–`10` to Sorani words in display captions while preserving exact CTC timestamps and immutable `raw.json`.
+
+## D-363 - Director v2 End-to-End Pipeline Integration
+
+2026-11-21; owner approval: `specs/human-grade-director-v2/plan.md`.
+Type: Stage 3–8 pipeline wiring (`BLUEPRINT.md` §3, §4, §8).
+
+**Decision.**
+Wire D-360, D-361, and D-362 into `src/hawedit/pipeline.py` (episode review renders use two-pass broadcast linear loudness, acoustic-driven push-ins, edge-guard stabilization, face-aware hook cards, zero-orphan digit-normalized captions, and excited karaoke emphasis) with full regression tests and real multi-genre visual verification on `ai` and `cooking-30m`.
+
+## D-364 - Cinema Playback Polish: Zero Zoom Strobe, Zero Karaoke Ghosting, Editorial Hook Typography, Natural Vocal Dynamics & Clean Tail Cuts
+
+2026-11-21; owner review feedback on rendered `ai-v2` and `cooking-v2` playback.
+Type: playback fidelity, visual polish, and natural audio dynamics (`BLUEPRINT.md` §4.2, §4.3, §6).
+
+**Findings (direct playback & frame-by-frame audit of `ai-v2` and `cooking-v2`).**
+1. 80 ms discrete integer `sendcmd crop w/h` steps created a 3.6× alternating even/odd frame strobe (`even_med=2.21` vs `odd_med=0.61`) across multi-cam shots that already cut every 6–11 s.
+2. Putting `\t(0,80,\fscx107\fscy107)` on Layer 4 (`KurdishHighlight`) inside a fixed 100%-scale `\clip(...)` box displaced yellow glyphs against Layer 0 white glyphs, producing double-vision ghosting.
+3. Face-aware `Hook` cards inherited jagged per-line `BorderStyle=3` black boxes overlapping chest/hands on close-ups.
+4. `SPEECH_CHAIN_FILTERS` `-22 dB / 3:1` compression squeezed podcast loudness range to `2.4–2.9 LU`; measured `-18 dB / 2.2:1 / +3.5 dB` + `-5 dB` limiter preserved warm `4.9–5.1 LU` dynamics while staying 100% `linear` across synthetic 16 dB crest (`-14.15 LUFS`), `ai` (`-13.91 LUFS / -2.62 dBTP / LRA 4.9 LU`), and hot-mic `cooking` (`-13.77 LUFS / -1.29 dBTP / LRA 5.1 LU`).
+5. Post-speech tails crossed trailing shot cuts, flashing a brand-new camera angle for `18 ms` (`cooking-v2/verbal-3`) and `122 ms` (`ai-v2/verbal-4`) right before clip end.
+
+**Decision.**
+1. Use `step_ms=40, min_push_span_ms=15_000` in `pipeline.py` so multi-cam studio shots stay rock-steady (`0.00` strobe) while long static `>= 15 s` holds push frame-aligned at 25 fps, skipping no-op `sendcmd` zoom filters and ignoring `1.0 -> 1.0` hold keyframes as discrete cuts in `delivery.py`.
+2. Replace Layer 4 `\fscx107` scaling with zero-displacement luminous electric-lime color accent (`\1c&H002EFFB8&`, `#B8FF2E`, BT.601 luma `210 > 175`, `>=16.5:1` stroke contrast).
+3. Style face-aware hook cards (`face_intervals is not None`) with clean `BorderStyle=1` bold outlined studio-gold editorial typography (`HOOK_EDITORIAL_THEME`, `#FFD700`, `outline=7, shadow=4`, `\fad(0,250)` over `2.4 s` for crisp frame-0 thumbnails), leaving `face_intervals is None` (`GOLDEN_HOOK_CARD`) byte-identical.
+4. Update `SPEECH_CHAIN_FILTERS` to natural-dynamics `-18 dB / 2.2:1 / +3.5 dB` compression + `-5 dB` limiter.
+5. Add `_trim_trailing_flash_cut()` in `pipeline.py` snapping `final_out_ms` cleanly before any shot cut landing in the post-speech tail (`>= anchor_out_ms + 30 ms`).
+
+## D-365 - Sub-Phrase Word-Level Acoustic Peak & Payoff Highlight Rhythm
+
+2026-11-21; Cinema Intelligence v4 (`/goal` audit of `ai-v3/topic-14.ass`).
+Type: multimodal acoustic-visual caption pacing (`BLUEPRINT.md` §4.3, D-356, D-362, D-364).
+
+**Findings.**
+On `ai-v3/topic-14`, OmniASR emitted a continuous 56 s Sorani utterance, so sentence-level excitement marked `152/152` (`100.0%`) of karaoke words in electric lime, erasing contrast between normal delivery and vocal peaks.
+
+**Decision.**
+Add deterministic CPU-only `analyze_word_energy_peaks()` in `src/hawedit/audio_signals.py` computing per-word RMS Z-scores with 3-word neighbourhood weighting strictly capped at `<= 25%` of clip words plus a `±1.2 s` spotlight around `payoff_at_ms`, wired into `_excited_caption_intervals_ms()` for real clips (`>= 12` words with Stage 0 WAV) while preserving sentence-level fallback on short synthetic fixtures.
+
+## D-366 - Kurdish Syntactic Phrase Chunking & Spoken Function-Word Stutter Cleanup
+
+2026-11-21; Cinema Intelligence v4 (`/goal` line-by-line Sorani audit of `ai-v3/topic-14.ass`).
+Type: Sorani Kurdish typography & display-layer caption polish (`BLUEPRINT.md` §4.3, D-358, D-362).
+
+**Findings.**
+Line-by-line reading of `ai-v3/topic-14.ass` uncovered dangling Kurdish proclitics/prepositions at popup ends (`بکڕیت و`, `کەی بە`, `هەیە ئەم`, `تیک تۆک و`), three stranded 1-word popups (`تەنک`, `ئەبێتە`, `ئەجووڵێن`), and a rapid spoken function-word stutter (`وەکو وەکو ڕۆژنامەی`) exceeding the 120 ms CTC micro-stutter ceiling.
+
+**Decision.**
+1. Add `KURDISH_NON_TERMINAL_WORDS` and `_rebalance_kurdish_chunks()` in `src/hawedit/captions.py` (enabled with `merge_short_orphans=True`, keeping legacy/golden callers byte-identical) to carry dangling Kurdish proclitics onto the next chunk and rebalance `[3, 1] -> [2, 2]` stranded 1-word popups while respecting real pauses and `max_width_px`.
+2. Extend `deduplicate_micro_stutters()` in `src/hawedit/caption_polish.py` to collapse adjacent repeated Kurdish function/filler words (`وەکو`, `بە`, `لە`, `کە`, `و`, etc.) up to `380 ms` per token and `220 ms` gap while strictly preserving intentional Kurdish emphatic adverbs (`زۆر زۆر`, `جوان جوان`).
+
+## D-367 - Resilient 300 s Full-Episode Path A Timeout & Hook-First Discovery
+
+2026-11-21; Cinema Intelligence v4 (`/goal` audit of `ai-v3` & `cooking-v3` Path A timeouts).
+Type: Stage 3 editorial discovery reliability (`BLUEPRINT.md` §3 Stage 3).
+
+**Findings.**
+Hardcoded `timeout=120` in `src/hawedit/gemini.py:_https()` aborted full-episode `gemini-4-carbon` Path A thinking calls at `121.5 s` (`ai-v3`) and `215.9 s` (`cooking-v3`), dropping all `verbal-*` candidates and cutting reel yield from 3–4 down to 1.
+
+**Decision.**
+Raise `_https()` default socket read timeout to `300.0 s` (`timeout_s: float = 300.0`) and add explicit hook-first guidance in `src/hawedit/path_a.py` to skip weak conversational greetings/throat-clearing so `start_sentence` lands directly on the scroll-stopping hook.
+
+## D-368 - Broadcast Loop Boundary Audio Micro-Fades
+
+2026-11-21; Cinema Intelligence v4 (`/goal` audio loop-edge polish).
+Type: broadcast audio mastering (`BLUEPRINT.md` §4.2, D-360, D-364).
+
+**Decision.**
+Add opt-in `boundary_fade_ms` + `duration_ms` to `audio_filter()` in `src/hawedit/render.py` and pass `(15, 60)` ms quadratic-sine start/end micro-fades from `render_clip()` when `speech_chain=True` and `effective_duration_ms >= 500`, eliminating start/end DC pops on social-feed auto-loops with zero loudness shift.
+
+## D-369 - E3-Safe Kurdish Filler Excision & Tight Dead-Air Multi-Cut Pacing
+
+2026-11-21; V5 Human-Editor Director Engine (owner playback review of `ai-v4` & `cooking-v4` reels).
+Type: editorial pacing & E3 edit-rule integration (`BLUEPRINT.md` §4.2, D-348, D-351).
+
+**Findings.**
+1. Running `excise_fillers=True` on real Sorani CTC transcripts crashed E3 `validate_edl()` (`segment N end padding 0 ms outside allowed [30, 200] ms`) whenever an excised filler touched an adjacent surviving word (`sil_before < 30 ms` or `sil_after < 30 ms`), leaving reels with uncut fillers (`یەعنی`, `ئێ`, `نازانم چی و چی`) and loose 1100 ms dead-air thresholds.
+2. `n=1` repeat excision in `_identify_filler_words()` mistakenly flagged the first token of intentional Kurdish emphatic reduplications (`زۆر زۆر`, `هێواش هێواش`).
+
+**Decision.**
+1. Expand `KURDISH_FILLER_TOKENS` in `src/hawedit/silence.py` with `نازانم چی و چی`, `نازانم چی`, `و نازانم چی`, `ئێ`, `ئا`; add `preserve_emphatic_repeats: bool = False` (passed as `True` by `pipeline.py`) protecting `_KURDISH_EMPHATIC_REPEATS`; cap filler-splice keep buffers at `_MAX_CUT_PADDING_MS` (`200 ms`).
+2. Record verified interior filler-excision boundary edges in `SilencePlan.filler_cut_edges_ms` and persist them on `VisualEditPlan.filler_cut_edges_ms`. Permit `[0, max_padding_ms]` strictly on those interior filler splices inside `validate_edl()` (where `silence_trim_filter` applies 30 ms `qsin` audio crossfades), keeping outer clip boundaries, pure silence cuts, and zero word-splitting strictly enforced.
+
+## D-370 - Sub-Pixel Floating-Point `zoompan` Director Motion & A/B Jump-Cut Scale Toggles
+
+2026-11-21; V5 Human-Editor Director Engine (owner playback review & real 1440p FFmpeg 8.1 NVENC benchmark).
+Type: dynamic camera cinematography (`BLUEPRINT.md` §4.1, D-359, D-364).
+
+**Findings.**
+D-364 disabled discrete integer `sendcmd crop` zoom on `< 15 s` shots (`min_push_span_ms=15_000`) to stop 12.5 Hz even-pixel quantization strobe, leaving 6–13 s talking-head shots completely static (zero zoom, zero camera life). Direct benchmarking on real 1440p footage proved FFmpeg `zoompan=d=1:s=1080x1920:fps={fps}` evaluates floating-point zoom & offset per frame with `1.04x` even/odd inter-frame ratio (zero strobe), `0.000 ms` AV drift (`300/300` frames at `12.000000 s`), and `5.5x` realtime NVENC throughput.
+
+**Decision.**
+Add `CinemaMotionPlan` and `build_cinema_motion_filter()` in `src/hawedit/render.py` plus optional `cinema_motion: str | None = None` on `render_clip()` spliced on the exact post-trim output timeline before subtitles and progress bar:
+- Beat 0 (0..~4–5 s hook): smooth `1.00 -> 1.13x` push-in anchored to upper-third eye line (`y = 0.33`).
+- Silence/filler jump-cuts and long holds (`> 5.5 s`): crisp `1.00x <-> 1.14x` A/B cam scale toggles masking jump-cuts like a two-camera switch, with planned jump timestamps registered in `build_effective_source_cuts()` for Level C Clause 5 reconciliation.
+- Source shot cuts: alternating smooth push-in (`1.00 -> 1.12x`) and breathing pull-back (`1.12 -> 1.01x`).
+- Payoff beat: tight `1.14 -> 1.19x` lock-in with subtle motorized-slider horizontal drift (`(iw-iw/zoom)*0.12*sin(in*0.022)`).
+
+## D-371 - Tighter 30-55 s Viral Arc Preference in Path A Discovery
+
+2026-11-21; V5 Human-Editor Director Engine.
+Type: Stage 3 editorial pacing (`BLUEPRINT.md` §3 Stage 3, D-367).
+
+**Decision.**
+Update `_PROMPT` in `src/hawedit/path_a.py` to explicitly prefer tight, high-retention 30–55 s single-idea arcs over meandering 65+ s monologues while preserving configured `{min_s}`..`{max_s}` bounds.
+
+## D-372 - Studio Filmic Color Grade & Top Studio-Gold Retention Progress Bar
+
+2026-11-21; V5 Human-Editor Director Engine.
+Type: visual mastering & retention UX (`BLUEPRINT.md` §4.1, D-268, D-364).
+
+**Decision.**
+1. Append subtle broadcast studio grading (`eq=contrast=1.04:saturation=1.08:brightness=0.01,unsharp=3:3:0.30:3:3:0.0`) inside `build_cinema_motion_filter(..., cinema_grade=True)` so zoomed 1080p renders carry crisp studio contrast and natural skin-tone pop.
+2. When `--progress-bar` is enabled without an explicit `--brand-kit`, render a sleek 6 px Studio-Gold (`#FFD700`) top retention progress bar matching the Studio-Gold frame-0 hook and karaoke highlight palette.
+
+## D-373 - Balanced Two-Line Kurdish Editorial Hook Cards & Crisp Micro-Pop Entrance
+
+2026-11-21; V6 Cinema Masterwork Engine (`/goal` frame-by-frame visual audit of V5 `ai-v5` & `cooking-v5`).
+Type: Sorani Kurdish typography & frame-0 thumbnail polish (`BLUEPRINT.md` §4.3, D-364).
+
+**Findings.**
+Greedy 28-character wrapping in `build_ass()` wrapped 54–55 char Kurdish hook titles onto 3 lines, leaving a stranded 1-word orphan (`نییە`) on line 3 in `ai-v5/s86-87` and crowding 3 lines at the top of `cooking-v5/s7-7`.
+
+**Decision.**
+For face-aware editorial hook cards (`face_intervals is not None`, leaving legacy `GOLDEN_HOOK_CARD` byte-identical), balance Kurdish titles into 2 even lines minimizing `max(len(left), len(right))` when `<= 36` chars per line, scale font responsively (`86 / 76 / 68 px`), and append a crisp 160 ms pop-in (`{\fs...\fscx93\fscy93\t(0,160,\fscx100\fscy100)}`) while keeping frame 0 sharp and full-opacity.
+
+## D-374 - Cosine S-Curve Camera Dolly, Post-Crop Eye-Line Lock & Filmic Vignette
+
+2026-11-21; V6 Cinema Masterwork Engine (`/goal` visual & face-share audit of V5 renders).
+Type: sub-pixel cinematography & visual mastering (`BLUEPRINT.md` §4.1, D-370, D-372).
+
+**Findings.**
+1. Linear zoom ramps start and stop with constant velocity rather than natural motorized-dolly acceleration.
+2. Passing raw source `face_center_y / source_height` (`~0.43`) to `zoompan` on `cooking-v5` shifted zoom away from the post-`crop_filter` eye-line (`y = 0.324`), reducing `face_detected_share` from `0.8839` (`anchor_y = 0.33`) to `0.8452`.
+
+**Decision.**
+1. Upgrade `build_cinema_motion_filter()` to cosine ease-in-out S-curve motion (`0.5-0.5*cos(PI*min(1,max(0,(in-f0)/span)))`) with unmistakable 2-cam A/B scale contrast (`hook: 1.00->1.14x`, `A/B toggle: 1.00->1.09x <-> 1.14->1.18x`, `payoff: 1.14->1.19x`).
+2. Lock `anchor_y = 0.33` in `_resolve_cinema_motion()` (the verified post-`crop_filter` eye-line in 1080×1920 vertical space).
+3. Add a subtle broadcast cinema vignette (`vignette=PI/7:eval=init`) alongside studio contrast/sharpness (`eq=contrast=1.05:saturation=1.09:brightness=0.01,unsharp=3:3:0.35:3:3:0.0`).
+
+## D-376 - Deterministic Procedural Cinema Micro-SFX Sound Design
+
+2026-11-21; V6 Cinema Masterwork Engine (`/goal` audio/sound-design polish).
+Type: broadcast audio finishing (`BLUEPRINT.md` §4.2, D-360, D-364, D-368).
+
+**Decision.**
+Add zero-dependency stdlib procedural SFX synthesis (`src/hawedit/sound_design.py`: `select_sfx_transitions_ms`, `write_cinema_sfx_wav`) generating a frame-0 warm velvet sub-thump (`92 -> 44 Hz`, `300 ms`, `-23 dBFS`) plus up to 6 well-spaced (`>= 5.0 s`) whisper-soft low-pass airy transition whooshes (`180 ms`, `-26 dBFS`) on major A/B jump-cuts, mixed softly via `amix=inputs=2:duration=first:dropout_transition=0:normalize=0` prior to two-pass linear `-14.0 LUFS` loudnorm when `cinema_sfx_events_ms` is passed to `render_clip()` (and no external music bed is active).
+
+## D-377 - Audio-VAD Sub-Word CTC Onset Tightening
+
+2026-11-21; V7 Masterpiece Engine (audio audit of V6 `ai-v6` & `cooking-v6` renders).
+Type: acoustic word-boundary alignment & dead-air removal (`BLUEPRINT.md` §4.2, D-369).
+
+**Findings.**
+CTC-3B forced alignment stretched word `start_ms` timestamps across pre-word pauses (e.g. `'نازانی'` `1,322 ms` hiding a `0.79 s` silence at `40.23 s` in AI `s86-87`, and `'بەجێی'` `961 ms` hiding a `0.65 s` silence at `6.7 s` in Cooking `s7-7`). Because the word-to-word timestamp gap looked like `0 ms`, `plan_silence_tightening()` left those `0.65–0.79 s` silences uncut.
+
+**Decision.**
+Add pure-stdlib `tighten_ctc_word_onsets()` in `src/hawedit/silence.py` (using `wave`, `array`, `math`; strict fail-stop on missing/corrupt WAV) that measures 20 ms frame RMS dBFS inside words `>= 550 ms`, skips brief weak release bleed (`<= 60 ms`, `>= 6 dB` below word peak), and advances `word.start_ms` to `onset_ms - 25 ms` when leading silence `>= 180 ms` (and optionally trims unvoiced tails `>= 250 ms` leaving 35 ms breath pad) while preserving `>= 120 ms` voiced span and monotonic order. Wire it in `pipeline.py` right before `plan_silence_tightening()` / `tighten_sentences()` / `tighten_clip()` whenever silence trimming or filler excision is enabled and the Stage 0 WAV exists, guarding outer boundary padding bounds for E3 `validate_edl()`.
+
+## D-378 - Opt-In Cold-Open Hook Teaser & Middle-Tangent Story Condenser
+
+2026-11-21; V7 Masterpiece Engine (editorial pacing audit of V6 `ai-v6/s19-22` 88.6 s reel).
+Type: multi-span narrative assembly & viral pacing (`BLUEPRINT.md` §3 Stage 5/6, D-354).
+
+**Findings.**
+Long multi-sentence clips like AI `s19-22` (`88.6 s`, 4 sentences with a `43.6 s` middle tangent) ran past the 30–52 s short-form retention sweet spot and opened on slow conversational setup rather than a punchy 2–3 s climax teaser.
+
+**Decision.**
+Add `ViralStoryPlan` and `plan_viral_story_cut()` in `src/hawedit/assembly.py` (reusing `AssemblySpan` extended with `role: str = "body"` and `condenser.py` scoring helpers `score_interior_sentence` / `interval_overlap_ms`). Expose explicit opt-in CLI flags `--condense` and `--cold-open` (default `False`) wired into Stage 5/6 of `pipeline.py`: drops lowest-scoring interior sentences (`1..N-2`, never hook sentence 0 or final payoff) down to `[30, 48] s`, prepends a 1.8–3.4 s late payoff climax clause on E3-safe word boundaries (`0` split words), applies interior silence/filler tightening per body span, remaps captions/focus/shot-boxes/excited-intervals onto the assembled output timeline, and upgrades `measure_audio_loudness()` + `render_clip()` CFR normalization for exact two-pass `-14.0 LUFS` linear audio and `0 ms` AV sync across spliced spans.
+
+## D-379 - Contextual Kurdish Kinetic Keyword Callout Cards
+
+2026-11-21; V7 Masterpiece Engine (visual pattern-interrupt audit of V6 talking-head reels).
+Type: visual retention graphics & Sorani typography (`BLUEPRINT.md` §4.3, D-364, D-373).
+
+**Decision.**
+Add `extract_kurdish_callout_cards()` and optional `callout_cards: Sequence[tuple[int, int, str]] = ()` to `build_ass()` in `src/hawedit/captions.py` (default `()`, preserving legacy goldens byte-identical). Extracts 1–3 word punchy Kurdish key phrases anchored to vocal peak intervals (`>= 4.5 s` clear of the 0–2.4 s hook card, spaced `>= 10 s`, ending `>= 1.2 s` before clip end, stopwords/particles filtered), styled with `CALLOUT_CARD_THEME` (bold `Vazirmatn` 66 px Electric-Lime `#B8FF2E`, thick black outline + shadow) on Layer 2 with face-aware top (`y=155`) / chest (`y=1240`) placement. Automatically wired in `pipeline.py` when `cinema_plan is not None`.
+
+## D-380 - Zero-Ghosting Kinetic Caption Entrance & Broadcast Speaker Lower-Third Polish
+
+2026-11-21; V7 Masterpiece Engine (kinetic typography audit of V6 karaoke renders).
+Type: Sorani subtitle motion & lower-third polish (`BLUEPRINT.md` §4.3, D-359, D-364).
+
+**Decision.**
+Add optional `kinetic_entrance: bool = False` to `build_ass()` in `src/hawedit/captions.py` (default `False`, wired to `cinema_plan is not None` in `pipeline.py`). Applies `\fad(50,0)` on both Layer 0 base popup and Layer 4 `\clip` karaoke highlight lines (`0.00 px` displacement = zero ghosting), adds subtle vertical `\move` micro-lift strictly on non-clipped `Hook` (`12 px`, keeping frame-0 visibility), `Callout` (`14 px`), and `SpeakerTag` (`12 px`, plus smooth `\fad(180,250)` and Studio-Gold title accent).
+
+## D-381 - Deterministic Sorani ASR Orthography Repair & Local OpenAI-Compatible LLM Polish
+
+2026-11-21; V7 Masterpiece Engine (frame-by-frame Kurdish caption proofread of V6 reels).
+Type: display-layer Sorani orthography & local LLM client (`BLUEPRINT.md` §4.1, D-358).
+
+**Findings.**
+V6 frames exhibited unambiguous Sorani CTC spelling/phonetic errors (`ئەگەزانی -> ئەزانی`, `مۆدەی بڵاو -> مۆدێل بڵاو`, `بەیانیەکەی -> بەیانییەکەی`, `ڕەستۆرانتەکە -> ڕێستۆرانتەکە`, `کاشەرەکە -> کاشێرەکە`), and runs without a live cloud judge skipped LLM polish entirely.
+
+**Decision.**
+Add `KURDISH_ASR_ORTHOGRAPHY_FIXES`, `KURDISH_ASR_BIGRAM_FIXES`, and `repair_kurdish_asr_orthography()` (including consonant+`ی` double-yaa rule before definite/plural suffixes) in `src/hawedit/caption_polish.py`, always executed during `polish_clip_sentences()` while strictly preserving 1:1 CTC timestamps and immutable `transcript.raw.json`. Strengthen the LLM polish prompt for English tech/proper-noun loanword garbles and add pure-stdlib `LocalLlmJsonClient` (`StructuredJsonClient` over OpenAI-compatible `HAWEDIT_LOCAL_LLM_URL` with fail-loud `LocalLlmUnavailable`, zero silent fallback), wired into `pipeline.py` via `_resolve_polish_client()`.
+
+
+## D-382 - V8 Declarative DirectorScript Schema & Hard Camera Restraint Law
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: cinematography restraint & declarative edit-script architecture (`BLUEPRINT.md` §3 Stage 6, D-375).
+
+**Findings.**
+Owner visual inspection of V7 renders identified continuous `0.08 * sin(in * 0.022)` horizontal sway and forced 5.5 s timer zoom toggles in `build_cinema_motion_filter()` as "unnecessary zoom and movement" that reads as algorithmic rather than human-edited.
+
+**Decision.**
+Isolate the V8 Lean Director in `src/hawedit/v8/` (`schema.py`, `compiler.py`, `__main__.py`) without adding heuristic bloat to `pipeline.py`. Define strict immutable `DirectorScript` dataclasses (`WordRepair`, `CutRegion`, `CameraMove`, `CaptionBeat`, `VisualInterrupt`, `CritiqueVerdict`) with `validate_director_script()` enforcing the Hard Camera Restraint Law:
+- Scale strictly bounded to `[1.00, 1.16]`.
+- At most `max(2, ceil(duration_ms / 15_000))` active camera moves (max 4 per 60 s clip).
+- Moving-camera (`abs(scale_end - scale_start) > 1e-3`) total screen time `<= 25%` of clip duration (`>= 75%` rock-steady locked `1.00x` tripod).
+- `compile_restrained_camera_filter()` forbids `sin(...)` sway (`x='iw/2-(iw/zoom/2)'`), omits `zoompan` completely when no active move is scheduled (emitting studio color grade only), and renders only Director-motivated cosine S-curve `slow_push` or instant 1-frame `punch_cut`/`wide_release` windows.
+
+## D-383 - Viral TikTok Animated Kurdish (Sorani RTL) Subtitle Engine & Licence Audit
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: kinetic Sorani RTL subtitles & runtime dependency licence audit (`BLUEPRINT.md` §4.3, D-002, D-380).
+
+**Findings.**
+3–4 word static caption lines feel wordy on mobile short-form feeds, and ASS `\clip` karaoke cannot scale active words without glyph ghosting.
+
+**Decision.**
+Add `src/hawedit/v8/tiktok_subs.py` enforcing the strict viral word-chunking law (`chunk_viral_kurdish_words`): `1` word for `>= 8`-char words or Director `power_word` beats, `2` words by default, `3` words ONLY when all 3 fit in `<= 14` chars total (with Kurdish proclitic protection), and NEVER `4+` words. Support two explicit renderers (zero silent fallback):
+1. `skia` (default): Native HarfBuzz + Skia 1080×1920 RGBA lossless `.mov` (`qtrle`/`argb`) overlay composited via opt-in `subtitle_overlay_path: Path | None = None` in `src/hawedit/render.py`, featuring damped spring-bounce pop (`0.82 -> 1.07 -> 1.00` over `140 ms`), `#FFD700` Studio-Gold / `#B8FF2E` Electric-Lime rounded active-word pill with `60 ms` RTL ease-out glide, frosted-glass top hook card, and 100% joined HarfBuzz Sorani shaping (`Vazirmatn.ttf` `wght=800`).
+2. `libass`: Pure zero-dependency viral fallback (`build_viral_tiktok_ass`) using non-overlapping sequential slices (`0.00 px` ghosting, no `\clip`) while leaving legacy §4.3.6 goldens byte-identical.
+
+**Licence Audit (`D-002` — NonCommercial and copyleft rejected):**
+- `skia-python==144.0.post2` — **BSD-3-Clause** (verified directly in `skia_python-144.0.post2.dist-info/licenses/LICENSE`, Windows Python 3.12.10). Commercial-safe.
+- `uharfbuzz==0.56.0` — **Apache-2.0** (verified directly in `uharfbuzz-0.56.0.dist-info/licenses/LICENSE`). Commercial-safe.
+- `pybind11==3.1.0` (transitive dependency of `skia-python`) — **BSD-3-Clause** (verified in `pybind11-3.1.0.dist-info/licenses/LICENSE`). Commercial-safe.
+- `python-bidi` — **REJECTED (LGPL-3.0)**; NOT installed. Replaced with pure-stdlib `unicodedata.bidirectional` directional run splitting (`_split_directional_runs`) for zero-LGPL Sorani RTL + English loanword shaping.
+Pinned in `pyproject.toml` under `[project.optional-dependencies].media` and hash-locked across all 14 host targets via `scripts/lock_host_dependencies.py` (keeping the existing `2026-08-13T00:00:00Z` resolver cutoff unchanged so zero unrelated dependencies drifted).
+
+## D-384 - Unified Dual-Backend Multimodal Director Brain (Cloud Gemini + Local Qwen-Omni + Explicit Offline)
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: native video+audio multimodal directing (`BLUEPRINT.md` §3 Stage 4/6, D-381).
+
+**Decision.**
+Add `src/hawedit/v8/director.py` (pure stdlib + existing HawEdit helpers, zero new runtime dependencies) exposing the `DirectorBrain` protocol and three explicit backends via `create_director_brain(backend)` with strict fail-stop and ZERO silent fallback between backends:
+- `gemini` (`GeminiVideoDirector`): Sends a compact 360p @ 1 fps H.264 + 64 kbps 16 kHz mono AAC clip proxy (`inlineData` `video/mp4`) + word-indexed Sorani transcript to Gemini with strict `responseMimeType: "application/json"` and `responseSchema`, listening directly to the audio to repair Sorani/English loanwords and selecting restrained camera moves and power words.
+- `local-omni` (`LocalOmniDirector`): Targets an OpenAI-compatible multimodal server (`HAWEDIT_OMNI_URL`, e.g., local Apache-2.0 Qwen2.5-Omni / Qwen3-Omni on GPU 1 or LM Studio) with sampled JPEG keyframes (`image_url`) + 16 kHz WAV (`input_audio`) + strict `json_schema`.
+- `offline` (`OfflineRestrainedDirector`, explicit `--director offline` ONLY): Deterministic content-aware director combining `repair_kurdish_asr_orthography()`, VAD/silence/filler cuts, stdlib WAV acoustic Z-score power words, and strict `>= 80%` locked-tripod camera restraint (max 1 `slow_push` + max 2 `punch_cut` on `>= 600 ms` jump-cuts).
+
+## D-385 - Audio-Visual Active Speaker Detection (Light-ASD ONNX + Mouth-AV Correlation) & Locked Per-Shot Crops
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: multi-speaker framing & active speaker detection (`BLUEPRINT.md` §3 Stage 6, `BLOCKED.md` #4).
+
+**Decision.**
+Add `src/hawedit/v8/asd.py` (using already-installed `cv2`, `numpy`, `onnxruntime`, `wave` — zero new dependencies; Light-ASD/LR-ASD architecture is commercial-safe Apache/MIT) providing:
+1. `score_active_speakers()` with two explicit backends: `light_asd_onnx` (when `--asd-onnx` is explicitly supplied; prefers `CUDAExecutionProvider` on GPU 1, strict fail-stop if missing/corrupt) and default `mouth_av_corr` (sub-pixel translation-compensated 48×32 mouth-ROI motion correlated against a 300–3400 Hz speech-bandpass 16 kHz RMS envelope over a lag-tolerant ±80 ms / ±600 ms window so smaller speaking faces cleanly beat larger silent listeners).
+2. `compute_locked_shot_crops()` partitioning on `shot_cuts_ms` and verified active-speaker switches with `>= 2,200 ms` anti-ping-pong hysteresis, emitting ONE rock-steady median `(focus_x_px, face_center_y_px, face_height_px)` per hold with hold-and-step framing and zero micro-drift.
+
+## D-386 - Watch-Before-Ship Bounded Multimodal Self-Critique Loop
+
+2026-11-22; HawEdit V8 Lean Multimodal Content-Aware Director (`specs/v8-lean-director/plan.md`).
+Type: post-render self-critique & bounded repair (`BLUEPRINT.md` §2, D-382).
+
+**Decision.**
+Wire `critique_rendered_clip()` (`480p @ 2 fps` preview + audio inspected against 5 checks: unnecessary camera motion, broken Kurdish text, awkward cuts, subtitle legibility, viral hook) inside `compile_v8_clip()` (`src/hawedit/v8/compiler.py`). If rejected with a structured JSON `patch` over `PATCHABLE_DIRECTOR_FIELDS`, apply at most `1` bounded revision (`MAX_CRITIQUE_REVISIONS`) via `apply_critique_patch()`, re-validate against `validate_director_script()`, and re-render; fail loudly (`V8CompileError`) if still rejected after 1 revision. Human QC discipline (`for_review=True`, `evidence/usable-rate.csv` untouched) remains strictly enforced.
+
+
+## D-387 - Permanent Post-Render Forensic Video Grill Gate & Zero-Double-Cut V8 Polish
+
+2026-11-22; HawEdit V8 Forensic Grill Round (frame-by-frame audit of initial V8 1440p renders).
+Type: post-render forensic video quality gate, exact frame-locked shot transitions, and visual-interrupt overlay rendering (`BLUEPRINT.md` §3 Stage 6, §4.3, D-382..D-386).
+
+**Findings.**
+Forensic frame-by-frame grilling of the initial 3 V8 MP4s exposed 5 real production defects:
+1. **1–2 frame double-cut flashes on source shot cuts:** `_detect_clip_shot_cuts_ms()` ran on the 5 fps (`200 ms/frame`) tracking proxy (40–160 ms quantization error), manual `(cut_ms - 1, old_x)` focus points split `x` from `y/w/h` by 1 ms inside `render.py:_interpolated()`, and assembled CFR timelines drifted slightly from raw span sums.
+2. **Harsh mid-shot zoom snap-backs & ramping `punch_cut`:** `punch_cut` needed an instant 1-frame snap + rock-steady hold, and `slow_push` ending mid-shot needed a smooth cosine ease-out return (or cut-snapped invisible release within `<= 700 ms` of a real cut).
+3. **Unrendered `visual_interrupts` & mixed Latin+Arabic BiDi:** `gemini-2.5-pro` emitted contextual Kurdish `visual_interrupts` that were not yet drawn by `render_tiktok_overlay_video()` / `build_viral_tiktok_ass()`, and neutral hyphens/spaces between Latin and Kurdish tokens needed UAX #9 N1/N2 directional resolution.
+4. **Stray ASCII hyphens in repaired Kurdish words** (e.g. `جوابت-ئەداتەوە`) and a `0.77 s` dead-air trough trapped inside CTC-smeared single word `'ئیشە'` plus a `0.49 s` gap in `s19-22`.
+5. **No automated post-render forensic grill gate** catching double-cut flashes, trailing cuts, long silences, or audio clipping before shipping.
+
+**Decision.**
+1. **Exact Native/CFR Shot Cuts & Zero-Skew Crop Steps (`src/hawedit/v8/asd.py` + `compiler.py`):** Replace 5 fps proxy cut detection with native-FPS `detect_exact_shot_cuts_ms()`, add `detect_exact_assembled_cuts_ms()` + `snap_locked_crops_to_cuts()` for assembled CFR timelines, and emit zero-skew `(cut_ms, prev_x), (cut_ms + 1, next_x)` render inputs via `locked_crops_to_render_inputs()` so `x`, `y`, `w`, and `h` transition on the exact same frame (`0` double-cut flashes).
+2. **Cut-Snapped Camera Restraint (`src/hawedit/v8/schema.py`):** Add `snap_camera_moves_to_cuts()` (`<= 700 ms` snap window), instant 1-frame `punch_cut`/`wide_release` holds, and `450 ms` cosine ease-out return on mid-shot `slow_push`.
+3. **Visual Interrupt Badges & Mixed BiDi (`src/hawedit/v8/tiktok_subs.py`):** Render `visual_interrupts` (strictly `>= 2600 ms`, dark-glass rounded badge with `#B8FF2E` top / `#FFD700` chest border, spring pop-in + 200 ms fade-out, zero face/pill overlap) in both Skia RGBA overlay and `libass`, and harden `_split_directional_runs()` for mixed Latin+Kurdish tokens (`AIـەکە`, `AI-یەکە`, `GPT-5ی`).
+4. **Kurdish Hyphen Sanitizer & Internal Word Silence Exposure (`src/hawedit/v8/compiler.py`):** Sanitize stray ASCII hyphens inside Kurdish tokens in `apply_word_repairs()`, expose dead-air troughs trapped inside CTC-smeared `>= 1,100 ms` words via `_tighten_internal_word_silences()`, and tighten default V8 silence thresholds to `420 ms -> 140 ms`.
+5. **Permanent Forensic Video Griller (`src/hawedit/v8/compiler.py`):** Wire `VideoGrillReport` + `grill_rendered_v8_video()` (verifying `0` double-cut flashes `<= 0.20 s`, `0` trailing cuts in final `0.80 s`, `0` silences `>= 0.48 s`, and `0.0` audio `Flat factor` clipping) into `compile_v8_clip()`, writing `{clip_id}.grill.json`, auto-locking camera to `1.00x` on camera-induced flashes, and failing loudly (`V8CompileError`) on any remaining defect.
+
+
+## D-388 - Multi-Client Brand Kits & 5 Curated Agency Subtitle Style Presets
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: multi-client styling, lower-third speaker bio, outro end card, and preset camera restraint (`BLUEPRINT.md` §3 Stage 6, §4.3, D-382, D-383).
+
+**Decision.**
+Add `src/hawedit/v8/styles.py` defining frozen `ClientStylePreset`, `CLIENT_STYLE_PRESETS`, `get_client_style_preset()`, `resolve_client_style_preset()`, and `list_client_style_presets()` with 5 curated agency presets meeting `WCAG >= 7:1` active-pill contrast:
+- `viral_gold` (default): `#FFD700` active pill / `#0B0B0F` ink, `#B8FF2E` power pill, `allow_camera_moves=True`, `max_camera_scale=1.14`.
+- `crimson_punch`: `#FF2E63` active pill / `#FFFFFF` ink, `#FFD700` power pill, `allow_camera_moves=True`, `max_camera_scale=1.15`.
+- `executive_cyan`: `#00D4FF` active pill / `#07131C` ink, `#FFFFFF` power pill, `allow_camera_moves=True`, `max_camera_scale=1.08`.
+- `luxury_minimal`: `#161820` (`alpha=235`) + `#F5C451` ink & `2px` hairline trim, `#F5C451` power pill, `allow_camera_moves=True`, `max_camera_scale=1.08`.
+- `broadcast_news`: `#102446` (`alpha=240`) + `#FFFFFF` ink & `#FFD700` trim, `#FFD700` power pill, `allow_camera_moves=False`, `max_camera_scale=1.00` (enforced inside `compiler.py` as 100% locked `1.00x` camera).
+Wire optional `style_preset`, `brand_accent_hex` (strict `#RRGGBB` validation), `speaker_bio` (`2600..6200 ms` dark-glass RTL lower-third badge), and `end_card` (final `2.0 s` centered frosted outro CTA card with handle pill) into `tiktok_subs.py`, `compiler.py`, and `python -m hawedit.v8` with 100% backward-compatible `None` defaults.
+
+## D-389 - One-Command Full-Episode Arc Discovery & Batch Multi-Reel Compiler
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: full-episode multi-reel orchestration & deterministic offline arc discovery (`BLUEPRINT.md` §3 Stages 1–6, D-382, D-384).
+
+**Decision.**
+Add `src/hawedit/v8/episode.py` exposing `V8EpisodeConfig`, `V8EpisodeClipItem`, `V8EpisodeResult`, `discover_viral_arcs_offline()`, and `compile_v8_episode()` plus the `python -m hawedit.v8 episode` CLI subcommand.
+- Strict fail-stop requires EITHER `--transcript <json>` OR `--use-omni-asr` (Stage 0/1 WSL OmniASR); zero silent fallback between Gemini Path A discovery and offline acoustic+Kurdish arc discovery.
+- `discover_viral_arcs_offline()` scores contiguous complete-sentence spans inside `[min_duration_ms, max_duration_ms]` using Stage 0 WAV acoustic energy variance/peaks (`audio_signals.py`) and Sorani hook-opening heuristics (questions, contrast markers, concrete numbers, penalizing unresolved pronouns and dangling conjunctions) with greedy `>= min_separation_ms` NMS.
+
+## D-390 - Complete Client Delivery Pack, Overlay Cleanup & Zero-CDN HTML Review Gallery
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: client handoff artifacts, NLE conform export, and review gallery (`BLUEPRINT.md` §5, D-387).
+
+**Decision.**
+Add `src/hawedit/v8/delivery_pack.py` exposing `ClientDeliveryPack`, `write_client_delivery_pack()`, `verify_client_pack_complete()`, and `write_client_review_html()`:
+- Reuses `hawedit.delivery.build_srt`, `hawedit.delivery.build_edl`, and `hawedit.timeline` primitives to emit `.v8.srt`, `.v8.edl`, `.v8.otio` (`Timeline.1` with Hook/CameraMove/VisualInterrupt/Speaker markers), and 1080×1920 `.v8.cover.png` (`t = 0.6 s`) alongside `.v8.mp4`, `.director.json`, and `.grill.json`.
+- Reclaims bulky temporary `.v8.overlay.mov` (`~35–60 MB` per clip) ONLY after verifying `.v8.mp4` exists and passed the forensic grill unless `--keep-overlay` / `keep_overlay=True` is explicitly set.
+- Generates a self-contained, zero-CDN, RTL Kurdish dark-studio `client-review.html` gallery displaying per-reel video playback, cover thumbnails, green `GRILL PASSED ✓` / red `GRILL FAILED` badges, and one-click artifact links.
+
+## D-391 - Team Preflight Doctor & Hardened Local OpenAI-Compatible Director
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: operator readiness diagnostics & local LLM interoperability (`BLUEPRINT.md` §1, D-384).
+
+**Decision.**
+Add `src/hawedit/v8/doctor.py` (`DoctorCheck`, `DoctorReport`, `run_v8_doctor()`, `format_doctor_report()`) and `python -m hawedit.v8 doctor` running 7 fast read-only probes (`gpu_nvenc`, `ffmpeg_rtl`, `skia_harfbuzz`, `wsl_asr`, `gemini_director` secret-redacted, `local_omni_director` non-embedding model listing, `disk_space`).
+Harden `LocalOmniDirector` in `src/hawedit/v8/director.py` with explicit `modality: Literal["omni", "vision", "text"]` (`HAWEDIT_OMNI_MODALITY` / `--local-modality`), `DEFAULT_OMNI_TIMEOUT_S` (240.0 s), robust `<think>...</think>` / stray `</think>` / markdown fence stripping before JSON parsing, transparent HTTP 400 `input_audio`/`image_url` diagnostics, and strict fail-loud `DirectorUnavailable` with zero silent fallback to offline heuristics.
+
+## D-392 - Studio Web V8/V9 API & Agency Browser UI
+
+2026-11-22; HawEdit V9 Client-Ready Production Suite (`D-388`–`D-392`).
+Type: local web server API & studio browser UI (`BLUEPRINT.md` §4, D-338, D-388..D-391).
+
+**Decision.**
+Upgrade `src/hawedit/web.py` and `src/hawedit/studio_ui.py` while keeping legacy `POST /api/repurpose` callers 100% backward-compatible:
+- Add `GET /api/v8/doctor`, `GET /api/v8/presets`, path-traversal-guarded artifact download routes (`/api/jobs/<id>/review.html`, `cover.png`, `artifacts/<kind>`, Range/ETag/HEAD preview streaming), and explicit `engine: "v8"` mode on `POST /api/repurpose` backed by `compile_v8_episode()`.
+- Upgrade `studio_ui.py` (zero `innerHTML`, zero `setInterval`, zero external URLs) with a live V8 Preflight Health Strip, clickable 5-Preset Client Style Cards with live color swatches, Director/Subtitles/Condense/Cold-Open controls, collapsible Client Brand Kit inputs, and per-clip `GRILL PASSED ✓` / `GRILL FAILED` badges + one-click deliverable links.
+
+
+## D-393 - Seven-finding audit repairs: speech preservation, evidence and fixture identities
+
+2026-11-22. Owner scope: Hawa's Codex chat instruction to fix all seven findings, high-priority first, while coordinating with Gemini. Base is Gemini `e65522f`; isolated `codex/audit-seven-fixes`. Research, acceptance criteria and impact mapping: `specs/deep-audit-seven-fixes/`. Blueprint sections 3–5 and 8, Kurdish invariants 1–3; continues D-344 and D-354. No new runtime dependency or model.
+
+- Silence tightening and explicit filler lists no longer imply automatic restart removal. Restart detection is a separate keyword opt-in, and prefix deletion additionally requires a visible partial-token marker (`-` or ellipsis). Unmarked morphology and emphatic repetitions survive the default pipeline. The legacy restart tests explicitly enable the operation and use a marked partial token; their assertions remain effective.
+- Preserve Gemini's effective episode-duration summary and complete numbered sentence grounding, verified by real trimmed episode output and a selected sentence after word 4000.
+- A critic source-context Boolean cannot establish evidence. The critic opens and samples the real mapped source, checks source bounds and unchanged file identity, and reports actual distinct decoded output-frame counts. Unsupported all-clear is refused by pipeline consumers. Diagnostic rule inspections without a source may still report defects, but do not establish all-clear or human editorial acceptance.
+- Discovery cache identity binds full transcript/source/media, exact sentence/word data, audio observations, model/provider, prompt/schema and vote/IoU settings. A malformed record refuses before any fresh paid request; cached identity, rank, type, score and aligned bounds are revalidated.
+- Opening-frame geometry is independent from whole-clip face presence; `speaker_face` also enforces presence without requiring an override. Signed publication and its unsupported-labelled-speaker refusal remain independent.
+- Real-media admission supports an explicitly reported `current-zar` profile with the source hashes documented in `D:/HawEdit-media/README.md`, plus the original pinned `legacy-ep29` profile. The legacy bytes/assertions are preserved; missing configured sources fail. This authorizes current-source admission/decode regression tests within the requested F7 fix and does not establish real editorial, ASR or human acceptance. No source masters are changed.
+
+VEX review and expiry dates are unchanged. Source digest re-binding and integration remain Gemini lead-owned, as acknowledged in the shared coordination note. This ADR does not attest a new security review. Local checks and any remaining refusal are recorded separately; task/CI completion is not asserted here.
+
+D-393 fixture addendum: stricter speaker_face presence exposed positive camera contract tests using the known faceless fixture. Add a separate camera-face-mechanics.mp4 (70,773 bytes), derived from the documented public-domain NASA Eileen Collins image distributed by scikit-image and original synthetic speech audio. Preserve the original fixture, all camera assertions and all production thresholds. The exact source/output hashes, pixel transformations and observed detections are in tests/fixtures/camera-face-mechanics.mp4.provenance.json; tests/fixtures/camera-face-mechanics.md states its license and non-identity/non-editorial scope. This is test input grounding, not calibration of policy or a real speaker-identity claim.

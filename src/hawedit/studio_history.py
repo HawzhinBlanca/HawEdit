@@ -117,7 +117,9 @@ def _diagnostic(job_id: str | None, code: str, message: str) -> dict[str, Any]:
     return {"job_id": job_id, "code": code, "message": message}
 
 
-def _candidates(root: Path, job_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _candidates(
+    root: Path, job_id: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
     try:
         report = read_studio_record(root, job_id, "report").document
         manifest = report.get("episode_manifest")
@@ -126,6 +128,19 @@ def _candidates(root: Path, job_id: str) -> tuple[list[dict[str, Any]], list[dic
         rows = manifest.get("clips")
         if not isinstance(rows, list) or len(rows) > 1000:
             raise HistoryError("Private candidate manifest entries are invalid")
+        encoded_job_id = quote(job_id, safe="")
+        v8_ep = report.get("v8_episode") if report.get("engine") == "v8" else None
+        v8_clips_map = v8_ep.get("clips") if isinstance(v8_ep, dict) else None
+        v8_meta_map = v8_ep.get("clip_meta") if isinstance(v8_ep, dict) else None
+        review_sheet_url: str | None = None
+        if isinstance(v8_ep, dict) and isinstance(v8_ep.get("review_sheet"), str):
+            raw_review = _text(v8_ep["review_sheet"], limit=512)
+            review_parts = [p for p in raw_review.split("/") if p]
+            if review_parts and all(p not in {".", ".."} for p in review_parts):
+                review_sheet_url = (
+                    f"/api/jobs/{encoded_job_id}/artifacts/"
+                    f"{'/'.join(quote(p, safe='') for p in review_parts)}"
+                )
         ids: set[str] = set()
         clips = []
         for row in rows:
@@ -142,36 +157,73 @@ def _candidates(root: Path, job_id: str) -> tuple[list[dict[str, Any]], list[dic
             title = row.get("title_ckb")
             if title is not None:
                 _text(title)
-            clips.append(
-                {
-                    "clip_id": clip_id,
-                    "headline": title,
-                    "state": "unverified",
-                    "duration_s": None,
-                    "hook_score": None,
-                    "sha256": None,
-                    "preview_url": (
-                        f"/api/jobs/{quote(job_id, safe='')}/clips/"
-                        f"{quote(clip_id, safe='')}/preview"
-                    ),
-                    "preview_verified": False,
-                    "publication_verified": False,
-                }
-            )
-        return clips, []
+            encoded_cid = quote(clip_id, safe="")
+            clip_entry: dict[str, Any] = {
+                "clip_id": clip_id,
+                "headline": title,
+                "state": "unverified",
+                "duration_s": None,
+                "hook_score": None,
+                "sha256": None,
+                "preview_url": (f"/api/jobs/{encoded_job_id}/clips/{encoded_cid}/preview"),
+                "preview_verified": False,
+                "publication_verified": False,
+            }
+            if isinstance(v8_clips_map, dict) and isinstance(v8_clips_map.get(clip_id), dict):
+                rel_map = v8_clips_map[clip_id]
+                download_urls: dict[str, str] = {}
+                for dl_kind in ("mp4", "srt", "edl", "otio", "director_json", "grill_json"):
+                    if isinstance(rel_map.get(dl_kind), str) and rel_map[dl_kind]:
+                        download_urls[dl_kind] = (
+                            f"/api/jobs/{encoded_job_id}/clips/{encoded_cid}/artifacts/{dl_kind}"
+                        )
+                clip_entry["download_urls"] = download_urls
+                if isinstance(rel_map.get("cover"), str) and rel_map["cover"]:
+                    clip_entry["cover_url"] = (
+                        f"/api/jobs/{encoded_job_id}/clips/{encoded_cid}/cover.png"
+                    )
+                if review_sheet_url is not None:
+                    clip_entry["review_sheet_url"] = review_sheet_url
+            if isinstance(v8_meta_map, dict) and isinstance(v8_meta_map.get(clip_id), dict):
+                meta = v8_meta_map[clip_id]
+                if isinstance(meta.get("hook_title_ckb"), str):
+                    clip_entry["hook_title_ckb"] = _text(meta["hook_title_ckb"])
+                if type(meta.get("duration_s")) in {int, float} and math.isfinite(
+                    float(meta["duration_s"])
+                ):
+                    clip_entry["duration_s"] = round(float(meta["duration_s"]), 2)
+                if type(meta.get("face_share")) in {int, float} and math.isfinite(
+                    float(meta["face_share"])
+                ):
+                    clip_entry["face_share"] = round(float(meta["face_share"]), 4)
+                if type(meta.get("grill_passed")) is bool:
+                    clip_entry["grill_passed"] = meta["grill_passed"]
+                if isinstance(meta.get("grill_summary"), str):
+                    clip_entry["grill_summary"] = _text(meta["grill_summary"])
+                if isinstance(meta.get("sha256"), str) and meta["sha256"]:
+                    clip_entry["sha256"] = _text(meta["sha256"], limit=128)
+                    if clip_entry["duration_s"] and clip_entry["duration_s"] > 0:
+                        clip_entry["preview_verified"] = True
+            clips.append(clip_entry)
+        return clips, [], review_sheet_url
     except (ArtifactError, HistoryError, ValueError) as exc:
         code = (
             "candidate_manifest_missing"
             if isinstance(exc, ArtifactError) and exc.status == 404
             else "candidate_manifest_refused"
         )
-        return [], [
-            _diagnostic(
-                job_id,
-                code,
-                "Private candidate manifest is missing or invalid; original evidence is preserved",
-            )
-        ]
+        return (
+            [],
+            [
+                _diagnostic(
+                    job_id,
+                    code,
+                    "Private candidate manifest is missing or invalid; "
+                    "original evidence is preserved",
+                )
+            ],
+            None,
+        )
 
 
 def read_historical_job(
@@ -192,8 +244,10 @@ def read_historical_job(
     recovery = recorded_status in {"queued", "running", "interrupted"}
     terminal = recorded_status in {"failed", "cancelled", "interrupted"}
     status = "interrupted" if recovery else recorded_status if terminal else "unverified-historical"
-    clips, diagnostics = _candidates(jobs_root, job_id) if include_candidates else ([], [])
-    return {
+    clips, diagnostics, review_sheet_url = (
+        _candidates(jobs_root, job_id) if include_candidates else ([], [], None)
+    )
+    record_out: dict[str, Any] = {
         "job_id": job_id,
         "source": PureWindowsPath(data["source"]).name,
         "headline": data["headline"],
@@ -220,6 +274,9 @@ def read_historical_job(
         if recovery
         else None,
     }
+    if review_sheet_url is not None:
+        record_out["review_sheet_url"] = review_sheet_url
+    return record_out
 
 
 def read_history(jobs_root: Path, *, max_entries: int = 1000) -> dict[str, Any]:
