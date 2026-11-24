@@ -1099,6 +1099,12 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
     assert _source_quote_hook(proposal, words) == " ".join(clause)
     assert _source_quote_hook(proposal, words[:5]) == ""
 
+    # Keep a complete source clause even if the proposed headline is unrelated.
+    other = ["ئەمڕۆ", "میوانەکە", "هاتە", "ستۆدیۆ؟"]
+    source = _make_words(other, step_ms=350, gap_ms=50)
+    assert _source_quote_hook("پزیشکی و فێربوون", source) == " ".join(other)
+    assert _source_quote_hook("میوانەکە", source[:-1]) == ""
+
     # Late-episode assembled spans use fast -ss/-t input seeking with shifted trim bounds.
     from hawedit.assembly import assembly_seek_args
     from hawedit.sentences import Sentence

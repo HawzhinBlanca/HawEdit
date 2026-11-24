@@ -1155,6 +1155,7 @@ _DANGLING_HOOK_WORDS: Final[frozenset[str]] = (
     )
     | DANGLING_CONJUNCTIONS_CKB
 )
+_HOOK_FILLER = frozenset({"یانی", "یەعنی", "ئا", "ئێ", "ها", "ئەها", "وەڵا"})
 _HOOK_TERMINAL = ".!?؟؛…"
 _HOOK_EDGE = """،,؛;:؟?!."'«»…"""
 
@@ -1184,9 +1185,8 @@ def _source_quote_hook(proposal: str, words: Sequence[Word]) -> str:
             if (
                 3 <= len(tokens) <= 12
                 and len(phrase) <= 76
-                and first not in _DANGLING_HOOK_WORDS
-                and last not in _DANGLING_HOOK_WORDS
-                and (overlap or not wanted)
+                and first not in _DANGLING_HOOK_WORDS | _HOOK_FILLER
+                and last not in _DANGLING_HOOK_WORDS | _HOOK_FILLER
             ):
                 candidates.append((overlap, word.w.endswith(tuple(_HOOK_TERMINAL)), -start, phrase))
         start = end + 1
