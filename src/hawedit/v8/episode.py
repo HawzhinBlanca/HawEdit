@@ -45,9 +45,11 @@ from hawedit.v8.delivery_pack import (
 )
 from hawedit.v8.schema import WordRepair
 from hawedit.v8.story_editor import (
+    MultiCutStoryRecipe,
     StoryEditorError,
     compile_story_to_assembly_spans,
     plan_episode_multicut_stories,
+    rank_local_source_spans,
     refine_story_pruning,
     verify_story_meaning_preservation,
 )
@@ -666,6 +668,39 @@ def _safe_media_id(stem: str) -> str:
     return cleaned or "episode"
 
 
+def _rank_local_episode(
+    words: Sequence[Word],
+    discovery_sentences: Sequence[Sentence],
+    audio_wav: Path,
+    plan_count: int,
+    cfg: V8EpisodeConfig,
+) -> tuple[MultiCutStoryRecipe, ...]:
+    """Scan complete sentences, then have the local editor compare exact, measured excerpts."""
+    arcs = discover_viral_arcs_offline(
+        discovery_sentences,
+        audio_wav,
+        max_clips=plan_count * 2,
+        min_duration_ms=cfg.min_duration_ms,
+        max_duration_ms=cfg.max_duration_ms,
+        min_separation_ms=cfg.min_separation_ms,
+    )
+    positions = {id(word): i for i, word in enumerate(words)}
+    proposals = [
+        (
+            positions[id(discovery_sentences[indices[0]].words[0])],
+            positions[id(discovery_sentences[indices[-1]].words[-1])],
+        )
+        for indices, _, _ in arcs
+    ]
+    return rank_local_source_spans(
+        words,
+        proposals,
+        max_stories=plan_count,
+        model_id=cfg.director_model,
+        base_url=cfg.omni_url,
+    )
+
+
 def _build_compile_config(cfg: V8EpisodeConfig) -> V8CompileConfig:
     kwargs: dict[str, Any] = {
         "director_backend": cfg.director,
@@ -937,17 +972,26 @@ def compile_v8_episode(
         src_dur_ms = probe_duration_ms(source, ffmpeg_bin) if ffmpeg_bin is not None else None
         plan_count = cfg.max_clips + 2 if cfg.overgenerate_candidates else cfg.max_clips
         try:
-            recipes = plan_episode_multicut_stories(
-                words,
-                backend=story_backend,
-                max_stories=plan_count,
-                min_duration_ms=cfg.min_duration_ms,
-                max_duration_ms=cfg.max_duration_ms,
-                audio_wav=resolved_wav_path,
-                checkpoint_dir=work_dir / "story-nominations",
-                model_id=cfg.director_model,
-                base_url=cfg.omni_url,
-            )
+            if cfg.story_mode == "auto" and story_backend == "local-omni":
+                if resolved_wav_path is None:
+                    raise V8EpisodeError(
+                        "Full-episode local ranking requires measured source audio"
+                    )
+                recipes = _rank_local_episode(
+                    words, discovery_sentences, resolved_wav_path, plan_count, cfg
+                )
+            else:
+                recipes = plan_episode_multicut_stories(
+                    words,
+                    backend=story_backend,
+                    max_stories=plan_count,
+                    min_duration_ms=cfg.min_duration_ms,
+                    max_duration_ms=cfg.max_duration_ms,
+                    audio_wav=resolved_wav_path,
+                    checkpoint_dir=work_dir / "story-nominations",
+                    model_id=cfg.director_model,
+                    base_url=cfg.omni_url,
+                )
         except StoryEditorError as exc:
             raise V8EpisodeError(f"V11 semantic multi-cut planning failed: {exc}") from exc
 
@@ -993,8 +1037,14 @@ def compile_v8_episode(
                     if compiled.cold_open_end_ms is not None
                     else ""
                 )
+                method = (
+                    "local-shortlist"
+                    if raw_recipe.story_id.startswith("shortlist-")
+                    else "v11-semantic-multicut"
+                )
                 reason = (
-                    f"v11-semantic-multicut beats={len(verified_recipe.keep_spans)} "
+                    f"{method} "
+                    f"beats={len(verified_recipe.keep_spans)} "
                     f"spans={len(compiled.assembly_spans)} drops={compiled.dropped_word_count} "
                     f"restored={len(verify_res.restored_drop_indices)} "
                     f"cues={len(verified_recipe.visual_cues)}{co_tag}"

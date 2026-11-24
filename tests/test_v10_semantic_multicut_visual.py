@@ -1057,3 +1057,34 @@ def test_v11_2_local_vision_broll_gate_and_kurdish_stat_extraction(tmp_path: Pat
     assert "نوخبەی زانستی" in cards[0].text_ckb
     assert cards[1].text_ckb.startswith("80% | ")
     assert "ئاستی لاوازی" in cards[1].text_ckb
+
+
+def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
+    from hawedit.v8.story_editor import StoryEditorError, rank_local_source_spans
+
+    words = _make_words(["word"] * 240, step_ms=500, gap_ms=50)
+    spans = [(0, 39), (50, 89), (100, 139), (150, 189)]
+    scores = [35, 87, 79, 99]
+
+    def score(url: str, body: bytes | None, headers: Any) -> tuple[int, str]:
+        assert body is not None
+        request = json.loads(body)
+        excerpts = json.loads(request["messages"][1]["content"])
+        assert len(excerpts) <= 3
+        response = {
+            k: {"score": scores[int(k[4:]) - 1], "hook": "headline", "reason": "reason"}
+            for k in excerpts
+        }
+        return 200, json.dumps({"choices": [{"message": {"content": json.dumps(response)}}]})
+
+    results = rank_local_source_spans(words, spans, max_stories=2, model_id="test", transport=score)
+    assert [r.story_id for r in results] == ["shortlist-150-189", "shortlist-50-89"]
+    assert results[0].keep_spans[0].end_word_idx == 189
+    with pytest.raises(StoryEditorError, match="every source candidate"):
+        rank_local_source_spans(
+            words,
+            spans,
+            max_stories=2,
+            model_id="test",
+            transport=lambda *_: (200, '{"choices":[{"message":{"content":"{}"}}]}'),
+        )

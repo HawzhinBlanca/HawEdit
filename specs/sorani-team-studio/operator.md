@@ -16,7 +16,7 @@ Stock voice is the default. A cloned voice additionally requires `--reference RE
 
 For TikTok or Instagram manual posting, download the approved package on the phone. For direct Instagram publishing, the operator must connect an eligible professional account through Facebook Login for Business and provide its Meta token via `HAWEDIT_META_ACCESS_TOKEN`. Explicitly run `python -m hawedit.v8 publish-instagram PACKAGE --state STATE --account INSTAGRAM_ID`. The publisher uploads the approved reel directly to Meta, checks processing, and records the media ID. Repeating the command uses the stored container. After an ambiguous publish response it checks the existing container and avoids submitting another publication.
 
-When the local director scans a long episode, it selects source spans in overlapping sections. Repeating the episode command with the same output directory can reuse completed nominations from `.work/story-nominations`. Changes to source words, timing, model or prompts produce new cache entries. The refiner and meaning check still run on the selected candidates.
+In automatic mode the local director compares complete, measured source excerpts. It scores each for opening, payoff, context and specificity, then refines the selected edits. Explicit `--story-mode semantic-multicut` instead asks the director to nominate its own word spans in overlapping transcript sections. Repeating the episode command with the same output directory can reuse completed nominations from `.work/story-nominations`. Changes to source words, timing, model or prompts produce new cache entries. The refiner and meaning check still run on the selected candidates.
 
 ## Provenance
 
