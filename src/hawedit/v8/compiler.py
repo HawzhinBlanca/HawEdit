@@ -210,7 +210,7 @@ class V8CompileError(RuntimeError):
 
 
 class ReelQualityError(V8CompileError):
-    """A rendered candidate failed the forensic video checks."""
+    """A candidate failed an editorial or forensic reel quality check."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2810,10 +2810,14 @@ def compile_v8_clip(
                         cut.start_ms <= word.start_ms < cut.end_ms for cut in effective_script.cuts
                     )
                 )
-                effective_script = replace(
-                    effective_script,
-                    hook_title_ckb=_source_quote_hook(effective_script.hook_title_ckb, hook_words),
+                grounded_hook = _source_quote_hook(
+                    effective_script.hook_title_ckb, clip_words, retained_words=hook_words
                 )
+                if not grounded_hook:
+                    grounded_hook = _source_quote_hook(effective_script.hook_title_ckb, hook_words)
+                if not grounded_hook:
+                    raise ReelQualityError(f"No complete grounded Sorani headline for {clip_id}")
+                effective_script = replace(effective_script, hook_title_ckb=grounded_hook)
             cam_flt, cam_jumps = compile_restrained_camera_filter(
                 effective_duration_ms,
                 effective_script.camera_moves,

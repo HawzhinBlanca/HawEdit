@@ -1099,6 +1099,28 @@ def test_local_ranker_can_only_select_measured_source_excerpts() -> None:
     assert _source_quote_hook(proposal, words) == " ".join(clause)
     assert _source_quote_hook(proposal, words[:5]) == ""
 
+    # Keep a complete source clause even if the proposed headline is unrelated.
+    other = ["ئەمڕۆ", "میوانەکە", "هاتە", "ستۆدیۆ؟"]
+    source = _make_words(other, step_ms=350, gap_ms=50)
+    assert _source_quote_hook("پزیشکی و فێربوون", source) == " ".join(other)
+    assert _source_quote_hook("میوانەکە", source[:-1]) == ""
+
+    # A long pause after a hanging word does not make it a usable title.
+    incomplete = "واردی فیڵدی کام پیتەر بەم دە واردی"
+    complete = "ڕێگەی فێربوون هەر ڕۆژ دەگۆڕێتەوە"
+    tokens = _make_words(incomplete.split(), step_ms=320, gap_ms=20)
+    following = [
+        Word(w.w, w.start_ms + 3000, w.end_ms + 3000, w.conf)
+        for w in _make_words([*complete.split(), "کۆتایی"], step_ms=320, gap_ms=20)
+    ]
+    final = following[-1]
+    following[-1] = Word(final.w, final.start_ms + 400, final.end_ms + 400, final.conf)
+    assert _source_quote_hook(incomplete, (*tokens, *following)) == complete
+    # A measured source pause remains evidence after shortening the pause in the reel.
+    retimed = _make_words([*complete.split(), "کۆتایی"], step_ms=320, gap_ms=20)
+    assert _source_quote_hook(incomplete, (*tokens, *following), retained_words=retimed) == complete
+    assert _source_quote_hook(incomplete, (*tokens, *following), retained_words=retimed[1:]) == ""
+
     # Late-episode assembled spans use fast -ss/-t input seeking with shifted trim bounds.
     from hawedit.assembly import assembly_seek_args
     from hawedit.sentences import Sentence
