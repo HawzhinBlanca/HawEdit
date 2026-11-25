@@ -1,0 +1,20 @@
+[
+  {
+    "file": "src/hawedit/artifact_bundle.py",
+    "symbol": "_flush_bound_artifact",
+    "definition": "[{\"name_path\": \"_flush_bound_artifact\", \"kind\": \"Function\", \"relative_path\": \"src/hawedit/artifact_bundle.py\", \"body_location\": {\"start_line\": 71, \"end_line\": 115}}]",
+    "references": "[{\"name_path\": \"ArtifactBundle/_validate\", \"kind\": \"Method\", \"relative_path\": \"src\\\\hawedit\\\\artifact_bundle.py\", \"body_location\": {\"start_line\": 238, \"end_line\": 265}, \"content_around_reference\": \"... 256:        identities = {\\n  > 257:            name: _flush_bound_artifact(path, name=name, private=self._private_storage)\\n... 258:            for name, path in actual.items()\"}]"
+  },
+  {
+    "file": "tests/test_delivery.py",
+    "symbol": "test_approved_candidate_promotes_identical_bytes_without_render",
+    "definition": "[{\"name_path\": \"test_approved_candidate_promotes_identical_bytes_without_render\", \"kind\": \"Function\", \"relative_path\": \"tests/test_delivery.py\", \"body_location\": {\"start_line\": 1248, \"end_line\": 1287}}]",
+    "references": "[]"
+  },
+  {
+    "file": "tests/test_delivery.py",
+    "symbol": "test_promotion_rejects_changed_sidecar_or_plan_binding",
+    "definition": "[{\"name_path\": \"test_promotion_rejects_changed_sidecar_or_plan_binding\", \"kind\": \"Function\", \"relative_path\": \"tests/test_delivery.py\", \"body_location\": {\"start_line\": 1290, \"end_line\": 1311}}]",
+    "references": "[]"
+  }
+]

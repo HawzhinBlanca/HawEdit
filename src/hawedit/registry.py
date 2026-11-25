@@ -295,7 +295,7 @@ _ENTRIES: Final = (
         ),
     ),
     ModelEntry(
-        model_id="gemini-2.5-pro",
+        model_id="gemini-4-carbon",
         component="Kurdish judge (both stages)",
         provisioning=Provisioning.CLOUD,
         blueprint_model_cell="gemini-2.5-pro, pinned",
@@ -303,12 +303,13 @@ _ENTRIES: Final = (
         role="kurdish_editorial_judge",
         routable=True,
         notes=(
-            "§4: pinned on tested Sorani evidence. All cloud calls route through the "
+            "D-339: replaces deprecated gemini-2.5-pro (Vertex AI retired 2026-10-20; Gemini "
+            "API auto-routes 2026-12-01). All cloud calls route through the "
             "KURDISH_EDITORIAL_JUDGE interface so a provider swap is config, not refactor."
         ),
     ),
     ModelEntry(
-        model_id="gemini-3.1-pro",
+        model_id="gemini-4-argon",
         component="Judge shadow",
         provisioning=Provisioning.CLOUD,
         blueprint_model_cell="gemini-3.1-pro",
@@ -316,8 +317,8 @@ _ENTRIES: Final = (
         role="judge_shadow",
         routable=False,
         notes=(
-            "§4: 'evaluated, not routed'. Switch only when it beats 2.5 Pro on the Sorani "
-            "regression set — newer is not automatically better on Kurdish."
+            "§4 / D-339: 'evaluated, not routed'. Switch only when it beats incumbent on the "
+            "Sorani regression set — newer is not automatically better on Kurdish."
         ),
     ),
     ModelEntry(
@@ -562,6 +563,12 @@ SHIPPED_ASSETS: Final[tuple[ShippedAsset, ...]] = (
         licence=OFL_1_1,
         # OFL-1.1 requires the licence to accompany the font. Shipping the .ttf without it is
         # a licence violation in every build, and `tests/test_claims.py` asserts the file.
+        licence_file="assets/fonts/OFL.txt",
+    ),
+    ShippedAsset(
+        name="Vazirmatn (The Vazirmatn Project Authors)",
+        role="Studio font",
+        licence=OFL_1_1,
         licence_file="assets/fonts/OFL.txt",
     ),
 )

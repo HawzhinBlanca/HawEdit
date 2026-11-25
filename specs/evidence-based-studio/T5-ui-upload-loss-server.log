@@ -1,0 +1,16 @@
+TEST_STORAGE=C:\Users\Wareen\AppData\Local\Temp\hawedit-ui-loss-j0lv5qh7
+SOURCE_PACKAGE_SHA256=66a377dabc4c08b265994e85ab18d66d8a89f90553e7a90cdec0f19ff8ebbd39
+TEST_LOOPBACK_PORT=8083
+127.0.0.1 - - [02/Oct/2026 22:19:58] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:19:58] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:19:58] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:19:58] "GET /api/history HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:19:58] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [02/Oct/2026 22:20:06] "POST /api/uploads HTTP/1.1" 201 -
+TEST_ACK_DROPPED_AFTER_REAL_COMMIT={"duration_ms": 4162, "filename": "kurdish-speech-3cuts.mp4", "height": 360, "sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15", "size": 48021, "source_id": "c34dc41f5c414213a3250dc7bf279f62", "width": 640}
+127.0.0.1 - - [02/Oct/2026 22:20:30] "GET /api/uploads/c34dc41f5c414213a3250dc7bf279f62 HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:20:36] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:20:36] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:20:36] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:20:36] "GET /api/history HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 22:20:36] "GET /api/uploads/c34dc41f5c414213a3250dc7bf279f62 HTTP/1.1" 200 -

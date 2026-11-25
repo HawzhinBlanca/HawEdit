@@ -1,0 +1,15 @@
+# Research — seven audit repairs (2026-11-22)
+
+Base: Gemini integration e65522fdf77ae7ce90947e8235e32d5cf4c278ec, isolated branch codex/audit-seven-fixes. The earlier audit at 1bedc8e is historical; compare before fixing. Source mapping uses rg plus direct function/caller inspection. Serena tools are not exposed in this session; attempted `uvx --offline --from git+https://github.com/oraios/serena serena --help` failed Git resolution. No dependency was installed for this fallback.
+
+F1: silence._identify_filler_words, plan_silence_tightening, tighten_silence, tighten_sentences, tighten_clip. Gemini protects filler_tokens=None in plan/tighten, but automatically enables prefix/repeat deletion with any filler list. Pipeline enables that list by default. Preserve legitimate speech and make restart removal explicit.
+F2: Gemini already uses rendered.requested_duration_ms in _render_episode_single_clip. Preserve and regress real episode tightening.
+F3: Gemini samples two output frames per window, but returns estimated frame counts and trusts has_source_context=True without reading source. Map actual source intervals from VisualEditPlan/assembly/explicit source origin; decode bounded temporal samples and refuse missing evidence. Caller must handle refused all-clear.
+F4: Gemini D-344 replaced timing table with complete numbered sentence input. Preserve, add a late-sentence regression with >4000 words.
+F5: sentence cache digest binds coarse sentence clocks but omits media/source/model/voting/prompt and individual word changes; cache hits lack validation.
+F6: both pipeline paths confuse first-frame face size with whole-clip share. delivery skips speaker_face checks without override. Keep signed publication rules intact.
+F7: legacy ep29 fixture absent; current D:/HawEdit-media sources/excerpt are documented, pinned in README. Preserve legacy tests as an explicit profile and add a separately pinned current profile, with visible collection status.
+
+Boundaries: BLUEPRINT sections 3–5, 4.2/4.3 and 8; D-344 and D-354, Kurdish invariants, source/approval identities. No model/dependency change or WSL review renewal. Gemini coordinator 3060c8a4-24ab-4037-a381-e4662490565a notified through agentapi; replies requested in shared HawEdit-codex-audit-coordination-20261122.md. No writes to Gemini lead/lane checkouts.
+
+Full-suite follow-up at clean 6abf219: 6,969 passed and three failed. D-369's positive stutter-removal test still relies on implicit restarts; its plan/tighten calls need the explicit opt-in while retaining all counts/emphatic/E3 assertions. The protected Studio status-200 test depends on untracked work/jobs storage: read_history correctly returns unavailable and the handler 503s when that directory is absent in a clean worktree. Ground its positive case in a real temporary JobManager and retain a separate missing-storage 503 regression. No web/v5 runtime changes are needed. The remaining failure is the acknowledged lead-owned VEX source binding. Raw JUnit/coverage and all three failures are preserved outside the checkout.

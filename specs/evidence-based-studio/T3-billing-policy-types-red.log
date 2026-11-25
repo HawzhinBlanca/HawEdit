@@ -1,0 +1,127 @@
+................................F.....FF....                             [100%]
+================================== FAILURES ===================================
+_ test_studio_billing_unrecognized_storage_is_preserved[foreign-version-one] __
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6997/test_studio_billing_unrecogniz2')
+api = <test_studio_billing.LocalProtocol object at 0x000001845C5A44D0>
+damage = 'foreign-version-one'
+
+    @pytest.mark.parametrize("damage", ["version", "foreign", "foreign-version-one", "not-database"])
+    def test_studio_billing_unrecognized_storage_is_preserved(
+        tmp_path: Path, api: LocalProtocol, damage: str
+    ) -> None:
+        path = tmp_path / "billing.sqlite3"
+        if damage == "not-database":
+            path.write_bytes(b"not a database")
+        else:
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "PRAGMA user_version=2"
+                    if damage == "version"
+                    else "CREATE TABLE foreign_data(value)"
+                )
+                if damage == "foreign-version-one":
+                    db.execute("PRAGMA user_version=1")
+        before = path.read_bytes()
+>       with pytest.raises(StudioStorageError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_billing.py:528: Failed
+________ test_studio_billing_policy_fields_are_strict[digest-boolean] _________
+
+field = 'authorization_sha256', value = True
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("authorization_sha256", True),
+            ("model_base_url", True),
+            ("max_input_tokens", True),
+            ("thinking_budget", -1),
+            ("input_microusd_per_million", 0),
+            ("pool_microusd", -1),
+        ],
+        ids=[
+            "digest-boolean",
+            "route-boolean",
+            "input-boolean",
+            "dynamic-thinking",
+            "unpriced-input",
+            "negative-budget",
+        ],
+    )
+    def test_studio_billing_policy_fields_are_strict(field: str, value: object) -> None:
+        with pytest.raises(ValueError):
+>           replace(policy(), **{field: value})
+
+tests\test_studio_billing.py:590: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Programs\Python\Python312\Lib\dataclasses.py:1588: in replace
+    return obj.__class__(**changes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:13: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = BillingPolicy(authorization_sha256=True, model_base_url='https://generativelanguage.googleapis.com/v1beta/models/gemin...hinking_tokens=32768, input_microusd_per_million=1250000, output_microusd_per_million=10000000, pool_microusd=10000000)
+
+    def __post_init__(self) -> None:
+>       if not _HEX.fullmatch(self.authorization_sha256):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: expected string or bytes-like object, got 'bool'
+
+src\hawedit\studio_billing.py:91: TypeError
+_________ test_studio_billing_policy_fields_are_strict[route-boolean] _________
+
+field = 'model_base_url', value = True
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("authorization_sha256", True),
+            ("model_base_url", True),
+            ("max_input_tokens", True),
+            ("thinking_budget", -1),
+            ("input_microusd_per_million", 0),
+            ("pool_microusd", -1),
+        ],
+        ids=[
+            "digest-boolean",
+            "route-boolean",
+            "input-boolean",
+            "dynamic-thinking",
+            "unpriced-input",
+            "negative-budget",
+        ],
+    )
+    def test_studio_billing_policy_fields_are_strict(field: str, value: object) -> None:
+        with pytest.raises(ValueError):
+>           replace(policy(), **{field: value})
+
+tests\test_studio_billing.py:590: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Programs\Python\Python312\Lib\dataclasses.py:1588: in replace
+    return obj.__class__(**changes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:13: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = BillingPolicy(authorization_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', model_base_url=...hinking_tokens=32768, input_microusd_per_million=1250000, output_microusd_per_million=10000000, pool_microusd=10000000)
+
+    def __post_init__(self) -> None:
+        if not _HEX.fullmatch(self.authorization_sha256):
+            raise ValueError("A bound authorization digest is required, not an approval flag")
+        if (
+            self.model_base_url != API_ROOT + "/models/" + KURDISH_EDITORIAL_JUDGE
+>           and not _VERTEX.fullmatch(self.model_base_url)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        ):
+E       TypeError: expected string or bytes-like object, got 'bool'
+
+src\hawedit\studio_billing.py:95: TypeError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_billing.py::test_studio_billing_unrecognized_storage_is_preserved[foreign-version-one]
+FAILED tests/test_studio_billing.py::test_studio_billing_policy_fields_are_strict[digest-boolean]
+FAILED tests/test_studio_billing.py::test_studio_billing_policy_fields_are_strict[route-boolean]

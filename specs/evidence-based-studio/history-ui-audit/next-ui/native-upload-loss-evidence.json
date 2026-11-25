@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "status": "unaccepted-native-response-loss-proof",
+  "observed_at_utc": "2026-10-02T19:21:20.3576995Z",
+  "source_package_sha256": "66a377dabc4c08b265994e85ab18d66d8a89f90553e7a90cdec0f19ff8ebbd39",
+  "root": "C:\\Users\\Wareen\\AppData\\Local\\Temp\\hawedit-ui-loss-j0lv5qh7",
+  "source_id": "c34dc41f5c414213a3250dc7bf279f62",
+  "source_size": 48021,
+  "source_sha256": "ed038e743a6b1ee167290741ceda926ac1077ff192e4910528017e3183655a15",
+  "probe_duration_ms": 4162,
+  "width": 640,
+  "height": 360,
+  "committed_source_directories": 1,
+  "reservation_requests": 1,
+  "acknowledgement_losses": 1,
+  "recovery_reads": 2,
+  "repurpose_requests": 0,
+  "transport_fault": "Test-only subclass closes the socket after untouched receive commits; no fabricated status/source/pipeline response",
+  "log_sha256": "a779b1988bf31c0b12b98de12b03d3f32bbce679485ea7e3036c4efca1b70956",
+  "audit_helper_sha256": "0aa705ffe495487e4c3f42e3abc32d870c1c8180eae31a7aa92e54768aff9ae0",
+  "limitations": [
+    "Fixture only",
+    "Not an automated CI browser regression",
+    "No paid producer/revision/approval/export",
+    "Audit child stopped and temporary tab closed"
+  ]
+}

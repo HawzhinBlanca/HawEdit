@@ -10,12 +10,13 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from hawedit.caption_layout import CaptionLayoutPlan
+from hawedit.edit_plan import VisualEditPlan, validate_edl
 from hawedit.sentences import Sentence
 from hawedit.shot_plan import (
     PlannedShot,
@@ -23,6 +24,7 @@ from hawedit.shot_plan import (
     ShotLayoutStrategy,
 )
 from hawedit.timing_continuity import TightenedTimeline
+from hawedit.transcripts import Word
 
 __all__ = [
     "CritiqueInspectionResult",
@@ -73,6 +75,7 @@ class DefectKind(str, Enum):
     DANGLING_CONJUNCTION = "dangling_conjunction"
     MID_CLAUSE_ENTRY = "mid_clause_entry"
     MISLEADING_JOIN = "misleading_join"
+    EDIT_RULE_VIOLATION = "edit_rule_violation"
 
 
 class PermittedRepair(str, Enum):
@@ -182,7 +185,7 @@ class RenderedSequenceContext:
     width: int = 1080
     height: int = 1920
     source_video_path: Path | str | None = None
-    has_source_context: bool = True
+    has_source_context: bool = False
     planned_shots: tuple[PlannedShot, ...] = ()
     caption_plan: CaptionLayoutPlan | None = None
     timing_timeline: TightenedTimeline | None = None
@@ -192,6 +195,15 @@ class RenderedSequenceContext:
     sentences: tuple[Sentence, ...] = ()
     assembly_spans: tuple[Any, ...] | None = None
     llm_critique_verdict: dict[str, Any] | None = None
+    edit_plan: VisualEditPlan | None = None
+    edl_words: tuple[Word, ...] = ()
+    edl_all_words: tuple[Word, ...] = ()
+    edl_media_duration_ms: int | None = None
+    edl_min_duration_ms: int | None = None
+    edl_max_duration_ms: int | None = None
+    edl_min_padding_ms: int = 30
+    edl_max_outer_in_padding_ms: int | None = None
+    edl_max_outer_out_padding_ms: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.duration_ms) is not int or self.duration_ms <= 0:
@@ -298,6 +310,7 @@ def generate_critique_windows(
                     window_kind=kind,
                     has_temporal_motion=True,
                     frame_count=est_frames,
+                    is_observed=False,  # Planning arithmetic is not a decoded observation.
                 )
             )
 
@@ -335,6 +348,98 @@ def generate_critique_windows(
     return tuple(windows)
 
 
+def _observe_source_context(sequence: RenderedSequenceContext) -> tuple[bool, str]:
+    """Decode the source intervals supplied by the edit, rather than trusting a Boolean.
+
+    This establishes readable source clocks for structural checks. It does not
+    independently identify speakers or certify semantic/editorial accuracy.
+    """
+    if sequence.source_video_path is None:
+        return False, "no source video was supplied"
+    source = Path(sequence.source_video_path)
+    try:
+        before = source.stat()
+        if not source.is_file() or before.st_size == 0:
+            return False, "source video is missing or empty"
+        if sequence.assembly_spans:
+            intervals = tuple(
+                (span.source_in_ms, span.source_out_ms) for span in sequence.assembly_spans
+            )
+        elif sequence.edit_plan is not None:
+            intervals = sequence.edit_plan.time_mapping.retained_intervals_ms
+        elif sequence.planned_shots:
+            intervals = tuple(
+                (shot.source_in_ms, shot.source_out_ms) for shot in sequence.planned_shots
+            )
+        elif source.samefile(sequence.render_path):
+            # Identity is the mapping only when source and output really are the same file.
+            intervals = ((0, sequence.duration_ms),)
+        else:
+            return False, "source/output time mapping is unavailable"
+        import cv2
+
+        cap = cv2.VideoCapture(str(source))
+        try:
+            if not cap.isOpened():
+                return False, "source video cannot be decoded"
+            fps = float(cap.get(cv2.CAP_PROP_FPS))
+            count = float(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if not math.isfinite(fps) or not math.isfinite(count) or fps <= 0 or count <= 0:
+                return False, "source video has no measured frame clock"
+            duration = count * 1000.0 / fps
+            tolerance = 1500.0 / fps
+            if sequence.edit_plan is None:
+                if sequence.assembly_spans:
+                    if (
+                        abs(sum(end - start for start, end in intervals) - sequence.duration_ms)
+                        > tolerance
+                    ):
+                        return False, "assembly source map does not cover the measured output clock"
+                elif sequence.planned_shots:
+                    cursor = 0
+                    for shot in sorted(sequence.planned_shots, key=lambda item: item.output_in_ms):
+                        if abs(shot.output_in_ms - cursor) > tolerance:
+                            return False, "source map has a gap or overlap on the output clock"
+                        if (
+                            abs(
+                                (shot.source_out_ms - shot.source_in_ms)
+                                - (shot.output_out_ms - shot.output_in_ms)
+                            )
+                            > tolerance
+                        ):
+                            return False, "source/output shot clocks disagree"
+                        cursor = shot.output_out_ms
+                    if abs(cursor - sequence.duration_ms) > tolerance:
+                        return False, "source map does not cover the measured output clock"
+            if (
+                sequence.edit_plan is not None
+                and abs(sequence.edit_plan.time_mapping.output_duration_ms - sequence.duration_ms)
+                > tolerance
+            ):
+                return False, "edit mapping does not match the measured output clock"
+            for start, end in intervals:
+                if not (0 <= start < end <= duration + tolerance):
+                    return False, "source interval exceeds the observed source clock"
+                for fraction in (0.25, 0.75):
+                    cap.set(cv2.CAP_PROP_POS_MSEC, start + fraction * (end - start))
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        return False, "mapped source interval could not be decoded"
+        finally:
+            cap.release()
+        after = source.stat()
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            return False, "source identity changed during observation"
+        return True, "mapped source frames decoded"
+    except (OSError, ValueError, AttributeError, ImportError) as exc:
+        return False, f"source observation unavailable: {exc}"
+
+
 def inspect_rendered_sequence(
     sequence: RenderedSequenceContext,
     *,
@@ -354,6 +459,9 @@ def inspect_rendered_sequence(
       and the ending beat landed cleanly.
     - Strict refusal of unsupported all-clear claims.
     """
+    supplied_windows = critique_windows is not None
+    source_observed, source_reason = _observe_source_context(sequence)
+    sequence = replace(sequence, has_source_context=source_observed)
     if critique_windows is None:
         transitions = [
             shot.output_in_ms for shot in sequence.planned_shots if shot.output_in_ms > 0
@@ -372,6 +480,7 @@ def inspect_rendered_sequence(
     observed_media = True
     media_defects: list[RenderDefect] = []
     observed_window_ids: set[str] = set()
+    observed_frame_counts: dict[str, int] = {}
 
     if not render_file.is_file():
         observed_media = False
@@ -480,18 +589,37 @@ def inspect_rendered_sequence(
 
                     decoded_frames = 0
                     total_luminance = 0.0
+                    frame_ms = 1000.0 / fps if fps > 0 else 40.0
 
                     for w in critique_windows:
                         if actual_duration_ms > 0 and w.start_ms >= actual_duration_ms:
                             continue
                         win_bound = actual_duration_ms if actual_duration_ms > 0 else w.end_ms
-                        mid_ms = (w.start_ms + min(w.end_ms, win_bound)) / 2.0
-                        cap.set(cv2.CAP_PROP_POS_MSEC, mid_ms)
-                        ret, frame = cap.read()
-                        if ret and frame is not None:
-                            decoded_frames += 1
-                            mean_lum = float(frame.mean())
-                            total_luminance += mean_lum
+                        win_end = min(w.end_ms, win_bound)
+                        win_span = win_end - w.start_ms
+                        if win_span <= 0:
+                            continue
+                        if win_span > frame_ms:
+                            sample_times: tuple[float, ...] = (
+                                w.start_ms + 0.25 * win_span,
+                                w.start_ms + 0.75 * win_span,
+                            )
+                            needed_frames = 2
+                        else:
+                            sample_times = (w.start_ms + 0.5 * win_span,)
+                            needed_frames = 1
+
+                        decoded_positions: set[int] = set()
+                        for sample_ms in sample_times:
+                            cap.set(cv2.CAP_PROP_POS_MSEC, sample_ms)
+                            ret, frame = cap.read()
+                            if ret and frame is not None:
+                                decoded_frames += 1
+                                decoded_positions.add(int(cap.get(cv2.CAP_PROP_POS_FRAMES)))
+                                mean_lum = float(frame.mean())
+                                total_luminance += mean_lum
+                        observed_frame_counts[w.window_id] = len(decoded_positions)
+                        if len(decoded_positions) >= needed_frames:
                             observed_window_ids.add(w.window_id)
 
                     cap.release()
@@ -548,16 +676,17 @@ def inspect_rendered_sequence(
 
     updated_windows: list[TemporalCritiqueWindow] = []
     for w in critique_windows:
-        decoded_in_win = w.window_id in observed_window_ids if observed_window_ids else True
-        is_obs = observed_media and w.is_observed and decoded_in_win
+        decoded_in_win = w.window_id in observed_window_ids
+        actual_frames = observed_frame_counts.get(w.window_id, 0)
+        is_obs = observed_media and (w.is_observed or not supplied_windows) and decoded_in_win
         updated_windows.append(
             TemporalCritiqueWindow(
                 window_id=w.window_id,
                 start_ms=w.start_ms,
                 end_ms=w.end_ms,
                 window_kind=w.window_kind,
-                has_temporal_motion=w.has_temporal_motion,
-                frame_count=w.frame_count,
+                has_temporal_motion=w.has_temporal_motion and actual_frames >= 2,
+                frame_count=actual_frames,
                 defects=w.defects,
                 is_observed=is_obs,
             )
@@ -608,7 +737,9 @@ def inspect_rendered_sequence(
             defects.append(d)
 
     # 2. Inspect source context alignment
-    if not sequence.has_source_context:
+    if not sequence.has_source_context and (
+        claim_all_clear or sequence.source_video_path is not None
+    ):
         defects.append(
             RenderDefect(
                 defect_id="def_unaligned_source_context",
@@ -617,7 +748,9 @@ def inspect_rendered_sequence(
                 severity=DefectSeverity.CRITICAL,
                 defect_kind=DefectKind.UNSUPPORTED_CLAIM,
                 observation=(
-                    "Rendered sequence has no aligned source context; cannot verify grounding"
+                    source_reason
+                    + ": "
+                    + "Rendered sequence has no aligned source context; cannot verify grounding"
                 ),
                 source_reference="context_missing",
                 permitted_repair=PermittedRepair.NONE,
@@ -912,6 +1045,35 @@ def inspect_rendered_sequence(
                     observation=f"Sequence terminates on dangling conjunction: {last_tok!r}",
                     source_reference="sentence_exit",
                     permitted_repair=PermittedRepair.NONE,
+                    confidence=1.0,
+                )
+            )
+
+    # 8b. Check E3 hard edit rules against VisualEditPlan when wired
+    if sequence.edit_plan is not None:
+        edl_res = validate_edl(
+            sequence.edit_plan,
+            words=sequence.edl_words,
+            all_words=sequence.edl_all_words,
+            media_duration_ms=sequence.edl_media_duration_ms,
+            min_padding_ms=sequence.edl_min_padding_ms,
+            max_outer_in_padding_ms=sequence.edl_max_outer_in_padding_ms,
+            max_outer_out_padding_ms=sequence.edl_max_outer_out_padding_ms,
+            min_duration_ms=sequence.edl_min_duration_ms,
+            max_duration_ms=sequence.edl_max_duration_ms,
+            raise_on_error=False,
+        )
+        for idx, violation in enumerate(edl_res.violations):
+            defects.append(
+                RenderDefect(
+                    defect_id=f"def_edit_rule_{idx}",
+                    timestamp_ms=0,
+                    end_timestamp_ms=sequence.duration_ms,
+                    severity=DefectSeverity.CRITICAL,
+                    defect_kind=DefectKind.EDIT_RULE_VIOLATION,
+                    observation=f"EDL hard edit rule violated: {violation}",
+                    source_reference="validate_edl",
+                    permitted_repair=PermittedRepair.EXPAND_BOUNDARY,
                     confidence=1.0,
                 )
             )

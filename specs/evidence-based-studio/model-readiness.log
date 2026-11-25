@@ -1,0 +1,19 @@
+�7 component readiness
+========================================================================
+OK   PySceneDetect                                pip      pip package 'scenedetect' importable
+OK   Silero VAD                                   pip      pip package 'silero_vad' importable
+MISS pyannote/speaker-diarization-community-1     weights  not downloaded (pyannote/speaker-diarization-community-1)
+MISS omniASR_LLM_7B_v2                            pip      canonical OmniASR runtime verification failed: OmniASR WSL readiness receipt is missing or not a regular file: C:\Users\Wareen\AppData\Local\HawEdit\wsl-asr\sources\2bf679cfbde9e4c6\.ready
+MISS omniASR_CTC_3B_v2                            pip      canonical OmniASR runtime verification failed: OmniASR WSL readiness receipt is missing or not a regular file: C:\Users\Wareen\AppData\Local\HawEdit\wsl-asr\sources\2bf679cfbde9e4c6\.ready
+MISS rzgar/qwen3-asr-sorani-kurdish-ckb-v1        weights  verified 21 files from rzgar/qwen3-asr-sorani-kurdish-ckb-v1@d71490a623113b4b069ac07cfc85b409389dde4c; loader 'qwen_asr' unavailable through the canonical Windows WSL route: canonical OmniASR runtime verification failed: OmniASR WSL readiness receipt is missing or not a regular file: C:\Users\Wareen\AppData\Local\HawEdit\wsl-asr\sources\2bf679cfbde9e4c6\.ready  (10.1 GB)
+OK   Custom Viterbi on CTC emissions              in_house in-house code
+OK   KLPT                                         pip      pip package 'klpt' importable
+OK   Qwen3-VL-Embedding-2B                        weights  verified 18 files from Qwen/Qwen3-VL-Embedding-2B@9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda  (4.3 GB)
+OK   Qwen3-VL-Reranker-2B                         weights  verified 20 files from Qwen/Qwen3-VL-Reranker-2B@4bd860ac4f15ad1897a214615cccc700f8f71818  (4.3 GB)
+OK   MCG-NJU/VideoChat3-4B                        weights  verified 28 files from MCG-NJU/VideoChat3-4B@37fa901ec5913f84bc31108ebc1e60ad1903634c  (9.0 GB)
+OK   MCG-NJU/TimeLens2-4B                         weights  verified 18 files from MCG-NJU/TimeLens2-4B@ddbb6cb944f13ce21e59e85da23c5f356107260e  (9.7 GB)
+MISS gemini-2.5-pro                               cloud    no API credentials in env
+MISS gemini-3.1-pro                               cloud    no API credentials in env
+OK   ASS + libass/HarfBuzz/FriBidi                system   ffmpeg at C:\Users\Wareen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.EXE
+========================================================================
+9/15 available � missing: pyannote/speaker-diarization-community-1, omniASR_LLM_7B_v2, omniASR_CTC_3B_v2, rzgar/qwen3-asr-sorani-kurdish-ckb-v1, gemini-2.5-pro, gemini-3.1-pro

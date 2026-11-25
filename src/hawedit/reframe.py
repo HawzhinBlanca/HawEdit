@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
@@ -12,6 +13,7 @@ from typing import Any, Final, Protocol
 from hawedit.diarization import Segment, assert_exclusive
 
 __all__ = [
+    "DEFAULT_MIN_CONFIDENCE",
     "DEFAULT_MIN_DWELL_MS",
     "DEFAULT_MOVE_MS",
     "DEFAULT_SETTLE_MS",
@@ -26,8 +28,11 @@ __all__ = [
     "SubjectTracker",
     "choose_face",
     "compute_two_person_split_crops",
+    "detect_motion_focus_points",
     "detect_rapid_speaker_exchange",
     "layout_policy",
+    "median_face_box",
+    "per_shot_face_boxes",
     "probe_first_frame_face",
     "stabilize",
     "validate_speaker_focus_points",
@@ -35,6 +40,7 @@ __all__ = [
 
 # Minimum duration of a diarized speaker turn required to justify a camera transition.
 DEFAULT_MIN_DWELL_MS: Final = 600
+DEFAULT_MIN_CONFIDENCE: Final = 0.6
 
 # How long a committed camera move takes. Under ~250 ms it reads as a cut with a smear; over
 # ~600 ms the audience notices the camera rather than the speaker.
@@ -50,6 +56,15 @@ DEFAULT_SETTLE_MS: Final = 600
 # the image — background noise, not a face.  2,000 px² (~45×45) rejects sub-cascade-minimum
 # artefacts while accepting every real detection across all three measured sources.
 MIN_FACE_AREA: Final = 2_000
+
+# D-357: Downscale frames wider than 960 px before running Haar cascades (~4x faster on 1440p/4K)
+# while mapping boxes back to full source coordinates within <= 2 px.
+_HAAR_MAX_DETECT_WIDTH: Final = 960
+_INTRA_SHOT_MIN_DURATION_MS: Final = 5_000
+_ROLLING_MOTION_WINDOW_MS: Final = 1_500
+_SPEAKER_SWITCH_DWELL_MS: Final = 2_000
+_SPEAKER_SWITCH_RATIO: Final = 1.6
+_SPEAKER_SWITCH_MIN_ENERGY: Final = 2.0
 
 
 class SpeakerAssociationError(RuntimeError):
@@ -252,6 +267,258 @@ def _create_tracker(cv2_mod: Any) -> Any:
     return None
 
 
+def _torso_hsv_hist(cv2: Any, frame: Any, box: tuple[int, int, int, int]) -> Any:
+    """Compute a normalized 18x8 H-S histogram of the upper torso below a face box."""
+    height, width = frame.shape[:2]
+    x, y, bw, bh = box
+    cx = x + bw // 2
+    tx0 = max(0, cx - int(bw * 0.7))
+    tx1 = min(width, cx + int(bw * 0.7))
+    ty0 = min(height - 1, y + int(bh * 1.15))
+    ty1 = min(height, y + int(bh * 2.4))
+    if tx1 - tx0 < 8 or ty1 - ty0 < 8:
+        return None
+    roi = cv2.cvtColor(frame[ty0:ty1, tx0:tx1], cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([roi], [0, 1], None, [18, 8], [0, 180, 0, 256])
+    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+    return hist
+
+
+def _lower_face_motion(
+    cv2: Any, prev_gray: Any, gray: Any, box: tuple[int, int, int, int]
+) -> float:
+    """Mean pixel difference in the lower half (mouth/jaw) of a face box."""
+    import numpy as np
+
+    height, width = gray.shape[:2]
+    x, y, bw, bh = box
+    my0 = max(0, y + int(bh * 0.50))
+    my1 = min(height, y + int(bh * 1.05))
+    mx0 = max(0, x)
+    mx1 = min(width, x + bw)
+    if mx1 - mx0 < 8 or my1 - my0 < 8:
+        return 0.0
+    diff = cv2.absdiff(prev_gray[my0:my1, mx0:mx1], gray[my0:my1, mx0:mx1])
+    return float(np.mean(diff))
+
+
+def _filter_person_clusters(clusters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep persistent face clusters at a comparable scale to the shot's primary subject."""
+    import numpy as np
+
+    persistent = [c for c in clusters if len(c["centers"]) >= 2]
+    if len(persistent) < 2:
+        return persistent
+    med_widths = [float(np.median(c["widths"])) for c in persistent]
+    max_w = max(med_widths)
+    return [c for c, w in zip(persistent, med_widths, strict=True) if w >= 0.45 * max_w]
+
+
+def _select_active_cluster_center(
+    cv2: Any,
+    clusters: list[dict[str, Any]],
+    adjacent_hist: Any,
+) -> int | None:
+    """Choose the active speaking person cluster in a multi-person shot."""
+    import numpy as np
+
+    persistent = _filter_person_clusters(clusters)
+    if len(persistent) < 2:
+        return None
+
+    motions = [float(np.mean(c["motions"])) if c["motions"] else 0.0 for c in persistent]
+    max_motion = max(motions)
+
+    if adjacent_hist is not None:
+        best_score = -1.0
+        best_center: int | None = None
+        adj_f32 = adjacent_hist.astype(np.float32)
+        for cluster, motion in zip(persistent, motions, strict=True):
+            norm_m = motion / max_motion if max_motion > 1.0 else 0.0
+            h_corr = 0.0
+            if cluster["hists"]:
+                c_hist = np.mean(cluster["hists"], axis=0).astype(np.float32)
+                h_corr = max(0.0, float(cv2.compareHist(c_hist, adj_f32, cv2.HISTCMP_CORREL)))
+            score = 0.55 * norm_m + 0.45 * h_corr
+            if score > best_score:
+                best_score = score
+                best_center = int(round(float(np.median(cluster["centers"]))))
+        return best_center
+
+    ranked = sorted(
+        zip(motions, persistent, strict=True),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if ranked[0][0] >= 2.0 and (ranked[1][0] <= 0.0 or ranked[0][0] >= 1.25 * ranked[1][0]):
+        return int(round(float(np.median(ranked[0][1]["centers"]))))
+    return None
+
+
+def _detect_haar_faces(
+    cv2: Any,
+    frontal: Any,
+    profile: Any,
+    gray: Any,
+) -> list[tuple[int, int, int, int]]:
+    """Run frontal + profile + mirrored-profile Haar cascades, downscaling width > 960 px."""
+    height, width = gray.shape[:2]
+
+    def _run_boxes(classifier: Any, image: Any, min_side: int) -> list[tuple[int, int, int, int]]:
+        return [
+            (int(x), int(y), int(w), int(h))
+            for x, y, w, h in classifier.detectMultiScale(
+                image, scaleFactor=1.1, minNeighbors=5, minSize=(min_side, min_side)
+            )
+        ]
+
+    if width > _HAAR_MAX_DETECT_WIDTH:
+        scale = _HAAR_MAX_DETECT_WIDTH / float(width)
+        det_w = _HAAR_MAX_DETECT_WIDTH
+        det_h = max(1, int(round(height * scale)))
+        det_gray = cv2.resize(gray, (det_w, det_h), interpolation=cv2.INTER_AREA)
+        min_side = max(24, int(round(40 * scale)))
+        raw_faces = _run_boxes(frontal, det_gray, min_side) + _run_boxes(
+            profile, det_gray, min_side
+        )
+        flipped_profile = _run_boxes(profile, cv2.flip(det_gray, 1), min_side)
+        raw_faces += [(det_w - (x + w), y, w, h) for x, y, w, h in flipped_profile]
+        mapped: list[tuple[int, int, int, int]] = []
+        for x, y, w, h in raw_faces:
+            rx = max(0, min(width - 1, round(x / scale)))
+            ry = max(0, min(height - 1, round(y / scale)))
+            rw = max(1, min(width - rx, round(w / scale)))
+            rh = max(1, min(height - ry, round(h / scale)))
+            mapped.append((rx, ry, rw, rh))
+        return mapped
+
+    faces = _run_boxes(frontal, gray, 40) + _run_boxes(profile, gray, 40)
+    flipped = _run_boxes(profile, cv2.flip(gray, 1), 40)
+    faces += [(width - (x + w), y, w, h) for x, y, w, h in flipped]
+    return faces
+
+
+def _intra_shot_speaker_switch(
+    cv2: Any,
+    frames_in_shot: list[dict[str, Any]],
+    clusters: list[dict[str, Any]],
+    adjacent_hist: Any,
+    step_ms: float,
+) -> tuple[list[int], frozenset[int]] | None:
+    """Compute per-frame active cluster centres and switch indices on >= 5 s wide shots (D-357).
+
+    Returns ``(per_frame_center_x, switch_frame_indices)`` when a multi-person shot lasts at
+    least ``_INTRA_SHOT_MIN_DURATION_MS`` and an opening speaker cluster can be identified;
+    returns ``None`` otherwise so callers stay on the single-cluster shot path.
+    """
+    import numpy as np
+
+    persistent = _filter_person_clusters(clusters)
+    if len(persistent) < 2 or not frames_in_shot:
+        return None
+
+    step_ms_int = max(1, round(step_ms))
+    shot_start = int(frames_in_shot[0]["at"])
+    shot_end = int(frames_in_shot[-1]["at"])
+    shot_duration_ms = (shot_end - shot_start) + step_ms_int
+    if shot_duration_ms < _INTRA_SHOT_MIN_DURATION_MS:
+        return None
+
+    half_win = _ROLLING_MOTION_WINDOW_MS // 2
+    cluster_anchors = [int(round(float(np.median(c["centers"])))) for c in persistent]
+    cluster_samples: list[list[tuple[int, float]]] = [c["motion_samples"] for c in persistent]
+
+    rolling_motions: list[list[float]] = []
+    for obs in frames_in_shot:
+        t = int(obs["at"])
+        lo = t - half_win
+        hi = t + half_win
+        frame_m: list[float] = []
+        for samples in cluster_samples:
+            vals = [m for st, m in samples if lo <= st <= hi]
+            frame_m.append(float(np.mean(vals)) if vals else 0.0)
+        rolling_motions.append(frame_m)
+
+    # Pick opening active cluster: prefer a clear motion winner in the opening 2.5 s (or
+    # earliest active frame), falling back to `_select_active_cluster_center` with `adjacent_hist`.
+    opening_idx: int | None = None
+    opening_motions: list[float] = []
+    for samples in cluster_samples:
+        vals = [m for st, m in samples if shot_start <= st <= shot_start + 2_500]
+        opening_motions.append(float(np.mean(vals)) if vals else 0.0)
+    ranked_open = sorted(
+        enumerate(opening_motions),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if ranked_open[0][1] >= _SPEAKER_SWITCH_MIN_ENERGY and (
+        ranked_open[1][1] <= 0.0 or ranked_open[0][1] >= 1.25 * ranked_open[1][1]
+    ):
+        opening_idx = ranked_open[0][0]
+    else:
+        for frame_m in rolling_motions:
+            ranked_f = sorted(enumerate(frame_m), key=lambda item: item[1], reverse=True)
+            if ranked_f[0][1] >= _SPEAKER_SWITCH_MIN_ENERGY and (
+                ranked_f[1][1] <= 0.0 or ranked_f[0][1] >= 1.25 * ranked_f[1][1]
+            ):
+                opening_idx = ranked_f[0][0]
+                break
+    if opening_idx is None:
+        fallback_cx = _select_active_cluster_center(cv2, clusters, adjacent_hist)
+        if fallback_cx is None:
+            return None
+        opening_idx = min(
+            range(len(cluster_anchors)),
+            key=lambda idx: abs(cluster_anchors[idx] - fallback_cx),
+        )
+
+    active_idx = opening_idx
+    segments: list[tuple[int, int]] = [(0, active_idx)]
+    challenger_idx: int | None = None
+    challenger_start_idx = 0
+    challenger_start_ms = shot_start
+
+    for f_idx, obs in enumerate(frames_in_shot):
+        t = int(obs["at"])
+        frame_m = rolling_motions[f_idx]
+        cur_m = frame_m[active_idx]
+        best_other_idx = max(
+            (idx for idx in range(len(persistent)) if idx != active_idx),
+            key=lambda idx: frame_m[idx],
+        )
+        cand_m = frame_m[best_other_idx]
+        dominates = cand_m >= _SPEAKER_SWITCH_MIN_ENERGY and (
+            cur_m <= 0.0 or cand_m >= _SPEAKER_SWITCH_RATIO * cur_m
+        )
+        if dominates:
+            if challenger_idx != best_other_idx:
+                challenger_idx = best_other_idx
+                challenger_start_idx = f_idx
+                challenger_start_ms = t
+            elapsed_ms = (t + step_ms_int) - challenger_start_ms
+            if elapsed_ms >= _SPEAKER_SWITCH_DWELL_MS:
+                active_idx = challenger_idx
+                if challenger_start_idx > segments[-1][0]:
+                    segments.append((challenger_start_idx, active_idx))
+                else:
+                    segments[-1] = (segments[-1][0], active_idx)
+                challenger_idx = None
+        else:
+            challenger_idx = None
+
+    per_frame_cx: list[int] = [0] * len(frames_in_shot)
+    switch_indices: set[int] = set()
+    for seg_pos, (start_idx, c_idx) in enumerate(segments):
+        end_idx = segments[seg_pos + 1][0] if seg_pos + 1 < len(segments) else len(frames_in_shot)
+        anchor_cx = cluster_anchors[c_idx]
+        for idx in range(start_idx, end_idx):
+            per_frame_cx[idx] = anchor_cx
+        if seg_pos > 0:
+            switch_indices.add(start_idx)
+
+    return per_frame_cx, frozenset(switch_indices)
+
+
 class OpenCvFaceTracker:
     """Track the dominant continuous face at a bounded sampling rate.
 
@@ -279,6 +546,7 @@ class OpenCvFaceTracker:
         self.enable_tracker = enable_tracker
         self.detector_kind = detector_kind
         self.yunet_model_path = yunet_model_path
+        self.last_intra_shot_switches_ms: tuple[int, ...] = ()
 
     def track(
         self,
@@ -287,6 +555,7 @@ class OpenCvFaceTracker:
         out_ms: int,
         shot_cuts_ms: Sequence[int] = (),
     ) -> tuple[FocusPoint, ...]:
+        self.last_intra_shot_switches_ms = ()
         if out_ms <= in_ms:
             raise ValueError(f"reframe span has no duration: {in_ms}..{out_ms}ms")
         try:
@@ -331,19 +600,17 @@ class OpenCvFaceTracker:
         if not capture.isOpened():
             raise RuntimeError(f"OpenCV could not open {source} for subject tracking")
         step_ms = 1000 / self.sample_fps
-        points: list[FocusPoint] = []
-        previous: int | None = None
-        previous_at: int | None = None
-        tracker: Any = None
         cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
 
-        def boxes(classifier: Any, image: Any) -> list[tuple[int, int, int, int]]:
-            return [
-                (int(x), int(y), int(w), int(h))
-                for x, y, w, h in classifier.detectMultiScale(
-                    image, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40)
-                )
-            ]
+        # Single sequential forward pass: collect per-shot detections, mouth-motion energy,
+        # and torso HSV histograms so multi-person wide shots select the active speaker instead
+        # of locking onto a slightly larger silent listener.
+        shot_frames: list[list[dict[str, Any]]] = [[]]
+        shot_bounds: list[int] = [in_ms]
+        previous_at: int | None = None
+        prev_gray: Any = None
+        tracker: Any = None
+        legacy_prev: int | None = None
 
         try:
             at = float(in_ms)
@@ -354,13 +621,18 @@ class OpenCvFaceTracker:
                     and previous_at is not None
                     and any(previous_at < c <= at_int for c in cuts)
                 ):
-                    previous = None
+                    cut_ms = max(c for c in cuts if previous_at < c <= at_int)
+                    shot_frames.append([])
+                    shot_bounds.append(cut_ms)
+                    prev_gray = None
                     tracker = None
+                    legacy_prev = None
                 capture.set(cv2.CAP_PROP_POS_MSEC, at)
                 ok, frame = capture.read()
                 if not ok:
                     break
                 height, width = frame.shape[:2]
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 faces: list[tuple[int, int, int, int]] = []
                 if yunet_detector is not None:
                     try:
@@ -372,66 +644,243 @@ class OpenCvFaceTracker:
                     except Exception:
                         faces = []
                 if not faces:
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    faces = boxes(frontal, gray) + boxes(profile, gray)
-                    flipped_profile = boxes(profile, cv2.flip(gray, 1))
-                    faces += [(width - (x + w), y, w, h) for x, y, w, h in flipped_profile]
-                max_dist = int(width * 0.35) if previous is not None else None
-                chosen = choose_face(tuple(faces), previous, max_distance=max_dist)
-                if chosen is not None:
-                    center = chosen[0] + chosen[2] // 2
-                    # The detected centre, not a running mean of it. `stabilize` decides what
-                    # the camera does; this reports only what was seen. The vertical half of
-                    # the box travels with it: `render.vertical_framing` needs how far down the
-                    # frame the face sits and how much of it the face fills, and a tracker that
-                    # measured both and reported one is why the crop could only ever be centred.
-                    points.append(
-                        FocusPoint(round(at), center, chosen[1] + chosen[3] // 2, chosen[3])
-                    )
-                    previous = center
+                    faces = _detect_haar_faces(cv2, frontal, profile, gray)
+                # Drop background noise/blinds in upper edge (y < 8% frame height)
+                faces = [f for f in faces if f[1] >= int(height * 0.08)]
+
+                # Track optional OpenCV tracker fallback on single-speaker frames
+                tracked_box: tuple[int, int, int, int] | None = None
+                max_dist = int(width * 0.35) if legacy_prev is not None else None
+                legacy_chosen = choose_face(tuple(faces), legacy_prev, max_distance=max_dist)
+                if legacy_chosen is not None:
+                    legacy_prev = legacy_chosen[0] + legacy_chosen[2] // 2
                     if self.enable_tracker:
                         if tracker is None:
                             tracker = _create_tracker(cv2)
                         if tracker is not None:
                             try:
-                                tracker.init(frame, (chosen[0], chosen[1], chosen[2], chosen[3]))
+                                tracker.init(frame, legacy_chosen)
                             except Exception:
                                 tracker = None
                 elif self.enable_tracker and tracker is not None:
-                    tracked_ok = False
-                    bbox = None
                     try:
                         tracked_ok, bbox = tracker.update(frame)
                     except Exception:
+                        tracked_ok, bbox = False, None
                         tracker = None
                     if tracked_ok and bbox is not None:
                         bx, by, bw, bh = (int(v) for v in bbox)
                         center = bx + bw // 2
-                        # Drift check (CD-11): ensure tracker does not wander into dead zone
                         if (
                             bw > 0
                             and bh > 0
                             and bx + bw <= width
                             and by + bh <= height
-                            and (previous is None or abs(center - previous) <= width * 0.25)
+                            and (legacy_prev is None or abs(center - legacy_prev) <= width * 0.25)
                         ):
-                            points.append(FocusPoint(round(at), center, by + bh // 2, bh))
-                            previous = center
+                            tracked_box = (bx, by, bw, bh)
+                            legacy_prev = center
                         else:
                             tracker = None
-                            if previous is not None:
-                                points.append(FocusPoint(round(at), previous))
                     else:
                         tracker = None
-                        if previous is not None:
-                            points.append(FocusPoint(round(at), previous))
-                elif previous is not None:
-                    # CD-11: Hold last stable confirmed face position rather than dead zone
-                    points.append(FocusPoint(round(at), previous))
+
+                face_motions: list[float | None] = (
+                    [_lower_face_motion(cv2, prev_gray, gray, f) for f in faces]
+                    if prev_gray is not None
+                    else [None for _ in faces]
+                )
+                face_hists = [_torso_hsv_hist(cv2, frame, f) for f in faces]
+                shot_frames[-1].append(
+                    {
+                        "at": at_int,
+                        "width": width,
+                        "height": height,
+                        "faces": faces,
+                        "motions": face_motions,
+                        "hists": face_hists,
+                        "tracked_box": tracked_box,
+                    }
+                )
+                prev_gray = gray
                 previous_at = at_int
                 at += step_ms
         finally:
             capture.release()
+
+        import numpy as np
+
+        # Cluster spatially distinct faces within each shot and gather close-up histograms
+        shot_clusters: list[list[dict[str, Any]]] = []
+        shot_single_hist: dict[int, Any] = {}
+        for s_idx, frames_in_shot in enumerate(shot_frames):
+            clusters: list[dict[str, Any]] = []
+            for obs in frames_in_shot:
+                sep = max(60, int(obs["width"] * 0.16))
+                # Pick at most one (largest) box per existing/new cluster on this frame
+                frame_best: dict[int, tuple[tuple[int, int, int, int], float | None, Any]] = {}
+                for box, mot, hist in zip(obs["faces"], obs["motions"], obs["hists"], strict=True):
+                    cx = box[0] + box[2] // 2
+                    match_idx: int | None = None
+                    for c_idx, cl in enumerate(clusters):
+                        if abs(cx - cl["anchor"]) <= sep:
+                            match_idx = c_idx
+                            break
+                    if match_idx is None:
+                        clusters.append(
+                            {
+                                "anchor": cx,
+                                "centers": [],
+                                "widths": [],
+                                "motions": [],
+                                "motion_samples": [],
+                                "hists": [],
+                            }
+                        )
+                        match_idx = len(clusters) - 1
+                    area = box[2] * box[3]
+                    prev_entry = frame_best.get(match_idx)
+                    if prev_entry is None or area > prev_entry[0][2] * prev_entry[0][3]:
+                        frame_best[match_idx] = (box, mot, hist)
+                for c_idx, (box, mot, hist) in frame_best.items():
+                    cx = box[0] + box[2] // 2
+                    cl = clusters[c_idx]
+                    cl["centers"].append(cx)
+                    cl["widths"].append(box[2])
+                    cl["anchor"] = int(round(float(np.median(cl["centers"]))))
+                    if mot is not None:
+                        cl["motions"].append(mot)
+                        cl["motion_samples"].append((int(obs["at"]), mot))
+                    if hist is not None:
+                        cl["hists"].append(hist)
+            shot_clusters.append(clusters)
+            persistent = _filter_person_clusters(clusters)
+            if len(persistent) == 1 and persistent[0]["hists"]:
+                shot_single_hist[s_idx] = np.mean(persistent[0]["hists"], axis=0)
+            elif not persistent and len(clusters) == 1 and clusters[0]["hists"]:
+                shot_single_hist[s_idx] = np.mean(clusters[0]["hists"], axis=0)
+
+        shot_has_face = [
+            bool(
+                any(f[2] * f[3] >= MIN_FACE_AREA for obs in frames_in_shot for f in obs["faces"])
+                or any(obs["tracked_box"] is not None for obs in frames_in_shot)
+            )
+            for frames_in_shot in shot_frames
+        ]
+        if not any(shot_has_face):
+            return ()
+
+        points: list[FocusPoint] = []
+        intra_switches: list[int] = []
+        motion_fps = min(max(self.sample_fps, 2.0), 5.0)
+        for s_idx, frames_in_shot in enumerate(shot_frames):
+            if not frames_in_shot:
+                continue
+            if not shot_has_face[s_idx]:
+                # D-361: Frame zero-face cutaway shots inside multi-shot clips via motion saliency
+                # instead of blindly holding the prior shot's speaker position.
+                shot_start_ms = shot_bounds[s_idx]
+                if s_idx + 1 < len(shot_bounds):
+                    last_at = int(frames_in_shot[-1]["at"])
+                    next_cut = min(
+                        (c for c in cuts if c > last_at),
+                        default=shot_bounds[s_idx + 1],
+                    )
+                    shot_end_ms = min(next_cut, shot_bounds[s_idx + 1])
+                else:
+                    shot_end_ms = out_ms
+                if shot_end_ms > shot_start_ms:
+                    motion_pts = detect_motion_focus_points(
+                        source,
+                        shot_start_ms,
+                        shot_end_ms,
+                        sample_fps=motion_fps,
+                    )
+                    if motion_pts:
+                        entry_ms = (
+                            max(shot_start_ms, points[-1].at_ms + 1) if points else shot_start_ms
+                        )
+                        if entry_ms < shot_end_ms:
+                            if points and entry_ms - 1 > points[-1].at_ms:
+                                prev_pt = points[-1]
+                                points.append(
+                                    FocusPoint(
+                                        entry_ms - 1,
+                                        prev_pt.center_x,
+                                        prev_pt.center_y,
+                                        prev_pt.face_height,
+                                    )
+                                )
+                            points.append(FocusPoint(entry_ms, motion_pts[0].center_x))
+                            for mp in motion_pts:
+                                mp_at = min(mp.at_ms, shot_end_ms - 1)
+                                if mp_at > points[-1].at_ms:
+                                    points.append(FocusPoint(mp_at, mp.center_x))
+                            shot_tail_ms = min(int(frames_in_shot[-1]["at"]), shot_end_ms - 1)
+                            if shot_tail_ms > points[-1].at_ms:
+                                points.append(FocusPoint(shot_tail_ms, points[-1].center_x))
+                continue
+            adj_hist: Any = None
+            if shot_single_hist:
+                nearest_idx = min(shot_single_hist.keys(), key=lambda idx: abs(idx - s_idx))
+                if nearest_idx != s_idx:
+                    adj_hist = shot_single_hist[nearest_idx]
+            switch_plan = _intra_shot_speaker_switch(
+                cv2, frames_in_shot, shot_clusters[s_idx], adj_hist, step_ms
+            )
+            default_active_cx = (
+                None
+                if switch_plan is not None
+                else _select_active_cluster_center(cv2, shot_clusters[s_idx], adj_hist)
+            )
+            previous: int | None = None
+            for f_idx, obs in enumerate(frames_in_shot):
+                width = obs["width"]
+                sep = max(60, int(width * 0.16))
+                active_cx = switch_plan[0][f_idx] if switch_plan is not None else default_active_cx
+                is_switch_frame = switch_plan is not None and f_idx in switch_plan[1]
+                if is_switch_frame:
+                    previous = None
+                cand_faces: Sequence[tuple[int, int, int, int]] = obs["faces"]
+                if active_cx is not None:
+                    cand_faces = [
+                        f for f in cand_faces if abs((f[0] + f[2] // 2) - active_cx) <= sep
+                    ]
+                max_dist = int(width * 0.35) if previous is not None else None
+                chosen = choose_face(tuple(cand_faces), previous, max_distance=max_dist)
+                if is_switch_frame:
+                    assert active_cx is not None
+                    new_cx = chosen[0] + chosen[2] // 2 if chosen is not None else active_cx
+                    new_cy = chosen[1] + chosen[3] // 2 if chosen is not None else None
+                    new_h = chosen[3] if chosen is not None else None
+                    if points and obs["at"] - 1 > points[-1].at_ms:
+                        prev_pt = points[-1]
+                        points.append(
+                            FocusPoint(
+                                obs["at"] - 1,
+                                prev_pt.center_x,
+                                prev_pt.center_y,
+                                prev_pt.face_height,
+                            )
+                        )
+                    points.append(FocusPoint(obs["at"], new_cx, new_cy, new_h))
+                    intra_switches.append(int(obs["at"]))
+                    previous = new_cx
+                elif chosen is not None:
+                    center = chosen[0] + chosen[2] // 2
+                    points.append(
+                        FocusPoint(obs["at"], center, chosen[1] + chosen[3] // 2, chosen[3])
+                    )
+                    previous = center
+                elif active_cx is None and obs["tracked_box"] is not None:
+                    bx, by, bw, bh = obs["tracked_box"]
+                    center = bx + bw // 2
+                    points.append(FocusPoint(obs["at"], center, by + bh // 2, bh))
+                    previous = center
+                elif previous is not None:
+                    # CD-11: Hold last stable confirmed face position rather than dead zone
+                    points.append(FocusPoint(obs["at"], previous))
+        self.last_intra_shot_switches_ms = tuple(intra_switches)
         return tuple(points)
 
 
@@ -608,7 +1057,11 @@ class MotionSpeakerTracker:
                         (width - (x + w), y, w, h)
                         for x, y, w, h in boxes(profile, cv2.flip(gray, 1))
                     ]
-                valid_faces = [f for f in faces if f[2] * f[3] >= self.min_face_area]
+                valid_faces = [
+                    f
+                    for f in faces
+                    if f[2] * f[3] >= self.min_face_area and f[1] >= int(height * 0.08)
+                ]
 
                 # Deduplicate overlapping face boxes
                 deduped_faces: list[tuple[int, int, int, int]] = []
@@ -889,6 +1342,48 @@ def median_face_box(points: Sequence[FocusPoint]) -> tuple[int | None, int | Non
     return verticals[len(verticals) // 2], heights[len(heights) // 2]
 
 
+def per_shot_face_boxes(
+    points: Sequence[FocusPoint],
+    shot_cuts_ms: Sequence[int] = (),
+    clip_in_ms: int = 0,
+    clip_out_ms: int | None = None,
+) -> tuple[tuple[int, int, int | None, int | None], ...]:
+    """Compute (start_ms, end_ms, center_y, face_height) per camera shot interval.
+
+    When shot_cuts_ms is empty, returns a single interval for the whole clip.
+    When camera cuts exist within the clip, each shot gets its own median face box,
+    enabling adaptive zoom on wide shots without vertical shimmer within shots. D-281.
+    """
+    if not points:
+        end_ms = clip_out_ms if clip_out_ms is not None else clip_in_ms
+        return ((clip_in_ms, end_ms, None, None),)
+
+    end_ms = clip_out_ms if clip_out_ms is not None else max(p.at_ms for p in points)
+    global_y, global_h = median_face_box(points)
+
+    cuts_in_range = sorted(c for c in shot_cuts_ms if clip_in_ms < c < end_ms)
+    if not cuts_in_range:
+        return ((clip_in_ms, end_ms, global_y, global_h),)
+
+    boundaries = [clip_in_ms, *cuts_in_range, end_ms]
+    results: list[tuple[int, int, int | None, int | None]] = []
+    for s_in, s_out in pairwise(boundaries):
+        shot_pts = [p for p in points if s_in <= p.at_ms < s_out]
+        if shot_pts:
+            s_y, s_h = median_face_box(shot_pts)
+            results.append(
+                (
+                    s_in,
+                    s_out,
+                    s_y if s_y is not None else global_y,
+                    s_h if s_h is not None else global_h,
+                )
+            )
+        else:
+            results.append((s_in, s_out, global_y, global_h))
+    return tuple(results)
+
+
 def stabilize(
     points: Sequence[FocusPoint],
     *,
@@ -898,6 +1393,8 @@ def stabilize(
     shot_cuts_ms: Sequence[int] = (),
     max_pan_px: int | None = None,
     cut_on_max_pan: bool = False,
+    edge_guard_px: int | None = None,
+    edge_settle_ms: int = 250,
 ) -> tuple[FocusPoint, ...]:
     """Turn a per-sample face track into a camera path that holds still and then moves.
 
@@ -913,6 +1410,11 @@ def stabilize(
     not a detector flicker or a turn of the head. The new position is the *median* of that
     window, which a single wild detection cannot drag.
 
+    When `edge_guard_px` is set and the subject drifts at least `edge_guard_px` from the held
+    centre (leaning toward the crop boundary, D-361), the shorter `edge_settle_ms` window and
+    a faster smooth follow (`min(move_ms, 350)`) engage so the camera follows before the face
+    is clipped, while staying 100% tripod-locked inside `dead_zone_px`.
+
     Across Stage 0 shot cuts, changes are executed as instant cut steps rather than slow
     interpolated pans, preventing jarring camera movement over scene transitions or empty
     furniture across wide two-shots.
@@ -923,7 +1425,8 @@ def stabilize(
     and this must never invent one.
 
     Raises:
-        ValueError: a non-positive dead zone or duration, or timestamps that do not increase.
+        ValueError: a non-positive dead zone, edge guard, or duration, or timestamps that do
+            not increase.
     """
     if dead_zone_px <= 0:
         raise ValueError("dead zone must be positive")
@@ -931,6 +1434,10 @@ def stabilize(
         raise ValueError("camera move duration must be positive")
     if settle_ms <= 0:
         raise ValueError("settle duration must be positive")
+    if edge_guard_px is not None and edge_guard_px <= 0:
+        raise ValueError("edge guard must be positive")
+    if edge_settle_ms <= 0:
+        raise ValueError("edge settle duration must be positive")
     if not points:
         return ()
     for earlier, later in pairwise(points):
@@ -941,13 +1448,19 @@ def stabilize(
     keyframes: list[FocusPoint] = [FocusPoint(points[0].at_ms, held)]
     pending: list[FocusPoint] = []
     cuts = sorted(c for c in shot_cuts_ms if points[0].at_ms <= c <= points[-1].at_ms)
+    prev_point = points[0]
 
     for point in points[1:]:
         recent_cuts = [c for c in cuts if keyframes[-1].at_ms < c <= point.at_ms]
+        is_explicit_step = (
+            1 <= point.at_ms - prev_point.at_ms <= 2
+            and abs(prev_point.center_x - held) <= dead_zone_px
+        )
 
         if abs(point.center_x - held) <= dead_zone_px:
             # Back inside the dead zone: whatever was building was a wobble, not a move.
             pending.clear()
+            prev_point = point
             continue
         pending.append(point)
 
@@ -960,15 +1473,31 @@ def stabilize(
             keyframes.append(FocusPoint(max(cut_time + 1, keyframes[-1].at_ms + 1), target))
             held = target
             pending.clear()
+            prev_point = point
             continue
 
-        if point.at_ms - pending[0].at_ms < settle_ms:
+        # Preserve explicit <= 2 ms intra-shot hard-cut steps emitted by active-speaker switching
+        if is_explicit_step:
+            target = point.center_x
+            if prev_point.at_ms > keyframes[-1].at_ms:
+                keyframes.append(FocusPoint(prev_point.at_ms, held))
+            keyframes.append(FocusPoint(max(point.at_ms, keyframes[-1].at_ms + 1), target))
+            held = target
+            pending.clear()
+            prev_point = point
+            continue
+
+        in_edge_danger = edge_guard_px is not None and abs(point.center_x - held) >= edge_guard_px
+        effective_settle_ms = min(settle_ms, edge_settle_ms) if in_edge_danger else settle_ms
+        if point.at_ms - pending[0].at_ms < effective_settle_ms:
+            prev_point = point
             continue
         centers = sorted(candidate.center_x for candidate in pending)
         target = centers[len(centers) // 2]
         start = pending[0].at_ms
+        effective_move_ms = min(move_ms, 350) if in_edge_danger else move_ms
 
-        cuts_in_move = [c for c in cuts if start <= c <= start + move_ms]
+        cuts_in_move = [c for c in cuts if start <= c <= start + effective_move_ms]
 
         # Prevent slow panning across distant empty space on a continuous shot
         if not cuts_in_move and max_pan_px is not None and abs(target - held) > max_pan_px:
@@ -978,6 +1507,7 @@ def stabilize(
                 keyframes.append(FocusPoint(max(start + 1, keyframes[-1].at_ms + 1), target))
                 held = target
             pending.clear()
+            prev_point = point
             continue
 
         if cuts_in_move:
@@ -990,14 +1520,115 @@ def stabilize(
             # position. Equal-valued neighbours are what make the interpolation flat.
             if start > keyframes[-1].at_ms:
                 keyframes.append(FocusPoint(start, held))
-            keyframes.append(FocusPoint(max(start + move_ms, keyframes[-1].at_ms + 1), target))
+            keyframes.append(
+                FocusPoint(max(start + effective_move_ms, keyframes[-1].at_ms + 1), target)
+            )
         held = target
         pending.clear()
+        prev_point = point
 
     last = points[-1].at_ms
     if last > keyframes[-1].at_ms:
         keyframes.append(FocusPoint(last, held))
     return tuple(keyframes)
+
+
+def detect_motion_focus_points(
+    source: Path,
+    in_ms: int,
+    out_ms: int,
+    *,
+    sample_fps: float = 2.0,
+) -> tuple[FocusPoint, ...]:
+    """Track non-face visual action via OpenCV frame-difference motion saliency (D-357).
+
+    Computes the energy-weighted horizontal centroid of inter-frame luma differences across
+    ``[in_ms, out_ms)`` and passes the raw centroid track through :func:`stabilize`. Returns
+    an empty tuple when the span is visually static so callers never fabricate motion.
+    """
+    _exact_non_negative_int(in_ms, "motion-tracking in-point")
+    _exact_non_negative_int(out_ms, "motion-tracking out-point")
+    if out_ms <= in_ms:
+        raise ValueError(f"motion-tracking span has no duration: {in_ms}..{out_ms}ms")
+    if sample_fps <= 0 or not math.isfinite(sample_fps):
+        raise ValueError("motion-tracking fps must be finite and positive")
+
+    try:
+        import cv2 as imported_cv2
+    except ImportError as exc:
+        raise RuntimeError("motion tracking needs the media extra (OpenCV)") from exc
+    import numpy as np
+
+    cv2: Any = imported_cv2
+    capture = cv2.VideoCapture(str(source))
+    if not capture.isOpened():
+        raise RuntimeError(f"OpenCV could not open {source} for motion tracking")
+
+    step_ms = 1000.0 / sample_fps
+    raw_points: list[FocusPoint] = []
+    prev_blur: Any = None
+    previous_at: int | None = None
+    frame_width = 0
+    frame_height = 0
+
+    try:
+        at = float(in_ms)
+        while at < out_ms:
+            at_int = round(at)
+            if at_int >= out_ms:
+                break
+            if previous_at is not None and at_int <= previous_at:
+                at_int = previous_at + 1
+                if at_int >= out_ms:
+                    break
+            capture.set(cv2.CAP_PROP_POS_MSEC, at)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                break
+            height, width = frame.shape[:2]
+            frame_width, frame_height = width, height
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            det_w = min(width, 480)
+            scale = det_w / float(width)
+            if det_w < width:
+                det_h = max(1, int(round(height * scale)))
+                small = cv2.resize(gray, (det_w, det_h), interpolation=cv2.INTER_AREA)
+            else:
+                small = gray
+            blur = cv2.GaussianBlur(small, (5, 5), 0)
+
+            if prev_blur is not None and blur.shape == prev_blur.shape:
+                diff = cv2.absdiff(prev_blur, blur)
+                active_mask = diff >= 18
+                active_count = int(np.count_nonzero(active_mask))
+                if active_count > 0:
+                    active_ratio = active_count / float(diff.size)
+                    mean_active = float(diff[active_mask].mean())
+                    if active_ratio >= 0.001 and mean_active >= 20.0:
+                        weights = np.where(active_mask, diff.astype(np.float64), 0.0)
+                        col_weights = weights.sum(axis=0)
+                        total_w = float(col_weights.sum())
+                        if total_w > 0.0:
+                            xs = np.arange(det_w, dtype=np.float64)
+                            cx_small = float(np.dot(col_weights, xs) / total_w)
+                            cx = max(0, min(width - 1, round(cx_small / scale)))
+                            raw_points.append(FocusPoint(at_int, cx))
+                            previous_at = at_int
+
+            prev_blur = blur
+            at += step_ms
+    finally:
+        capture.release()
+
+    if not raw_points:
+        return ()
+    crop_w = min(frame_width, max(2, int(frame_height * 9 / 16)))
+    return stabilize(
+        raw_points,
+        dead_zone_px=max(1, crop_w // 8),
+        move_ms=DEFAULT_MOVE_MS,
+        settle_ms=DEFAULT_SETTLE_MS,
+    )
 
 
 def detect_rapid_speaker_exchange(
@@ -1138,7 +1769,8 @@ def layout_policy(
     shot_cuts_ms: Sequence[int] = (),
     max_pan_px: int | None = None,
     cut_on_max_pan: bool = True,
-    min_confidence: float = 0.6,
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+    edge_guard_px: int | None = None,
 ) -> tuple[FocusPoint, ...]:
     """Derive stable camera keyframes obeying persistence policy on brief variations.
 
@@ -1185,6 +1817,24 @@ def layout_policy(
     if not overlapping_turns:
         return ()
 
+    cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
+    # Observed shots need their own speaking evidence; coordinates cannot cross scene cuts.
+    observed_shots: dict[int, bool] = {}
+    for p in points:
+        active = next((t for t in overlapping_turns if t.start_ms <= p.at_ms < t.end_ms), None)
+        if active is None:
+            continue
+        shot = bisect_right(cuts, p.at_ms)
+        verified = (
+            p.speaker == active.speaker
+            and p.state == "speaker"
+            and p.is_speaking
+            and p.confidence >= min_confidence
+        )
+        observed_shots[shot] = observed_shots.get(shot, False) or verified
+    if not all(observed_shots.values()):
+        return ()
+
     # Identify sustained speaker cut boundaries
     sustained_speaker_cuts: list[int] = []
     prev_turn_speaker: str | None = None
@@ -1213,7 +1863,6 @@ def layout_policy(
             if prev_turn_speaker is None or dur >= min_dwell_ms:
                 prev_turn_speaker = turn.speaker
 
-    cuts = sorted(c for c in shot_cuts_ms if in_ms <= c <= out_ms)
     all_cuts = sorted(set(cuts) | set(sustained_speaker_cuts))
 
     filtered_points: list[FocusPoint] = []
@@ -1264,10 +1913,11 @@ def layout_policy(
             # Ambiguous frame on transition: hold last confirmed center
             resolved_center = held_center
         else:
+            if not is_verified_speaker:
+                continue
             resolved_center = p.center_x
             held_center = p.center_x
-            if is_verified_speaker:
-                established_speaker = active_turn.speaker
+            established_speaker = active_turn.speaker
 
         filtered_points.append(FocusPoint(p.at_ms, resolved_center))
         last_pt_time = p.at_ms
@@ -1283,4 +1933,5 @@ def layout_policy(
         shot_cuts_ms=all_cuts,
         max_pan_px=max_pan_px,
         cut_on_max_pan=cut_on_max_pan,
+        edge_guard_px=edge_guard_px,
     )

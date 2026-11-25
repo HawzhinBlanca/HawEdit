@@ -176,7 +176,7 @@ def test_validate_ratings_schema_and_boundaries() -> None:
 
 
 def test_analyze_study_better_than_a_team_criterion() -> None:
-    """Task T5.1: 'Better than a team' requires Wilson CI lower bound > 50%."""
+    """Pooled references preserve votes but cannot authorize independent superiority."""
     unblinding = {
         "pair_01": {"A": "system", "B": "human"},
         "pair_02": {"A": "system", "B": "human"},
@@ -185,7 +185,7 @@ def test_analyze_study_better_than_a_team_criterion() -> None:
         "pair_05": {"A": "human", "B": "system"},
     }
 
-    # Scenario 1: Dominant system performance across 20 raters (95% win rate)
+    # Scenario 1: 90% preference under labels, not verified independent raters.
     # 20 raters rating 5 pairs each = 100 total comparisons
     # System wins 90, human wins 10
     dominant_ratings = []
@@ -217,8 +217,14 @@ def test_analyze_study_better_than_a_team_criterion() -> None:
     assert metrics_win.total_comparisons == 100
     assert metrics_win.system_wins == 90
     assert metrics_win.system_win_rate == 0.90
-    assert metrics_win.ci_lower > 0.50  # Lower bound ~0.82 > 0.50
-    assert metrics_win.better_than_a_team is True
+    assert metrics_win.independent_reference_ci_lower > 0.50
+    assert metrics_win.ci_lower is None and metrics_win.ci_upper is None
+    assert metrics_win.better_than_a_team is False
+    assert metrics_win.nominal_reviewers == 20
+    assert metrics_win.distinct_pairs == 5
+    assert metrics_win.hook_mean_diff is None
+    assert metrics_win.clarity_mean_diff is None
+    assert metrics_win.shareability_mean_diff is None
 
     # Scenario 2: Marginal majority (55% win rate, N=20 raters rating 1 pair = 20 comparisons)
     # 11 wins, 9 losses -> win_rate = 0.55
@@ -244,12 +250,13 @@ def test_analyze_study_better_than_a_team_criterion() -> None:
     metrics_marginal = analyze_study(sub_marginal, {"pair_01": {"A": "system", "B": "human"}})
     assert metrics_marginal.system_win_rate == 0.55
     # Wilson CI lower bound is ~0.34 < 0.50
-    assert metrics_marginal.ci_lower < 0.50
+    assert metrics_marginal.independent_reference_ci_lower < 0.50
+    assert metrics_marginal.ci_lower is None and metrics_marginal.ci_upper is None
     assert metrics_marginal.better_than_a_team is False  # Cannot claim "Better than a team"
 
 
 def test_export_to_qc_records_integration(tmp_path: Path) -> None:
-    """Task T5.1: Review export creates valid QcRecord objects (Task T1.3)."""
+    """Comparative preference cannot invent watched time or fidelity approval."""
     candidates = [
         PairCandidate(
             pair_id="pair_01",
@@ -277,12 +284,11 @@ def test_export_to_qc_records_integration(tmp_path: Path) -> None:
         ),
     )
 
-    records = export_to_qc_records(sub, study)
-    assert len(records) == 1
-    qc = records[0]
-    assert qc.reviewer == "هێمن موکریانی"
-    assert qc.reviewed_at == "2026-09-04T14:30:00Z"
-    assert qc.mp4_sha256 == study.items[0].sha256_a
-    assert qc.verdict == "pass"
-    assert "Hook: 5/5" in qc.notes
-    assert qc.to_dict()["reviewer"] == "هێمن موکریانی"
+    before = study.items[0].blinded_path_a.read_bytes()
+    with pytest.raises(ComparisonKitError, match="preference.*QC.*authenticated"):
+        export_to_qc_records(sub, study)
+    assert study.items[0].blinded_path_a.read_bytes() == before
+    assert sub.reviewer_name == "هێمن موکریانی"
+    assert sub.submitted_at_iso == "2026-09-04T14:30:00Z"
+    assert sub.ratings[0].hook_score == 5
+    assert sub.ratings[0].notes == "بەهێزە"

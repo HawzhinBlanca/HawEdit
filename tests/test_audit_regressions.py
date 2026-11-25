@@ -11,7 +11,6 @@ registry membership instead of role, absence instead of refusal.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -215,7 +214,11 @@ def test_karaoke_timings_cover_the_silence_between_words() -> None:
         complete=True,
     )
     ass = build_ass((spoken,), style=CaptionStyle.WORD_HIGHLIGHT)
-    events = ass.split("[Events]")[1]
-    assert "{\\kf100}" in events, "the 1 s pause must be held by its own karaoke span"
-    total = sum(int(n) for n in re.findall(r"\\kf(\d+)", events))
-    assert total == 200, "karaoke spans must tile the full 2 s line, gaps included"
+    layer4 = [line for line in ass.splitlines() if line.startswith("Dialogue: 4,")]
+    assert len(layer4) == 2
+    assert layer4[0].startswith("Dialogue: 4,0:00:00.00,0:00:02.00,"), layer4[0]
+    assert "\\t(0,500,\\clip(" in layer4[0], layer4[0]
+    assert layer4[1].startswith("Dialogue: 4,0:00:01.50,0:00:02.00,"), (
+        "the 1 s pause must delay word 2's highlight start to 1.50 s"
+    )
+    assert "\\t(0,500,\\clip(" in layer4[1], layer4[1]

@@ -17,6 +17,7 @@ from hawedit.clip import DiscoveryPath
 from hawedit.discovery import Candidate
 from hawedit.events import JsonlEventSink, RunEvent, RunEventLog, RunState, read_events
 from hawedit.judge import (
+    KURDISH_EDITORIAL_JUDGE,
     BilledCall,
     JudgeRequest,
     JudgeVerdict,
@@ -62,7 +63,7 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
         title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
         description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
         hashtags_ckb=("#کوردی",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=clip_in_ms,
         clip_out_ms=clip_out_ms,
     )
@@ -76,7 +77,7 @@ class MockPathADiscoverer:
 
     def __call__(self, transcript: Any) -> tuple[Candidate, ...]:
         call = BilledCall(
-            model="gemini-2.5-pro",
+            model=KURDISH_EDITORIAL_JUDGE,
             tokens=self.tokens,
             cost_usd_estimate=estimate_cost_usd(self.tokens),
             stage="discovery",
@@ -90,7 +91,7 @@ class MockJudgeWithCount:
     def __init__(self, verdict: JudgeVerdict, tokens: int = 4000) -> None:
         self.verdict = verdict
         self.tokens = tokens
-        self.model_id = "gemini-2.5-pro"
+        self.model_id = KURDISH_EDITORIAL_JUDGE
         self.last_billed_call: BilledCall | None = None
 
     def judge_with_count(self, request: JudgeRequest) -> tuple[int, JudgeVerdict]:
@@ -112,21 +113,25 @@ def test_billed_call_validates_invariants() -> None:
     with pytest.raises(ValueError, match="model cannot be empty"):
         BilledCall(model="  ", tokens=100, cost_usd_estimate=0.0002, stage="editorial")
     with pytest.raises(ValueError, match="tokens must be non-negative"):
-        BilledCall(model="gemini-2.5-pro", tokens=-1, cost_usd_estimate=0.0002, stage="editorial")
+        BilledCall(
+            model=KURDISH_EDITORIAL_JUDGE, tokens=-1, cost_usd_estimate=0.0002, stage="editorial"
+        )
     with pytest.raises(ValueError, match="cost_usd_estimate cannot be negative"):
-        BilledCall(model="gemini-2.5-pro", tokens=100, cost_usd_estimate=-0.1, stage="editorial")
+        BilledCall(
+            model=KURDISH_EDITORIAL_JUDGE, tokens=100, cost_usd_estimate=-0.1, stage="editorial"
+        )
     with pytest.raises(ValueError, match="stage cannot be empty"):
-        BilledCall(model="gemini-2.5-pro", tokens=100, cost_usd_estimate=0.0002, stage="  ")
+        BilledCall(model=KURDISH_EDITORIAL_JUDGE, tokens=100, cost_usd_estimate=0.0002, stage="  ")
 
     call = BilledCall(
-        model="gemini-2.5-pro",
+        model=KURDISH_EDITORIAL_JUDGE,
         tokens=1000,
         cost_usd_estimate=0.002,
         stage="discovery",
         candidate_id="cand-1",
     )
     d = call.to_dict()
-    assert d["model"] == "gemini-2.5-pro"
+    assert d["model"] == KURDISH_EDITORIAL_JUDGE
     assert d["tokens"] == 1000
     assert d["cost_usd_estimate"] == 0.002
     assert d["stage"] == "discovery"
@@ -141,7 +146,7 @@ def test_run_event_billed_state_roundtrips_through_jsonl(tmp_path: Path) -> None
     log.started("discovery")
     billed_event = log.billed(
         stage="discovery",
-        model="gemini-2.5-pro",
+        model=KURDISH_EDITORIAL_JUDGE,
         tokens=2500,
         cost_usd_estimate=estimate_cost_usd(2500),
         candidate_id="cand-123",
@@ -150,13 +155,13 @@ def test_run_event_billed_state_roundtrips_through_jsonl(tmp_path: Path) -> None
 
     assert billed_event.state is RunState.BILLED
     assert billed_event.tokens == 2500
-    assert billed_event.model == "gemini-2.5-pro"
+    assert billed_event.model == KURDISH_EDITORIAL_JUDGE
 
     read_back = read_events(ledger)
     assert len(read_back) == 3
     event_read = read_back[1]
     assert event_read.state is RunState.BILLED
-    assert event_read.model == "gemini-2.5-pro"
+    assert event_read.model == KURDISH_EDITORIAL_JUDGE
     assert event_read.tokens == 2500
     assert event_read.cost_usd_estimate == pytest.approx(estimate_cost_usd(2500))
     assert event_read.candidate_id == "cand-123"
@@ -197,12 +202,12 @@ def test_every_billed_call_is_in_the_run_report(
     disc_call, judge_call = run.billed_calls
 
     assert disc_call.stage == "discovery"
-    assert disc_call.model == "gemini-2.5-pro"
+    assert disc_call.model == KURDISH_EDITORIAL_JUDGE
     assert disc_call.tokens == 2000
     assert disc_call.cost_usd_estimate == pytest.approx(estimate_cost_usd(2000))
 
     assert judge_call.stage == "editorial"
-    assert judge_call.model == "gemini-2.5-pro"
+    assert judge_call.model == KURDISH_EDITORIAL_JUDGE
     assert judge_call.tokens == 4000
     assert judge_call.cost_usd_estimate == pytest.approx(estimate_cost_usd(4000))
 

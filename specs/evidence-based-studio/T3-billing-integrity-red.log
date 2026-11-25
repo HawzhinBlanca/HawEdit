@@ -1,0 +1,60 @@
+.........................FFF....                                         [100%]
+================================== FAILURES ===================================
+________ test_studio_billing_corrupt_reservation_cannot_restore_budget ________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6991/test_studio_billing_corrupt_re0')
+api = <test_studio_billing.LocalProtocol object at 0x000001D1B820DAF0>
+
+    def test_studio_billing_corrupt_reservation_cannot_restore_budget(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        p = replace(policy(), pool_microusd=2 * 328973)
+        guard(tmp_path, api, p)(BASE + ":generateContent", payload(), {})
+        with sqlite3.connect(tmp_path / "billing.sqlite3") as db:
+            db.execute("UPDATE calls SET reservation_microusd=1")
+>       with pytest.raises(StudioStorageError, match="reservation"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_billing.py:365: Failed
+________ test_studio_billing_existing_job_cannot_change_authorization _________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6991/test_studio_billing_existing_j0')
+api = <test_studio_billing.LocalProtocol object at 0x000001D1F35380E0>
+
+    def test_studio_billing_existing_job_cannot_change_authorization(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        p = policy()
+        guard(tmp_path, api, p)(BASE + ":generateContent", payload(), {})
+>       with pytest.raises(StudioStorageError, match="policy"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_billing.py:377: Failed
+_________ test_studio_billing_expiry_during_count_prevents_generation _________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6991/test_studio_billing_expiry_dur0')
+api = <test_studio_billing.LocalProtocol object at 0x000001D1F3538470>
+
+    def test_studio_billing_expiry_during_count_prevents_generation(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        p = replace(policy(), expires_at=int(time.time()) + 1)
+    
+        def slow_count(url: str, body: bytes | None, headers: Mapping[str, str]) -> tuple[int, str]:
+            result = api.transport(url, body, headers)
+            if url.endswith(":countTokens"):
+                time.sleep(max(0, p.expires_at - time.time()) + 0.05)
+            return result
+    
+        guarded = GuardedGeminiTransport(tmp_path / "billing.sqlite3", JOB, p, slow_count)
+>       with pytest.raises(ExternalReconciliationError, match="expired"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ExternalReconciliationError
+
+tests\test_studio_billing.py:396: Failed
+=========================== short test summary info ===========================
+FAILED tests/test_studio_billing.py::test_studio_billing_corrupt_reservation_cannot_restore_budget
+FAILED tests/test_studio_billing.py::test_studio_billing_existing_job_cannot_change_authorization
+FAILED tests/test_studio_billing.py::test_studio_billing_expiry_during_count_prevents_generation

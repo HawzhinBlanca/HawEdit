@@ -1,0 +1,96 @@
+.............................FFFF...............                         [100%]
+================================== FAILURES ===================================
+_________ test_studio_billing_private_root_required_before_any_egress _________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7028/test_studio_billing_private_ro0')
+api = <test_studio_billing.LocalProtocol object at 0x000001F366726990>
+
+    def test_studio_billing_private_root_required_before_any_egress(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        directory = tmp_path / "ordinary-inherited-root"
+        directory.mkdir()
+        if os.name != "nt":
+            directory.chmod(0o755)
+        path = directory / "billing.sqlite3"
+>       with pytest.raises(StudioStorageError, match="private"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_billing.py:491: Failed
+_________________ test_studio_billing_linked_database_refused _________________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7028/test_studio_billing_linked_dat0')
+api = <test_studio_billing.LocalProtocol object at 0x000001F366727860>
+
+    def test_studio_billing_linked_database_refused(tmp_path: Path, api: LocalProtocol) -> None:
+        path = private_billing_path(tmp_path)
+        GuardedGeminiTransport(path, JOB, policy(), api.transport)
+        alias = tmp_path / "outside-journal.sqlite3"
+        os.link(path, alias)
+        before = path.read_bytes()
+>       with pytest.raises(StudioStorageError, match="linked|private"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StudioStorageError
+
+tests\test_studio_billing.py:503: Failed
+__ test_studio_billing_database_replacement_during_count_refuses_generation ___
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7028/test_studio_billing_database_r0')
+api = <test_studio_billing.LocalProtocol object at 0x000001F36674F860>
+
+    def test_studio_billing_database_replacement_during_count_refuses_generation(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        path = private_billing_path(tmp_path)
+    
+        def replace_after_count(
+            url: str, body: bytes | None, headers: Mapping[str, str]
+        ) -> tuple[int, str]:
+            result = api.transport(url, body, headers)
+            if url.endswith(":countTokens"):
+                clone = path.with_name("replacement.sqlite3")
+                seed_private_file(clone, path.read_bytes())
+                os.replace(clone, path)
+            return result
+    
+        guarded = GuardedGeminiTransport(path, JOB, policy(), replace_after_count)
+>       with pytest.raises(ExternalReconciliationError, match="count|private|changed"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ExternalReconciliationError
+
+tests\test_studio_billing.py:525: Failed
+___ test_studio_billing_root_replacement_after_response_retains_uncertainty ___
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7028/test_studio_billing_root_repla0')
+api = <test_studio_billing.LocalProtocol object at 0x000001F36674C170>
+
+    def test_studio_billing_root_replacement_after_response_retains_uncertainty(
+        tmp_path: Path, api: LocalProtocol
+    ) -> None:
+        path = private_billing_path(tmp_path)
+        retained = tmp_path / "retained-private-billing"
+    
+        def replace_after_generation(
+            url: str, body: bytes | None, headers: Mapping[str, str]
+        ) -> tuple[int, str]:
+            result = api.transport(url, body, headers)
+            if url.endswith(":generateContent"):
+                assert path.parent.parent.resolve() == retained.parent.resolve() == tmp_path.resolve()
+                path.parent.rename(retained)
+                path.parent.mkdir()
+                seed_private_file(path, (retained / path.name).read_bytes())
+            return result
+    
+        guarded = GuardedGeminiTransport(path, JOB, policy(), replace_after_generation)
+>       with pytest.raises(ExternalReconciliationError, match="uncertain|private|changed"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ExternalReconciliationError
+
+tests\test_studio_billing.py:549: Failed
+=========================== short test summary info ===========================
+FAILED tests/test_studio_billing.py::test_studio_billing_private_root_required_before_any_egress
+FAILED tests/test_studio_billing.py::test_studio_billing_linked_database_refused
+FAILED tests/test_studio_billing.py::test_studio_billing_database_replacement_during_count_refuses_generation
+FAILED tests/test_studio_billing.py::test_studio_billing_root_replacement_after_response_retains_uncertainty
+4 failed, 44 passed in 40.11s

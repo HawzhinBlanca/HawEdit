@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from hawedit.environment import dependency_contract_digest, validate_host_lock
 
@@ -65,6 +66,17 @@ def test_all_supported_host_targets_have_valid_semantically_bound_locks() -> Non
         platform_name="windows",
     )
     assert gpu.contract_sha256 == dependency_contract_digest(ROOT, ("media", "gpu"))
+    studio_path = _lock("studio", "windows", "3.11")
+    found.add(studio_path)
+    studio_extras = ("media", "gpu", "models", "diarization", "agentic", "cloud")
+    studio = validate_host_lock(
+        studio_path,
+        project_root=ROOT,
+        extras=studio_extras,
+        python_version=(3, 11),
+        platform_name="windows",
+    )
+    assert studio.contract_sha256 == dependency_contract_digest(ROOT, studio_extras)
     assert found == set(LOCKS.glob("host-*.txt"))
 
 
@@ -82,7 +94,9 @@ def test_each_lock_selects_one_binary_hash_per_exact_package() -> None:
             names.add(match.group(1))
         assert len(requirements) == len(names)
         assert all(
-            "files.pythonhosted.org/" in line or "download-r2.pytorch.org/" in line
+            urlsplit(line.removeprefix("# selected wheel ")).scheme == "https"
+            and urlsplit(line.removeprefix("# selected wheel ")).hostname
+            in {"files.pythonhosted.org", "download-r2.pytorch.org", "download.pytorch.org"}
             for line in selected_wheels
         )
         assert not any(".tar.gz" in line or ".zip" in line for line in selected_wheels)
@@ -119,7 +133,9 @@ def test_models_profile_is_minimal_production_provisioning_not_the_gate() -> Non
 def test_gpu_profile_is_the_one_measured_windows_cuda_target() -> None:
     path = _lock("gpu", "windows", "3.11")
     packages = _packages(path)
-    assert len(packages) == 46
+    assert len(packages) == 49
+    assert packages["skia-python"][0] == "144.0.post2"
+    assert packages["uharfbuzz"][0] == "0.56.0"
     assert packages["torch"][0] == "2.13.0+cu130"
     assert packages["torchvision"][0] == "0.28.0+cu130"
     assert packages["torchaudio"][0] == "2.11.0+cu130"

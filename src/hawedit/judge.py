@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
@@ -52,45 +52,55 @@ from hawedit.clip import Editorial, Output, Sv6d, sv6d_from_json
 from hawedit.discovery import MergedCandidate
 from hawedit.normalize import normalize_sorani
 from hawedit.registry import ModelEntry, resolve_role
+from hawedit.repurposing import pairwise_preference
 
 __all__ = [
     "CANDIDATE_SLICE_TOKENS_PER_HOUR",
+    "DEFAULT_PAIRWISE_ROUNDS",
     "FULL_TRANSCRIPT_TOKENS_PER_HOUR",
     "HOOK_TYPES",
     "JUDGE_ROLES",
     "KURDISH_EDITORIAL_JUDGE",
     "MAX_JUDGE_FRAME_BYTES",
+    "MAX_PAIRWISE_CANDIDATES",
     "MAX_PERSISTED_VERDICT_BYTES",
     "MIN_REGRESSION_ITEMS",
     "NARRATIVE_ROLES",
+    "PAIRWISE_SCHEMA",
     "PRO_TIER_TOKEN_CEILING",
     "USD_PER_MILLION_TOKENS",
     "VIDEO_TOKENS_PER_SECOND",
     "WITH_VIDEO_TOKENS_PER_HOUR",
     "BilledCall",
     "EditorialJudge",
+    "GeminiPairwiseJudge",
     "InputMode",
     "JudgeDecision",
     "JudgeFrame",
     "JudgeRequest",
     "JudgeVerdict",
     "NotRoutable",
+    "PairwiseComparator",
+    "PairwiseMatch",
     "RequestTooLarge",
     "ShadowVerdict",
+    "StructuredJsonClient",
     "assert_model_agreement_cannot_bypass_human_qc",
     "compute_repeat_k_agreement",
     "decide_judge",
     "estimate_cost_usd",
+    "is_verdict_eligible",
+    "pairwise_rank_verdicts",
     "route",
     "tournament_rank_verdicts",
-    "tournament_score",
     "video_tokens",
 ]
 
-# §3 Stage 4's pinned judge. Named here so a caller states the incumbent rather than
-# hard-coding a string, and so the shadow-promotion rule has something to compare against.
-KURDISH_EDITORIAL_JUDGE: Final = "gemini-2.5-pro"
-JUDGE_SHADOW: Final = "gemini-3.1-pro"
+# §3 Stage 4's pinned judge (upgraded per D-339 from deprecated gemini-2.5-pro). Named here
+# so a caller states the incumbent rather than hard-coding a string, and so the
+# shadow-promotion rule has something to compare against.
+KURDISH_EDITORIAL_JUDGE: Final = "gemini-4-carbon"
+JUDGE_SHADOW: Final = "gemini-4-argon"
 JUDGE_ROLES: Final = frozenset({"kurdish_editorial_judge", "judge_shadow"})
 MAX_JUDGE_FRAME_BYTES: Final = 5 * 1024 * 1024
 # The live provider response is capped at the same one-mebibyte boundary in `gemini.py`.
@@ -509,6 +519,10 @@ class ShadowVerdict:
         )
 
 
+class _RoutableModel(Protocol):
+    model_id: str
+
+
 @runtime_checkable
 class EditorialJudge(Protocol):
     """§3 Stage 4's routing interface. Two members, so a swap is a config change."""
@@ -518,7 +532,7 @@ class EditorialJudge(Protocol):
     def judge(self, request: JudgeRequest) -> JudgeVerdict: ...
 
 
-def route(judge: EditorialJudge) -> ModelEntry:
+def route(judge: _RoutableModel) -> ModelEntry:
     """Resolve a judge against §7, refusing anything the blueprint keeps out of the path.
 
     Raises:
@@ -589,7 +603,7 @@ class BilledCall:
     """Record of a foundation-model call that incurs billing.
 
     Every billed call carries:
-    - model: the provider model identifier (e.g. "gemini-2.5-pro")
+    - model: the provider model identifier (e.g. "gemini-4-carbon")
     - tokens: provider-counted input tokens
     - cost_usd_estimate: calculated from USD_PER_MILLION_TOKENS
     - stage: the pipeline stage making the call ("discovery", "editorial", etc.)
@@ -796,67 +810,395 @@ def decide_judge(
     return JudgeDecision(incumbent, shadow, True, tuple(reasons))
 
 
-def tournament_score(verdict: JudgeVerdict) -> float:
-    """Calculate calibrated composite quality score for a verdict (Task T4.3).
+MAX_PAIRWISE_CANDIDATES: Final = 12
+DEFAULT_PAIRWISE_ROUNDS: Final = 3
+_MIN_PAIRWISE_ROUNDS: Final = 2
+_HOOK_PRIORITY: Final[dict[str, int]] = {
+    "question": 5,
+    "claim": 4,
+    "contrast": 3,
+    "confession": 2,
+    "story_open": 1,
+}
 
-    Evaluates multi-dimensional criteria:
-    - hook_score: 40% (viewer scroll-stopping retention)
-    - payoff_strength: 30% (resolution satisfaction)
-    - meaning_fidelity: 20% (message preservation)
-    - cultural_landing: 10% (Kurdish cultural resonance)
-    - misleading_edit_risk penalty: -0.20 * risk
-    - ends_on_a_beat bonus: +0.05
-    """
-    base = (
-        0.40 * verdict.hook_score
-        + 0.30 * getattr(verdict, "payoff_strength", 0.5)
-        + 0.20 * verdict.meaning_fidelity
-        + 0.10 * verdict.cultural_landing
+PAIRWISE_SCHEMA: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "winner": {"type": "string", "enum": ["A", "B", "TIE"]},
+        "reason_ckb": {"type": "string"},
+    },
+    "required": ["winner", "reason_ckb"],
+}
+
+_PAIRWISE_PROMPT: Final = (
+    "Compare Candidate A and Candidate B as short-form Sorani Kurdish clips.\n"
+    "Which candidate would a Kurdish viewer keep watching through its payoff?\n"
+    "Reward a compelling opening backed by clear meaning fidelity and complete resolution; "
+    "reject clickbait or misleading edits.\n"
+    "Return JSON only matching the schema with winner ('A', 'B', or 'TIE') and a concise "
+    "Sorani Kurdish explanation in reason_ckb.\n\n"
+    "Candidate A ({id_a}) | hook={hook_a} | role={role_a}\n"
+    "Title: {title_a}\n"
+    "Transcript/Context:\n{text_a}\n\n"
+    "Candidate B ({id_b}) | hook={hook_b} | role={role_b}\n"
+    "Title: {title_b}\n"
+    "Transcript/Context:\n{text_b}\n"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PairwiseMatch:
+    """One head-to-head comparison outcome between two eligible candidates."""
+
+    candidate_a: str
+    candidate_b: str
+    winner: str | None
+    reason_ckb: str
+    billed_call: BilledCall | None = None
+
+    def __post_init__(self) -> None:
+        if self.winner is not None and self.winner not in (self.candidate_a, self.candidate_b):
+            raise ValueError(
+                f"pairwise winner {self.winner!r} must be {self.candidate_a!r}, "
+                f"{self.candidate_b!r}, or None for tie"
+            )
+        object.__setattr__(self, "reason_ckb", _kurdish_field(self.reason_ckb, "reason_ckb"))
+
+
+@runtime_checkable
+class StructuredJsonClient(Protocol):
+    """Minimal JSON-generation client interface satisfied by GeminiJudge/VertexGeminiJudge."""
+
+    model_id: str
+
+    def count_parts(self, parts: list[dict[str, Any]]) -> int: ...
+
+    def generate_json(self, parts: list[dict[str, Any]], schema: Mapping[str, Any]) -> str: ...
+
+
+@runtime_checkable
+class PairwiseComparator(Protocol):
+    """Head-to-head comparison interface for editorial candidate ranking."""
+
+    def compare(
+        self,
+        verdict_a: JudgeVerdict,
+        verdict_b: JudgeVerdict,
+        *,
+        text_a_ckb: str = "",
+        text_b_ckb: str = "",
+    ) -> PairwiseMatch: ...
+
+
+class GeminiPairwiseJudge:
+    """Pairwise editorial comparator backed by §3 Stage 4's routed Gemini client."""
+
+    def __init__(self, client: StructuredJsonClient, *, model_id: str | None = None) -> None:
+        self._client = client
+        self.model_id = model_id or client.model_id
+
+    def compare(
+        self,
+        verdict_a: JudgeVerdict,
+        verdict_b: JudgeVerdict,
+        *,
+        text_a_ckb: str = "",
+        text_b_ckb: str = "",
+    ) -> PairwiseMatch:
+        from hawedit.gemini import JudgeUnusable, extract_response_text
+
+        route(self)
+
+        context_a = normalize_sorani(
+            text_a_ckb.strip() or f"{verdict_a.title_ckb} — {verdict_a.description_ckb}"
+        )
+        context_b = normalize_sorani(
+            text_b_ckb.strip() or f"{verdict_b.title_ckb} — {verdict_b.description_ckb}"
+        )
+        prompt = _PAIRWISE_PROMPT.format(
+            id_a=verdict_a.candidate_id,
+            hook_a=verdict_a.hook_type,
+            role_a=verdict_a.narrative_role,
+            title_a=verdict_a.title_ckb,
+            text_a=context_a,
+            id_b=verdict_b.candidate_id,
+            hook_b=verdict_b.hook_type,
+            role_b=verdict_b.narrative_role,
+            title_b=verdict_b.title_ckb,
+            text_b=context_b,
+        )
+        parts = [{"text": prompt}]
+        tokens = self._client.count_parts(parts)
+        if tokens >= PRO_TIER_TOKEN_CEILING:
+            raise RequestTooLarge(
+                f"pairwise comparison {verdict_a.candidate_id!r} vs {verdict_b.candidate_id!r} "
+                f"is {tokens:,} tokens, at or over {PRO_TIER_TOKEN_CEILING:,}."
+            )
+
+        raw = self._client.generate_json(parts, PAIRWISE_SCHEMA)
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and "candidates" in parsed:
+                parsed = json.loads(extract_response_text(raw))
+            fields = json_object_fields(
+                parsed,
+                field="pairwise verdict",
+                required=frozenset({"winner", "reason_ckb"}),
+            )
+            winner_token = fields["winner"]
+            if not isinstance(winner_token, str) or winner_token not in {"A", "B", "TIE"}:
+                raise ValueError(
+                    f"pairwise winner must be 'A', 'B', or 'TIE', got {winner_token!r}"
+                )
+            raw_reason = fields["reason_ckb"]
+            if not isinstance(raw_reason, str):
+                raise ValueError("pairwise reason_ckb must be a string")
+            reason_ckb = _kurdish_field(raw_reason, "reason_ckb")
+        except (ValueError, json.JSONDecodeError, TypeError, KeyError, IndexError) as exc:
+            raise JudgeUnusable(f"pairwise comparison returned unusable JSON: {exc}") from exc
+
+        winner_id: str | None
+        if winner_token == "A":
+            winner_id = verdict_a.candidate_id
+        elif winner_token == "B":
+            winner_id = verdict_b.candidate_id
+        else:
+            winner_id = None
+
+        return PairwiseMatch(
+            candidate_a=verdict_a.candidate_id,
+            candidate_b=verdict_b.candidate_id,
+            winner=winner_id,
+            reason_ckb=reason_ckb,
+            billed_call=BilledCall(
+                model=self.model_id,
+                tokens=tokens,
+                cost_usd_estimate=estimate_cost_usd(tokens),
+                stage="editorial",
+                candidate_id=f"{verdict_a.candidate_id}_vs_{verdict_b.candidate_id}",
+            ),
+        )
+
+
+def is_verdict_eligible(verdict: JudgeVerdict) -> bool:
+    """Enforce §2 hard eligibility floors before any candidate can compete or ship."""
+    return (
+        verdict.meaning_fidelity >= 0.70
+        and verdict.misleading_edit_risk <= 0.10
+        and verdict.self_contained
     )
-    risk_penalty = verdict.misleading_edit_risk * 0.20
-    beat_bonus = 0.05 if getattr(verdict, "ends_on_a_beat", False) else 0.0
-    return round(base - risk_penalty + beat_bonus, 4)
+
+
+def _unweighted_tiebreak(verdict: JudgeVerdict) -> tuple[float, float, float, float, bool, int]:
+    """Deterministic unweighted preference tuple used only to cap >12 or break ties."""
+    return (
+        verdict.hook_score,
+        verdict.meaning_fidelity,
+        verdict.cultural_landing,
+        float(getattr(verdict, "payoff_strength", 0.5)),
+        bool(getattr(verdict, "ends_on_a_beat", False)),
+        _HOOK_PRIORITY.get(getattr(verdict, "hook_type", ""), 0),
+    )
+
+
+def _pairwise_standings(
+    candidate_ids: Sequence[str],
+    matches: Sequence[PairwiseMatch],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Return `(win_rates, buchholz_sums)` using `hawedit.repurposing.pairwise_preference`."""
+    if not matches:
+        zeros = {cid: 0.0 for cid in candidate_ids}
+        return zeros, dict(zeros)
+    win_rates = dict(
+        pairwise_preference([(m.candidate_a, m.candidate_b, m.winner) for m in matches])
+    )
+    opponents: dict[str, list[str]] = {cid: [] for cid in candidate_ids}
+    for match in matches:
+        if match.candidate_a in opponents:
+            opponents[match.candidate_a].append(match.candidate_b)
+        if match.candidate_b in opponents:
+            opponents[match.candidate_b].append(match.candidate_a)
+    for cid in candidate_ids:
+        win_rates.setdefault(cid, 0.0)
+    buchholz = {
+        cid: sum(win_rates.get(opp, 0.0) for opp in opponents[cid]) for cid in candidate_ids
+    }
+    return win_rates, buchholz
+
+
+def _pair_without_rematches(
+    active_ids: Sequence[str],
+    played_pairs: set[frozenset[str]],
+) -> list[tuple[str, str]]:
+    """Find a disjoint Swiss pairing avoiding already-played unordered pairs when possible."""
+
+    def _search(remaining: list[str], allow_rematch: bool) -> list[tuple[str, str]] | None:
+        if not remaining:
+            return []
+        first = remaining[0]
+        rest = remaining[1:]
+        for idx, opp in enumerate(rest):
+            if not allow_rematch and frozenset({first, opp}) in played_pairs:
+                continue
+            sub = _search(rest[:idx] + rest[idx + 1 :], allow_rematch)
+            if sub is not None:
+                return [(first, opp), *sub]
+        return None
+
+    unseen = _search(list(active_ids), allow_rematch=False)
+    if unseen is not None:
+        return unseen
+    fallback = _search(list(active_ids), allow_rematch=True)
+    assert fallback is not None
+    return fallback
+
+
+def pairwise_rank_verdicts(
+    verdicts: Sequence[JudgeVerdict],
+    *,
+    comparator: PairwiseComparator | None = None,
+    candidate_texts: Mapping[str, str] | None = None,
+    rounds: int = DEFAULT_PAIRWISE_ROUNDS,
+    max_candidates: int = MAX_PAIRWISE_CANDIDATES,
+    require_eligible: bool = True,
+    matches_out: list[PairwiseMatch] | None = None,
+) -> tuple[tuple[JudgeVerdict, float], ...]:
+    """Rank eligible verdicts via a bounded Swiss pairwise tournament (no weighted sum).
+
+    - Excludes ineligible verdicts before scheduling any bouts (`require_eligible=True`).
+    - Caps pools larger than `max_candidates` (`<= 12`) deterministically before bouts.
+    - Runs 0 comparator calls when `<= 1` eligible verdict remains.
+    - Runs `2..3` Swiss rounds alternating A/B positions and breaking ties via Buchholz.
+    """
+    if not _MIN_PAIRWISE_ROUNDS <= rounds <= DEFAULT_PAIRWISE_ROUNDS:
+        raise ValueError(f"rounds must be between 2 and 3, got {rounds}")
+    if not 1 <= max_candidates <= MAX_PAIRWISE_CANDIDATES:
+        raise ValueError(
+            f"max_candidates must be between 1 and {MAX_PAIRWISE_CANDIDATES}, got {max_candidates}"
+        )
+
+    filtered = [v for v in verdicts if not require_eligible or is_verdict_eligible(v)]
+    if not filtered:
+        return ()
+
+    seen_ids: set[str] = set()
+    for verdict in filtered:
+        if verdict.candidate_id in seen_ids:
+            raise ValueError(f"duplicate candidate_id {verdict.candidate_id!r} in pairwise ranking")
+        seen_ids.add(verdict.candidate_id)
+
+    seed_order = {v.candidate_id: idx for idx, v in enumerate(filtered)}
+    if len(filtered) > max_candidates:
+        pool = sorted(
+            filtered,
+            key=lambda v: (_unweighted_tiebreak(v), -seed_order[v.candidate_id]),
+            reverse=True,
+        )[:max_candidates]
+    else:
+        pool = list(filtered)
+
+    if len(pool) == 1:
+        return ((pool[0], 1.0),)
+
+    if comparator is None:
+        ordered = sorted(
+            pool,
+            key=lambda v: (_unweighted_tiebreak(v), -seed_order[v.candidate_id]),
+            reverse=True,
+        )
+        total = len(ordered)
+        return tuple((v, round((total - idx) / total, 4)) for idx, v in enumerate(ordered))
+
+    verdict_by_id = {v.candidate_id: v for v in pool}
+    pool_ids = [v.candidate_id for v in pool]
+    texts = candidate_texts or {}
+    matches: list[PairwiseMatch] = []
+    played_pairs: set[frozenset[str]] = set()
+    a_slots: dict[str, int] = {cid: 0 for cid in pool_ids}
+    b_slots: dict[str, int] = {cid: 0 for cid in pool_ids}
+    byes: set[str] = set()
+
+    for round_idx in range(rounds):
+        if len(pool_ids) == 2:
+            if round_idx >= 2:
+                break
+            pairs = [(pool_ids[0], pool_ids[1])] if round_idx == 0 else [(pool_ids[1], pool_ids[0])]
+        else:
+            win_rates, buchholz = _pairwise_standings(pool_ids, matches)
+            ranked_ids = sorted(
+                pool_ids,
+                key=lambda cid: (
+                    win_rates[cid],
+                    buchholz[cid],
+                    _unweighted_tiebreak(verdict_by_id[cid]),
+                    -seed_order[cid],
+                ),
+                reverse=True,
+            )
+            active = list(ranked_ids)
+            if len(active) % 2 == 1:
+                bye_pick = next(
+                    (cid for cid in reversed(active) if cid not in byes),
+                    active[-1],
+                )
+                byes.add(bye_pick)
+                active.remove(bye_pick)
+            raw_pairs = _pair_without_rematches(active, played_pairs)
+            pairs = []
+            for left, right in raw_pairs:
+                delta_left = a_slots[left] - b_slots[left]
+                delta_right = a_slots[right] - b_slots[right]
+                if delta_right < delta_left or (delta_right == delta_left and round_idx % 2 == 1):
+                    pairs.append((right, left))
+                else:
+                    pairs.append((left, right))
+
+        for cid_a, cid_b in pairs:
+            played_pairs.add(frozenset({cid_a, cid_b}))
+            a_slots[cid_a] += 1
+            b_slots[cid_b] += 1
+            match = comparator.compare(
+                verdict_by_id[cid_a],
+                verdict_by_id[cid_b],
+                text_a_ckb=texts.get(cid_a, ""),
+                text_b_ckb=texts.get(cid_b, ""),
+            )
+            matches.append(match)
+            if matches_out is not None:
+                matches_out.append(match)
+
+    win_rates, buchholz = _pairwise_standings(pool_ids, matches)
+    final_ids = sorted(
+        pool_ids,
+        key=lambda cid: (
+            win_rates[cid],
+            buchholz[cid],
+            _unweighted_tiebreak(verdict_by_id[cid]),
+            -seed_order[cid],
+        ),
+        reverse=True,
+    )
+    return tuple((verdict_by_id[cid], round(win_rates[cid], 4)) for cid in final_ids)
 
 
 def tournament_rank_verdicts(
     verdicts: Sequence[JudgeVerdict],
     *,
     require_eligible: bool = True,
+    comparator: PairwiseComparator | None = None,
+    candidate_texts: Mapping[str, str] | None = None,
+    rounds: int = DEFAULT_PAIRWISE_ROUNDS,
+    max_candidates: int = MAX_PAIRWISE_CANDIDATES,
 ) -> tuple[tuple[JudgeVerdict, float], ...]:
-    """Rank passing verdicts using calibrated multi-dimensional tournament scoring (T4.3 / AC-13).
-
-    When require_eligible is True (default), candidates failing hard eligibility rules
-    (meaning_fidelity < 0.70, misleading_edit_risk > 0.10, or self_contained=False)
-    are excluded before ranking. High hook score cannot override meaning failure.
-
-    Returns tuple of (verdict, tournament_score) sorted from highest to lowest score.
-    """
-    hook_priority = {
-        "question": 5,
-        "claim": 4,
-        "contrast": 3,
-        "confession": 2,
-        "story_open": 1,
-    }
-    candidates = (
-        tuple(
-            v
-            for v in verdicts
-            if v.meaning_fidelity >= 0.70 and v.misleading_edit_risk <= 0.10 and v.self_contained
-        )
-        if require_eligible
-        else tuple(verdicts)
+    """Rank eligible verdicts via `pairwise_rank_verdicts` (weighted sum retired per D-346)."""
+    return pairwise_rank_verdicts(
+        verdicts,
+        comparator=comparator,
+        candidate_texts=candidate_texts,
+        rounds=rounds,
+        max_candidates=max_candidates,
+        require_eligible=require_eligible,
     )
-    scored = [(v, tournament_score(v)) for v in candidates]
-    scored.sort(
-        key=lambda item: (
-            item[1],
-            hook_priority.get(getattr(item[0], "hook_type", ""), 0),
-            item[0].hook_score,
-        ),
-        reverse=True,
-    )
-    return tuple(scored)
 
 
 def compute_repeat_k_agreement(

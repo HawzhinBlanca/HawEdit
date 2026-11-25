@@ -39,13 +39,19 @@ from hawedit.credentials import (
     write_credential,
 )
 from hawedit.credentials import main as credentials_main
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 
 FAKE_KEY = "AIzaSy-not-a-real-key-0000-abcd"
 
 
 def ok_transport(_url: str, _headers: Mapping[str, str]) -> tuple[int, str]:
     return 200, json.dumps(
-        {"models": [{"name": "models/gemini-2.5-pro"}, {"name": "models/gemini-2.5-flash"}]}
+        {
+            "models": [
+                {"name": f"models/{KURDISH_EDITORIAL_JUDGE}"},
+                {"name": "models/gemini-2.5-flash"},
+            ]
+        }
     )
 
 
@@ -368,7 +374,9 @@ def test_an_unreachable_api_is_not_reported_as_an_invalid_key() -> None:
 def test_a_working_key_reports_the_models_it_can_see() -> None:
     check = validate_gemini_key(FAKE_KEY, transport=ok_transport)
     assert check.valid
-    assert "gemini-2.5-pro" in check.models, "§7 pins this model; its absence is worth knowing"
+    assert KURDISH_EDITORIAL_JUDGE in check.models, (
+        "§7/D-339 pins this model; its absence is worth knowing"
+    )
 
 
 def test_key_validation_authenticates_by_header_never_by_url() -> None:
@@ -604,7 +612,7 @@ def test_status_validates_a_configured_key(tmp_path: Path, monkeypatch: pytest.M
     key, check = credential_status(GEMINI_API_KEY, tmp_path / "absent", transport=ok_transport)
     assert key == FAKE_KEY
     assert check == KeyCheck(
-        True, "key accepted; 2 model(s) visible", ("gemini-2.5-pro", "gemini-2.5-flash")
+        True, "key accepted; 2 model(s) visible", (KURDISH_EDITORIAL_JUDGE, "gemini-2.5-flash")
     )
 
 

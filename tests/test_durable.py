@@ -43,6 +43,8 @@ from pathlib import Path
 
 import pytest
 
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
+
 dbos = pytest.importorskip("dbos")
 
 from hawedit.captions import find_ffmpeg  # noqa: E402
@@ -95,7 +97,7 @@ def a_verdict(clip_in_ms: int, clip_out_ms: int) -> JudgeVerdict:
         title_ckb="ڕۆژنامەوانی کوردی لە هەولێر",
         description_ckb="بابەتێکی گرنگ دەربارەی ڕۆژنامەوانی",
         hashtags_ckb=("#کوردی",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=clip_in_ms,
         clip_out_ms=clip_out_ms,
     )

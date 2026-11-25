@@ -40,11 +40,13 @@ from typing import Final
 
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.http_transport import open_without_redirects
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
 
 __all__ = [
     "ENV_FILE",
     "GEMINI_API_KEY",
     "HF_TOKEN",
+    "TYPESAFE_API_KEY",
     "CredentialError",
     "KeyCheck",
     "credential_status",
@@ -54,6 +56,7 @@ __all__ = [
     "restrict_to_owner",
     "validate_gemini_key",
     "validate_hf_token",
+    "validate_typesafe_key",
     "write_credential",
 ]
 
@@ -64,6 +67,7 @@ GEMINI_API_KEY: Final = "GEMINI_API_KEY"
 # an environment variable set in one shell is not set in the next one, and the failure it
 # produces is a multi-gigabyte download that 401s.
 HF_TOKEN: Final = "HF_TOKEN"
+TYPESAFE_API_KEY: Final = "TYPESAFE_API_KEY"
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
 
@@ -511,11 +515,46 @@ def validate_hf_token(token: str, transport: Transport = _https_get) -> KeyCheck
     return KeyCheck(True, f"token accepted for {name}")
 
 
+def validate_typesafe_key(key: str, transport: Transport = _https_get) -> KeyCheck:
+    """Ask TypeSafe AI whether this key works, rather than whether it looks like one."""
+    if not _is_header_safe_key(key):
+        return KeyCheck(
+            False,
+            "key is not a header-safe bounded printable ASCII value; nothing was sent",
+        )
+    status, body = transport(
+        "https://api.typesafe.ai/v1/models", {"Authorization": f"Bearer {key}"}
+    )
+    if _response_exceeds_limit(body):
+        return KeyCheck(
+            False,
+            _safe_key_check_detail(
+                "could not validate the TypeSafe key: ",
+                f"response exceeded {_MAX_KEY_CHECK_RESPONSE_BYTES} bytes",
+                key,
+            ),
+        )
+    if status == 0:
+        return KeyCheck(
+            False,
+            _safe_key_check_detail("could not reach the TypeSafe API: ", body, key),
+        )
+    if status != 200:
+        return KeyCheck(
+            False,
+            _safe_key_check_detail(
+                f"the TypeSafe API rejected this key (HTTP {status}): ", body[:200], key
+            ),
+        )
+    return KeyCheck(True, "TypeSafe key accepted")
+
+
 # Which provider answers for which credential. A single hard-coded validator would have sent a
 # Hugging Face token to Google the first time anyone asked `credential_status` about it.
 _VALIDATORS: Final[dict[str, Callable[[str, Transport], KeyCheck]]] = {
     GEMINI_API_KEY: validate_gemini_key,
     HF_TOKEN: validate_hf_token,
+    TYPESAFE_API_KEY: validate_typesafe_key,
 }
 
 
@@ -536,7 +575,7 @@ def credential_status(
 
 # --- the panel ----------------------------------------------------------------------------
 
-_PINNED_JUDGE = "gemini-2.5-pro"
+_PINNED_JUDGE = KURDISH_EDITORIAL_JUDGE
 
 
 def main(argv: list[str] | None = None) -> int:

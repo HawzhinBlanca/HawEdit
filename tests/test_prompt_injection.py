@@ -36,6 +36,8 @@ from typing import Any
 
 import pytest
 
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
+
 pytest.importorskip("pydantic_ai")
 dbos = pytest.importorskip("dbos")
 
@@ -513,7 +515,7 @@ def test_transcript_instructions_cannot_change_policy_or_approve_qc() -> None:
         title_ckb="سەردێڕ",
         description_ckb="وەسف",
         hashtags_ckb=("#کورد",),
-        judge="gemini-2.5-pro",
+        judge=KURDISH_EDITORIAL_JUDGE,
         clip_in_ms=5_000,
         clip_out_ms=35_000,
         hook_type="claim",

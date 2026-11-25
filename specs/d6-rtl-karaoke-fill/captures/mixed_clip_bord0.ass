@@ -1,0 +1,19 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Kurdish,Noto Naskh Arabic,108,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,80,80,360,-1
+Style: KurdishHighlight,Noto Naskh Arabic,108,&H0000E5FF,&H0000E5FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,2,80,80,360,-1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.80,Kurdish,,0,0,0,,‏OpusClip زۆر باشە.
+Dialogue: 1,0:00:00.00,0:00:01.80,KurdishHighlight,,0,0,0,,{\clip(440,1444,440,1544)\t(0,600,\clip(440,1444,864,1544))}‏OpusClip زۆر باشە.
+Dialogue: 1,0:00:00.60,0:00:01.80,KurdishHighlight,,0,0,0,,{\clip(422,1476,422,1538)\t(0,400,\clip(342,1476,422,1538))}‏OpusClip زۆر باشە.
+Dialogue: 1,0:00:01.00,0:00:01.80,KurdishHighlight,,0,0,0,,{\clip(330,1471,330,1538)\t(0,600,\clip(216,1471,330,1538))}‏OpusClip زۆر باشە.

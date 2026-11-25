@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/specs/evidence-based-studio/paired_comparison_posix_probe.py", line 11, in <module>
+    from hawedit.comparison_kit import (
+    ...<2 lines>...
+    )
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/src/hawedit/comparison_kit.py", line 24, in <module>
+    from hawedit.clip import QcRecord
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/src/hawedit/clip.py", line 48, in <module>
+    from hawedit.transcripts import AsrProvenance, Word, validate_media_id, validate_media_sha256
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/src/hawedit/transcripts.py", line 49, in <module>
+    from hawedit.alignment import CTC_VITERBI, assert_ctc_viterbi
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/src/hawedit/alignment.py", line 29, in <module>
+    from hawedit.normalize import normalize_sorani
+  File "/mnt/c/Users/Wareen/Desktop/HawEdit/src/hawedit/normalize.py", line 25, in <module>
+    from klpt.preprocess import Preprocess
+ModuleNotFoundError: No module named 'klpt'

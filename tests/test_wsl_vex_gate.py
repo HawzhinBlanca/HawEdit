@@ -126,7 +126,7 @@ def _install_success_mocks(
         ),
     )
     monkeypatch.setattr(gate, "_find_uv", lambda *_args, **_kwargs: "/home/ai/.local/bin/uv")
-    monkeypatch.setattr(gate, "_utc_now", lambda: datetime(2026, 8, 9, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr(gate, "_utc_now", lambda: datetime(2026, 11, 25, 12, 0, tzinfo=UTC))
 
     def run(command: list[str], **_kwargs: object) -> gate.ProcessOutput:
         commands.append(command)
@@ -134,8 +134,12 @@ def _install_success_mocks(
             return gate.ProcessOutput(0, b"uv 0.11.15 (x86_64-unknown-linux-gnu)\n", b"")
         if command[-1] == "--version":
             return gate.ProcessOutput(0, f"pip-audit {audit_version}\n".encode(), b"")
-        if "/usr/bin/mktemp" in command:
-            return gate.ProcessOutput(0, b"/tmp/hawedit-wsl-audit.A1b2C3d4E5\n", b"")
+        if gate.STORAGE_SCRIPT in command and command[-1] == "create":
+            return gate.ProcessOutput(
+                0,
+                b'{"path":"/tmp/hawedit-wsl-audit.A1b2C3d4E5","device":1,"inode":2,"uid":1000}\n',
+                b"",
+            )
         if gate._WRITE_EXCLUSIVE_SCRIPT in command:
             return gate.ProcessOutput(0, b"", b"")
         if "venv" in command or ("pip" in command and "install" in command):
@@ -149,7 +153,7 @@ def _install_success_mocks(
                 + b"\n",
                 b"",
             )
-        if "/usr/bin/rm" in command:
+        if gate.STORAGE_SCRIPT in command and "cleanup" in command:
             return gate.ProcessOutput(0, b"", b"")
         return gate.ProcessOutput(audit_returncode, report, b"Found reviewed vulnerabilities\n")
 
@@ -171,6 +175,8 @@ def test_live_gate_runs_exact_pinned_contract_and_publishes_bound_evidence(
     )
 
     assert len(commands) == 9
+    assert not any("/usr/bin/rm" in command for command in commands)
+    assert commands[-1][-5:] == ["cleanup", "/tmp/hawedit-wsl-audit.A1b2C3d4E5", "1", "2", "1000"]
     assert all(
         command[:4] == ["wsl.exe", "--distribution", "Ubuntu", "--exec"] for command in commands
     )
@@ -205,9 +211,9 @@ def test_live_gate_runs_exact_pinned_contract_and_publishes_bound_evidence(
     assert persisted["audit_tool"]["package_count"] == len(gate.AUDIT_DISTRIBUTIONS)
     assert persisted["runtime"]["source_sha256"] == receipt.source_sha256
     assert persisted["runtime"]["asset_bytes"] == 43_546_500_168
-    assert persisted["audit"]["dependencies"] == 3
-    assert persisted["audit"]["findings"] == 12
-    assert persisted["evaluation"]["matched_dispositions"] == 12
+    assert persisted["audit"]["dependencies"] == 4
+    assert persisted["audit"]["findings"] == 15
+    assert persisted["evaluation"]["matched_dispositions"] == 15
     assert persisted["audit"]["report"] == _audit_report()
 
 
@@ -383,6 +389,77 @@ def test_audit_operational_failure_cannot_publish_evidence(
     assert not evidence.exists()
 
 
+def test_scanner_write_failure_still_cleans_owned_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(monkeypatch, tmp_path)
+    original_run = gate._run_bounded
+
+    def run(command: list[str], **kwargs: Any) -> gate.ProcessOutput:
+        if gate._WRITE_EXCLUSIVE_SCRIPT in command:
+            commands.append(command)
+            return gate.ProcessOutput(1, b"", b"storage full")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(gate, "_run_bounded", run)
+    evidence = tmp_path / "write-failed.json"
+    with pytest.raises(gate.LiveVexGateError, match="cannot materialize"):
+        gate.run_live_gate(
+            evidence_path=evidence, runtime_root=runtime, package_source=source, vex_path=POLICY
+        )
+    assert len(commands) == 4
+    assert commands[-1][-5:] == ["cleanup", "/tmp/hawedit-wsl-audit.A1b2C3d4E5", "1", "2", "1000"]
+    assert not any("/usr/bin/rm" in command for command in commands)
+    assert not evidence.exists()
+
+
+def test_scanner_cleanup_failure_preserves_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(
+        monkeypatch, tmp_path, audit_version="2.10.2"
+    )
+    original_run = gate._run_bounded
+
+    def run(command: list[str], **kwargs: Any) -> gate.ProcessOutput:
+        if "cleanup" in command:
+            commands.append(command)
+            return gate.ProcessOutput(1, b"", b"identity changed")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(gate, "_run_bounded", run)
+    evidence = tmp_path / "cleanup-and-version-failed.json"
+    with pytest.raises(gate.LiveVexGateError, match="version drifted") as error:
+        gate.run_live_gate(
+            evidence_path=evidence, runtime_root=runtime, package_source=source, vex_path=POLICY
+        )
+    assert any("cleanup also failed" in note for note in error.value.__notes__)
+    assert len(commands) == 8
+    assert not evidence.exists()
+
+
+def test_scanner_cleanup_failure_refuses_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(monkeypatch, tmp_path)
+    original_run = gate._run_bounded
+
+    def run(command: list[str], **kwargs: Any) -> gate.ProcessOutput:
+        if "cleanup" in command:
+            commands.append(command)
+            return gate.ProcessOutput(1, b"", b"identity changed")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(gate, "_run_bounded", run)
+    evidence = tmp_path / "cleanup-failed.json"
+    with pytest.raises(gate.LiveVexGateError, match="cannot remove ephemeral scanner"):
+        gate.run_live_gate(
+            evidence_path=evidence, runtime_root=runtime, package_source=source, vex_path=POLICY
+        )
+    assert len(commands) == 9
+    assert not evidence.exists()
+
+
 @pytest.mark.parametrize(
     "payload",
     [b"[]", b'{"dependencies": [], "fixes": [true]}', b"not-json"],
@@ -472,6 +549,51 @@ def test_bounded_process_kills_excess_output() -> None:
             stdout_limit=1_024,
             stderr_limit=1_024,
         )
+
+
+@pytest.mark.parametrize("budget", [300, 900, 1800])
+def test_live_gate_forwards_selected_budget_to_final_integrity_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: int
+) -> None:
+    source, runtime, _receipt_value, commands = _install_success_mocks(monkeypatch, tmp_path)
+    evidence = tmp_path / "must-not-be-published.json"
+
+    def final_probe(**options: Any) -> None:
+        assert options["distro"] == "Ubuntu"
+        assert options["runtime_root"] == runtime
+        assert options["package_source"] == source
+        assert options["executable"] == "wsl.exe"
+        assert options.get("timeout_seconds") == budget
+        raise WslRuntimeError("diagnostic final-probe refusal")
+
+    monkeypatch.setattr(gate, "probe_wsl_runtime", final_probe)
+    with pytest.raises(gate.LiveVexGateError, match="diagnostic final-probe refusal"):
+        gate.run_live_gate(
+            evidence_path=evidence,
+            runtime_root=runtime,
+            package_source=source,
+            distro="Ubuntu",
+            vex_path=POLICY,
+            timeout_seconds=budget,
+        )
+    assert len(commands) == 9
+    assert not evidence.exists()
+
+
+@pytest.mark.parametrize(
+    "budget", [None, True, False, 0, -1, 1801, 1.5, "300", float("nan"), float("inf")]
+)
+def test_live_gate_invalid_budget_refuses_before_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: Any
+) -> None:
+    def no_receipt(**_kwargs: object) -> None:
+        pytest.fail("Invalid live integrity budget reached receipt or child work")
+
+    monkeypatch.setattr(gate, "load_wsl_runtime_receipt", no_receipt)
+    evidence = tmp_path / "must-not-be-published.json"
+    with pytest.raises(gate.LiveVexGateError, match="timeout_seconds.*1.*1800"):
+        gate.run_live_gate(evidence_path=evidence, timeout_seconds=budget)
+    assert not evidence.exists()
 
 
 def test_main_normalizes_live_refusal(

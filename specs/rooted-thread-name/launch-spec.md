@@ -1,0 +1,138 @@
+# Stopped-Worker Launch EARS
+
+## Initial Shared Controller Criteria
+
+- WHEN a typed launch is selected, THE Snapshot SHALL bind its exact files,
+  rooted/entropy mode and original stopped worker before copying.
+  Test: test_rooted_controller_manifest_refuses_before_copy.
+- WHEN an actual copied command executes, THE controller SHALL authenticate
+  worker packets, bound combined output to64KiB, service only the existing
+  registry/broker, reap every member and apply final policy before returning.
+  Tests: test_rooted_controller_actual_elf_returns_fenced,
+  test_rooted_controller_actual_python_returns_bounded_output.
+- WHEN this initial controller is asked to run GPU or an invalid output/deadline
+  configuration, THE controller SHALL refuse before image preparation.
+  Test: test_rooted_controller_invalid_declarations_refuse.
+- WHEN output exceeds its declared bound, THE controller SHALL cancel and drain
+  before refusing; successful completion SHALL NOT be returned.
+  Test: test_rooted_controller_output_overflow_drains_and_refuses.
+- WHEN execution exceeds its finite diagnostic deadline, THE controller SHALL
+  kill through the original pidfd and reap all members before refusing.
+  Test: test_rooted_controller_timeout_drains_and_refuses.
+- WHEN the owner observation channel ends before execution release, THE controller
+  SHALL refuse, kill and reap the original stopped worker, with no result.
+  Test: test_rooted_controller_owner_eof_refuses_before_exec.
+- WHEN a GPU command is selected for this initial controller, THE controller
+  SHALL refuse explicitly rather than silently run it as CPU work.
+  Test: test_rooted_controller_gpu_is_not_silently_downgraded.
+- WHEN the Windows host declares a valid command, THE command validator SHALL
+  validate the same immutable manifest without attempting to consume source bytes.
+  Test: test_rooted_command_valid_declaration_is_portable_without_consuming_bytes.
+
+Proposed named tests, not existing passes or admission evidence.
+
+| Criterion | Named Regression |
+| --- | --- |
+| WHEN image preparation begins, THE launch SHALL already hold authenticated original PID1/PID2 and parent-death/cancellation lifetime before any copied SDK release. | test_rooted_launch_original_owner_precedes_preparation |
+| WHEN initial privileges differ from Snapshot's allowed preparation boundary, THE launch SHALL refuse rather than retain model capabilities or alter UID mapping rules. | test_rooted_launch_preserves_preparation_capability_order |
+| WHEN a supplied prepared namespace/root handle is foreign, reopened, wrong-type or non-descendant, THE worker SHALL refuse before joining or SDK exec. | test_rooted_launch_refuses_foreign_prepared_view |
+| WHEN the original prepared view is re-observed, THE owner SHALL derive its transition binding from original kernel handles rather than affirmative flags or numeric discovery. | test_rooted_launch_owner_reobserves_original_prepared_view |
+| WHEN copied SDK execution starts, THE worker SHALL already have readonly root/proc, zero caps, NNP, mandatory Landlock, namespace/ptrace/process/foreign-handle refusals and the genuine listener before stronger errno rules. | test_rooted_launch_worker_fenced_before_actual_exec |
+| WHEN command configuration contains a callback, unlisted executable, shell string or unbounded argv/environment, THE launch SHALL refuse before execution. | test_rooted_launch_refuses_nonmanifest_command |
+| WHEN the owner dies or a member/IO/listener/timer becomes uncertain, THE launch SHALL cancel via original handles, drain all members and refuse successful completion. | test_rooted_launch_owner_death_and_uncertain_drain |
+| WHEN Snapshot construction returns after a typed command, THE controller SHALL satisfy the existing final policy/inspection contract and SHALL NOT return unfenced. | test_rooted_launch_controller_fenced_before_return |
+| WHEN no command is selected, THE Snapshot SHALL retain all existing default isolation/refusals. | test_rooted_launch_default_contract_unchanged |
+| WHEN a genuinely copied interpreter/Torch cannot start or compute, THE launch SHALL preserve the real refusal and SHALL NOT claim ASR/video readiness. | test_rooted_launch_copied_runtime_refusal_is_not_readiness |
+
+Meaningful source unit: whole caller cohorts + exact canonical gate + same-SHA
+CI before completion. No model inference or video acceptance from kernel tests.
+
+## Initial RT2A Automated Criteria
+
+- WHEN preparation readiness is checked, THE Scope SHALL require kernel-bound
+  original PID1 and stopped PID2 before copying, without releasing either.
+  Tests: test_rooted_launch_original_owner_precedes_preparation,
+  test_rooted_launch_preparation_has_no_release_authority.
+- WHEN identities, namespace views, capabilities, NNP, member count or worker
+  state are invalid, THE Scope SHALL refuse while retaining original stop.
+  Test: test_rooted_launch_invalid_preparation_boundary_refuses.
+- WHEN a creator is concurrent or the scope closed, THE Scope SHALL refuse.
+  Tests: test_rooted_launch_preparation_refuses_multithread_creator,
+  test_rooted_launch_preparation_refuses_closed_scope.
+- WHEN deadline configuration is invalid or exceeds30seconds, THE Scope SHALL
+  refuse. Test: test_rooted_launch_preparation_invalid_deadline_refuses.
+- WHEN readiness is checked repeatedly, THE Scope SHALL preserve original
+  bounding capabilities and SHALL NOT leak acquired kernel descriptors.
+  Test: test_rooted_launch_preparation_retains_bounding_caps_without_fd_leaks.
+
+These tests do not satisfy the separate prepared-view, actual-exec or full-video
+criteria above. All task rows remain unchecked.
+
+## Prepared-View Witness Criteria
+
+- WHEN a witness is constructed, THE observer SHALL retain original stopped
+  PID2 and PID1 task/root/mount evidence before image preparation.
+  Test: test_rooted_launch_owner_reobserves_original_prepared_view.
+- WHEN prepared rights arrive, THE observer SHALL require a fresh nonce,
+  original PID1 kernel credentials, exactly three rights and sealed EOF.
+  Test: test_rooted_launch_prepared_handoff_framing_refuses.
+- WHEN root or namespace evidence is foreign, wrong-type, non-descendant,
+  writable, non-procfs or not PID1's actual root/cwd, THE observer SHALL refuse.
+  Test: test_rooted_launch_refuses_foreign_prepared_view.
+- WHEN original PID2 resumes, exits or changes view before the join, THE
+  observer SHALL refuse. Test: test_rooted_launch_prepared_worker_must_remain_held.
+- WHEN original descriptor slots are substituted or reopened, THE observer
+  SHALL refuse and SHALL NOT close foreign slots during cleanup.
+  Test: test_rooted_launch_prepared_view_preserves_substituted_slots.
+- WHEN a prepared observation repeats, THE observer SHALL recheck genuine
+  kernel evidence without signalling, namespace joining or executing.
+  Test: test_rooted_launch_prepared_view_is_not_execution_authority.
+- WHEN observation deadlines are invalid or a sender stalls, THE observer
+  SHALL refuse within the original finite lifetime.
+  Test: test_rooted_launch_prepared_view_deadline_refuses.
+
+No test above substitutes for actual copied SDK/worker fence/production release.
+# Joined-Worker Kernel Observation
+
+- WHEN the outside owner verifies a joined worker, THE observer SHALL require
+  the retained original PID2 in the exact prepared user/mount/root/cwd, stopped,
+  single-thread, untraced, NNP and with all five capability sets zero.
+  Tests: test_rooted_launch_owner_reobserves_joined_original_worker,
+  test_rooted_launch_joined_worker_damaged_transition_refuses.
+- WHEN authenticated prepared evidence is absent or the worker has not joined,
+  THE observer SHALL refuse without signalling or executing the worker.
+  Test: test_rooted_launch_joined_observation_requires_actual_transition.
+- WHEN joined observation repeats, THE observer SHALL recheck kernel evidence
+  without leaking descriptors or granting release/fence/SDK authority.
+  Test: test_rooted_launch_joined_observation_has_no_execution_authority.
+
+This observation does not prove Landlock/seccomp policy or close inherited FDs;
+those remain mandatory typed-launch checks before any copied execution.
+Authenticated-handoff, original death and reopened descriptor refusals are also
+covered by test_rooted_launch_joined_observation_requires_authenticated_handoff,
+test_rooted_launch_joined_observation_refuses_dead_original_scope and
+test_rooted_launch_joined_observation_preserves_substituted_description.
+# RT2B Worker Component Criteria
+
+- WHEN a typed command is malformed, THE declaration SHALL refuse before any
+  process or filesystem effect. Test: test_rooted_worker_command_refusals.
+- WHEN original PID2 receives its prepared view, THE worker SHALL authenticate
+  original PID1 credentials/nonce/exact rights/EOF and actual namespace/root
+  binding. Test: test_rooted_worker_prepared_handoff_refuses.
+- WHEN copied bytes differ from the declared manifest, THE worker SHALL refuse
+  without executing. Test: test_rooted_worker_changed_copied_command_refuses.
+- WHEN the original worker executes, THE worker SHALL drop all capabilities,
+  close outside handles and establish mandatory Landlock plus the shared
+  notification fence before original registry startup and actual copied exec.
+  Test: test_rooted_worker_actual_copied_elf_is_fenced_and_drained.
+- WHEN the shared worker fence is used, THE broker SHALL inject only genuine
+  original-thread comm descriptors and SHALL refuse unsupported open shapes.
+  Test: test_rooted_worker_shared_notification_precedes_write_refusal.
+
+Production typed Snapshot controller adoption and final fence/drain remain
+unachieved by these component tests; no model/runtime/video acceptance follows.
+WHEN the exact existing base Python is copied, THE diagnostic SHALL actually
+start it under the fenced original worker and confirm current kernel caps/NNP,
+without a fallback interpreter or model/SDK import.
+Test: test_rooted_worker_existing_copied_python_starts_without_outside_handles.
+This is base-interpreter startup only, not complete Cortex SDK closure or Torch.

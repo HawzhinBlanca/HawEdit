@@ -1,0 +1,14 @@
+==> lint
+tests\test_studio_storage.py:93:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+   |
+92 |       monkeypatch.setattr(uploads, "_probe", probe_then_replace)
+93 | /     with MEDIA.open("rb") as stream:
+94 | |         with pytest.raises((UploadError, StudioStorageError, OSError)):
+   | |_______________________________________________________________________^ SIM117
+95 |               store.receive(ticket["upload_id"], stream, MEDIA.stat().st_size)
+96 |       assert (media.read_bytes(), manifest.read_bytes()) == before
+   |
+   = help: Combine `with` statements
+
+Found 1 error.
+No fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).

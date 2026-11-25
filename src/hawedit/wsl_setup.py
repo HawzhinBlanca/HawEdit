@@ -10,6 +10,7 @@ does not duplicate the multi-gigabyte environment.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import importlib
 import json
@@ -851,6 +852,12 @@ def _windows_file_lock(stream: BinaryIO, lock_path: Path, msvcrt: object) -> Ite
             msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
             break
         except OSError as exc:
+            # The Windows CRT's EDEADLOCK is 36, unlike POSIX errno.EDEADLK.
+            if exc.errno not in (errno.EACCES, 36):
+                raise WslRuntimeError(
+                    f"cannot acquire OmniASR setup lock {lock_path}: {exc}; "
+                    "choose a local runtime directory supporting file locks"
+                ) from exc
             if time.monotonic() >= deadline:
                 raise WslRuntimeError(
                     f"timed out waiting for OmniASR setup lock {lock_path}"
@@ -1058,7 +1065,9 @@ del run_request, ASRInferencePipeline, Qwen3ASRModel, provision_omni_assets, tor
 if not torch.cuda.is_available():
     raise SystemExit("OmniASR installed, but CUDA is not visible inside WSL2")
 if torch.cuda.device_count() < 2:
-    raise SystemExit("HawEdit OmniASR needs two visible GPUs (LLM cuda:0, CTC cuda:1)")
+    raise SystemExit(
+        "HawEdit OmniASR needs two visible GPUs (Stage 1 runs on cuda:1; cuda:0 stays visible)"
+    )
 packages = {}
 for distribution in importlib.metadata.distributions():
     raw_name = distribution.metadata.get("Name")
@@ -1366,8 +1375,11 @@ def probe_wsl_runtime(
     runtime_root: Path | None = None,
     package_source: Path | None = None,
     executable: str = "wsl.exe",
+    timeout_seconds: int = 300,
 ) -> WslRuntimeProbe:
     """Re-hash the live WSL assets; a setup-time receipt alone cannot prove mutable bytes."""
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 1_800:
+        raise WslRuntimeError("timeout_seconds must be an integer between 1 and 1800")
     receipt = load_wsl_runtime_receipt(
         distro=distro,
         runtime_root=runtime_root,
@@ -1376,20 +1388,31 @@ def probe_wsl_runtime(
     )
     runtime_python = wsl_path(receipt.generation_root, receipt.distro, executable) + "/bin/python"
     runtime_source = wsl_path(receipt.source_root, receipt.distro, executable)
-    result = subprocess.run(
-        [
-            *wsl_prefix(receipt.distro, executable),
-            "env",
-            "PYTHONDONTWRITEBYTECODE=1",
-            f"PYTHONPATH={runtime_source}",
-            runtime_python,
-            "-c",
-            _PROBE_SCRIPT,
-        ],
-        capture_output=True,
-        check=False,
-        timeout=120.0,
-    )
+    try:
+        result = subprocess.run(
+            [
+                *wsl_prefix(receipt.distro, executable),
+                "env",
+                "PYTHONDONTWRITEBYTECODE=1",
+                f"PYTHONPATH={runtime_source}",
+                runtime_python,
+                "-c",
+                _PROBE_SCRIPT,
+            ],
+            capture_output=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WslRuntimeError(
+            f"OmniASR WSL integrity check exceeded {timeout_seconds} seconds; "
+            "no verified readiness. Confirm the previous WSL check exited before "
+            "retrying with a larger bounded timeout_seconds."
+        ) from exc
+    except OSError as exc:
+        raise WslRuntimeError(
+            f"OmniASR WSL integrity check unavailable; no verified readiness: {exc}"
+        ) from exc
     if result.returncode != 0:
         error = result.stderr.decode("utf-8", "replace")[-1_200:]
         raise WslRuntimeError(f"OmniASR WSL live verification failed: {error or 'no detail'}")

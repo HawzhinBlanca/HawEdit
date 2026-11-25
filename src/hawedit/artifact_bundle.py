@@ -11,16 +11,19 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from hawedit.atomic_fs import rename_directory_noreplace
+from hawedit.studio_private import PrivateDirectory, StudioStorageError
 from hawedit.transcripts import validate_media_id
 
 __all__ = ["ArtifactBundle", "BundleAlreadyExists", "BundleError"]
 
 _SUFFIXES: Final = ("ass", "mp4", "srt", "edl", "json", "measured.json", "edit_plan.json")
+_PROOF_SUFFIXES: Final = ("review.json", "review.sig")
 _REPARSE_FLAG: Final = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _DirectoryIdentity = tuple[int, int]
 _FileIdentity = tuple[int, int, int, int, int]
@@ -66,7 +69,7 @@ def _file_identity(metadata: os.stat_result) -> _FileIdentity:
     )
 
 
-def _flush_bound_artifact(path: Path, *, name: str) -> _FileIdentity:
+def _flush_bound_artifact(path: Path, *, name: str, private: bool = False) -> _FileIdentity:
     """Flush one private regular file without following a replacement between checks."""
     try:
         before = os.lstat(path)
@@ -92,6 +95,16 @@ def _flush_bound_artifact(path: Path, *, name: str) -> _FileIdentity:
                 raise BundleError(
                     f"delivery artifact {name} identity changed while it was being validated"
                 )
+            if private and os.name == "posix":
+                geteuid = getattr(os, "geteuid", None)
+                fchmod = getattr(os, "fchmod", None)
+                if not callable(geteuid) or not callable(fchmod):
+                    raise BundleError("private artifact ownership controls are unavailable")
+                if os.fstat(descriptor).st_uid != geteuid():
+                    raise BundleError(f"new private artifact {name} is not owned by this worker")
+                # Only freshly generated files in this exclusive, bound staging leaf.
+                # Prior source, candidate and owner/trust artifacts are never repaired.
+                fchmod(descriptor, 0o600)
             os.fsync(descriptor)
             if (
                 _file_identity(os.fstat(descriptor)) != expected
@@ -115,27 +128,40 @@ class ArtifactBundle:
     final_dir: Path
     _root_identity: _DirectoryIdentity
     _staging_identity: _DirectoryIdentity
+    _proof_bearing: bool = False
+    _private_storage: bool = False
 
     @classmethod
-    def create(cls, root: Path, bundle_id: str) -> ArtifactBundle:
+    def create(
+        cls, root: Path, bundle_id: str, *, proof_bearing: bool = False, private: bool = False
+    ) -> ArtifactBundle:
+        if type(proof_bearing) is not bool or type(private) is not bool:
+            raise BundleError("proof-bearing bundle version must be an exact Boolean")
         safe_id = validate_media_id(bundle_id)
         lexical_root = Path(os.path.abspath(root))
         try:
-            lexical_root.mkdir(parents=True, exist_ok=True)
+            private_root = PrivateDirectory(lexical_root) if proof_bearing or private else None
+            if private_root is None:
+                lexical_root.mkdir(parents=True, exist_ok=True)
             root_identity = _bound_directory(lexical_root, label="delivery root")
             final_dir = lexical_root / safe_id
             if os.path.lexists(final_dir):
                 raise BundleAlreadyExists(f"refusing to overwrite completed bundle {final_dir}")
-            staging_dir = Path(
-                tempfile.mkdtemp(prefix=f".{safe_id}.", suffix=".staging", dir=lexical_root)
-            )
+            if private_root is not None:
+                staging_dir = private_root.child(
+                    "publication-" + uuid.uuid4().hex + ".staging", create=True, exclusive=True
+                ).path
+            else:
+                staging_dir = Path(
+                    tempfile.mkdtemp(prefix=f".{safe_id}.", suffix=".staging", dir=lexical_root)
+                )
             staging_identity = _bound_directory(staging_dir, label="private delivery bundle")
             _assert_directory_identity(lexical_root, root_identity, label="delivery root")
         except BundleAlreadyExists:
             raise
         except BundleError:
             raise
-        except OSError as exc:
+        except (OSError, StudioStorageError) as exc:
             raise BundleError(
                 f"could not create private delivery bundle under {root}: {exc}"
             ) from exc
@@ -146,7 +172,16 @@ class ArtifactBundle:
             final_dir,
             root_identity,
             staging_identity,
+            proof_bearing,
+            proof_bearing or private,
         )
+
+    @property
+    def _member_suffixes(self) -> tuple[str, ...]:
+        return _SUFFIXES + _PROOF_SUFFIXES if self._proof_bearing else _SUFFIXES
+
+    def _member_name(self, suffix: str) -> str:
+        return suffix if suffix in _PROOF_SUFFIXES else f"{self.bundle_id}.{suffix}"
 
     def _assert_boundaries(self) -> None:
         _assert_directory_identity(self.root, self._root_identity, label="delivery root")
@@ -168,15 +203,15 @@ class ArtifactBundle:
 
     @property
     def staging_paths(self) -> tuple[Path, ...]:
-        return tuple(self.staging_dir / f"{self.bundle_id}.{suffix}" for suffix in _SUFFIXES)
+        return tuple(self.staging_dir / self._member_name(s) for s in self._member_suffixes)
 
     @property
     def final_paths(self) -> tuple[Path, ...]:
-        return self.final_paths_for(self.root, self.bundle_id)
+        return tuple(self.final_dir / self._member_name(s) for s in self._member_suffixes)
 
     def staged_path(self, suffix: str) -> Path:
         try:
-            index = _SUFFIXES.index(suffix)
+            index = self._member_suffixes.index(suffix)
         except ValueError as exc:
             raise BundleError(f"{suffix!r} is not a delivery artifact suffix") from exc
         self._assert_boundaries()
@@ -184,7 +219,7 @@ class ArtifactBundle:
 
     def final_path(self, suffix: str) -> Path:
         try:
-            index = _SUFFIXES.index(suffix)
+            index = self._member_suffixes.index(suffix)
         except ValueError as exc:
             raise BundleError(f"{suffix!r} is not a delivery artifact suffix") from exc
         return self.final_paths[index]
@@ -207,6 +242,9 @@ class ArtifactBundle:
 
     def _validate(self) -> dict[str, _FileIdentity]:
         self._assert_boundaries()
+        if self._private_storage:
+            PrivateDirectory(self.root, create=False)
+            PrivateDirectory(self.staging_dir, create=False)
         expected = {path.name: path for path in self.staging_paths}
         try:
             actual = {path.name: path for path in self.staging_dir.iterdir()}
@@ -220,7 +258,14 @@ class ArtifactBundle:
             raise BundleError(
                 f"private bundle is not the exact delivery set; missing={missing}, extra={extra}"
             )
-        identities = {name: _flush_bound_artifact(path, name=name) for name, path in actual.items()}
+        identities = {
+            name: _flush_bound_artifact(path, name=name, private=self._private_storage)
+            for name, path in actual.items()
+        }
+        if self._private_storage:
+            directory = PrivateDirectory(self.staging_dir, create=False)
+            for name in actual:
+                directory.check_file(name)
         self._assert_boundaries()
         return identities
 

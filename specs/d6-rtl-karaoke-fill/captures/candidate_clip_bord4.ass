@@ -1,0 +1,20 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Kurdish,Noto Naskh Arabic,108,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,80,80,360,-1
+Style: KurdishHighlight,Noto Naskh Arabic,108,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,80,80,360,-1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.00,Kurdish,,0,0,0,,‏{\fscx118\fscy118}ڕۆژنامەوانی{\fscx100\fscy100} کوردی لە هەولێر.
+Dialogue: 1,0:00:00.00,0:00:02.00,KurdishHighlight,,0,0,0,,{\clip(904,1452,904,1553)\t(0,600,\clip(575,1452,904,1553))}‏{\fscx118\fscy118}ڕۆژنامەوانی{\fscx100\fscy100} کوردی لە هەولێر.
+Dialogue: 1,0:00:00.60,0:00:02.00,KurdishHighlight,,0,0,0,,{\clip(568,1460,568,1539)\t(0,400,\clip(414,1460,568,1539))}‏{\fscx118\fscy118}ڕۆژنامەوانی{\fscx100\fscy100} کوردی لە هەولێر.
+Dialogue: 1,0:00:01.00,0:00:02.00,KurdishHighlight,,0,0,0,,{\clip(406,1460,406,1522)\t(0,200,\clip(358,1460,406,1522))}‏{\fscx118\fscy118}ڕۆژنامەوانی{\fscx100\fscy100} کوردی لە هەولێر.
+Dialogue: 1,0:00:01.20,0:00:02.00,KurdishHighlight,,0,0,0,,{\clip(350,1460,350,1535)\t(0,600,\clip(178,1460,350,1535))}‏{\fscx118\fscy118}ڕۆژنامەوانی{\fscx100\fscy100} کوردی لە هەولێر.

@@ -35,17 +35,14 @@ __all__ = [
     "edit_distance",
     "named_entity_error_rate",
     "normalized_cer",
+    "normalized_wer",
     "spacing_free_cer",
     "substring_edit_distance",
 ]
 
 
-def edit_distance(a: str, b: str) -> int:
-    """Levenshtein distance in Unicode codepoints.
-
-    Codepoints, not bytes: Kurdish characters are multi-byte in UTF-8, and a byte-wise
-    distance would inflate every CER in this system by a factor of roughly two.
-    """
+def edit_distance(a: Sequence[str], b: Sequence[str]) -> int:
+    """Levenshtein distance in sequence items (Unicode codepoints for `str`, tokens for words)."""
     if a == b:
         return 0
     if not a:
@@ -118,6 +115,17 @@ def cer(reference: str, hypothesis: str) -> float:
 def normalized_cer(reference: str, hypothesis: str) -> float:
     """CER after §4.1 normalization of both sides — the §8.1 headline accuracy metric."""
     return cer(normalize_sorani(reference), normalize_sorani(hypothesis))
+
+
+def normalized_wer(reference: str, hypothesis: str) -> float:
+    """Word error rate after §4.1 normalization of both sides."""
+    ref_words = normalize_sorani(reference).split()
+    if not ref_words:
+        raise ValueError(
+            "empty reference: word error rate is undefined without a reference "
+            "transcript. This is a corpus defect — fix the labelled set, do not score it."
+        )
+    return edit_distance(ref_words, normalize_sorani(hypothesis).split()) / len(ref_words)
 
 
 def _strip_whitespace(text: str) -> str:

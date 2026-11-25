@@ -16,6 +16,7 @@ run on real weights.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -31,7 +32,9 @@ import pytest
 
 from hawedit.asr import (
     CHAMPION_ADAPTER_ENV,
+    CHAMPION_CHECKPOINT_ENV,
     LONG_AUDIO_THRESHOLD_S,
+    AsrProductionFailure,
     ASRResult,
     ChampionUnavailable,
     Hardware,
@@ -49,18 +52,25 @@ from hawedit.asr import (
     create_omni_asr_producer,
     long_audio_failure_rate,
     resolve_champion_adapter,
+    resolve_champion_checkpoint,
     transcribe_prepared_segments,
     validate_adapter,
 )
-from hawedit.asr_worker import run_request
+from hawedit.asr_worker import assert_gpu_headroom, run_request
 from hawedit.corpus import Condition, CorpusItem, Dialect
 from hawedit.forced_alignment import AlignmentInfeasible
-from hawedit.omni_assets import CANONICAL_CTC_CARD, CANONICAL_LLM_CARD, OmniAssetError
+from hawedit.omni_assets import (
+    CANONICAL_CTC_CARD,
+    CANONICAL_LLM_CARD,
+    FusedCheckpointAsset,
+    OmniAssetError,
+)
 from hawedit.registry import ModelEntry, ModelExcluded, ModelNotInRegistry
 from hawedit.transcripts import (
     AsrProvenance,
     RawTranscript,
     RejectedValidatorCorrection,
+    TranscriptStore,
     Word,
 )
 
@@ -423,6 +433,12 @@ def test_llm_and_ctc_forwards_start_in_parallel() -> None:
     class Backend(OmniAsrBackend):
         def _load(self) -> tuple[object, object]:
             return Llm(), object()
+
+        def _transcribe_llm(self, pipeline: object, audio_path: Path) -> list[str]:
+            # This test isolates forward scheduling; real completion admission is
+            # covered by its own contracts and the actual-model probe.
+            assert isinstance(pipeline, Llm)
+            return pipeline.transcribe([str(audio_path)], lang=[self.language], batch_size=1)
 
         def _ctc_emissions(self, pipeline: object, audio_path: Path) -> tuple[object, int, str]:
             ctc_started.set()
@@ -801,7 +817,7 @@ def test_wsl_worker_applies_the_same_validator_routing_contract(tmp_path: Path) 
 def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_infeasible(
     tmp_path: Path,
 ) -> None:
-    """One rejected correction must not discard a finished 547-region episode."""
+    """D-278 halts production; D-223's original aligned input remains diagnostic evidence."""
 
     class RefusingCorrectionAlignment(RoutingBackend):
         def align_segment(
@@ -826,7 +842,17 @@ def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_inf
     backend = RefusingCorrectionAlignment((-0.1,), disagree_at=0)
     validator = FakeValidator()
 
-    transcript = run_request(request, tmp_path / "output.json", backend, validator)
+    output = tmp_path / "output.json"
+    with pytest.raises(AsrProductionFailure) as caught:
+        run_request(request, output, backend, validator)
+    assert not output.exists(), "a rejected correction must not publish production output"
+    assert caught.value.stage == "validator alignment"
+    transcript = _assemble_canonical_transcript(
+        "episode",
+        caught.value.diagnostic_results,
+        caught.value.unaligned,
+        rejected_validator_corrections=caught.value.rejected_validator_corrections,
+    )
 
     assert transcript.words[0].start_ms == 2_000, "the original canonical alignment was lost"
     assert transcript.asr.validated_by is None, "a rejected correction did not produce text"
@@ -839,7 +865,9 @@ def test_wsl_worker_retains_canonical_alignment_when_validator_correction_is_inf
             reason="AlignmentInfeasible: 15 frames cannot emit 21 validator tokens",
         ),
     )
-    persisted = RawTranscript.from_json((tmp_path / "output.json").read_text(encoding="utf-8"))
+    diagnostic_store = TranscriptStore(tmp_path / "explicit-diagnostic")
+    diagnostic_store.write_raw(transcript)
+    persisted = diagnostic_store.read_raw("episode")
     assert persisted == transcript
 
 
@@ -918,16 +946,43 @@ def test_qwen_validator_uses_the_official_loader_and_model_card_contract(
     monkeypatch.setattr(asr_module, "verified_checkpoint_access", verified)
     monkeypatch.setattr(asr_module, "assert_transformers_config_safe", safe_config)
     validator = QwenSoraniValidator(model_dir)
-    assert validator.transcribe_segment(audio, 1.0) == "سۆرانی."
+    loaded_model = validator._load()
+    assert isinstance(loaded_model, Model)
     assert loaded["path"] == str(verified_dir.resolve())
     assert loaded["kwargs"] == {
         "dtype": "bf16",
         "device_map": "cuda:1",
         "max_inference_batch_size": 1,
     }
-    assert loaded["transcribe"] == {"audio": str(audio)}
+    import numpy as np
+
+    adapted = asr_module._qwen_audio_input(audio)
+    assert isinstance(adapted, tuple)
+    waveform, sample_rate = adapted
+    assert sample_rate == 16_000
+    assert waveform.dtype == np.float32
+    assert waveform.shape == (16_000,)
+    np.testing.assert_array_equal(waveform, np.zeros(16_000, dtype=np.float32))
     assert integrity_calls == [(validator.model_id, model_dir)]
     assert not lock_active
+    from hawedit.asr_completion import DecodeIncomplete
+
+    with pytest.raises(DecodeIncomplete):
+        validator.transcribe_segment(audio, 1.0)
+    assert "transcribe" not in loaded
+
+
+def test_stage_1_defaults_to_gpu_1_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-331: LLM, CTC and validator all default to GPU 1; GPU 0 is never chosen silently."""
+    for name in ("LLM", "CTC", "VALIDATOR"):
+        monkeypatch.delenv(f"HAWEDIT_ASR_{name}_DEVICE", raising=False)
+    backend = OmniAsrBackend()
+    assert (backend.llm_device, backend.ctc_device) == ("cuda:1", "cuda:1")
+    (tmp_path / "validator").mkdir()
+    assert QwenSoraniValidator(tmp_path / "validator").device == "cuda:1"
+    # An explicit operator choice is still honoured.
+    monkeypatch.setenv("HAWEDIT_ASR_LLM_DEVICE", "cuda:0")
+    assert OmniAsrBackend().llm_device == "cuda:0"
 
 
 def test_qwen_validator_device_env_override(
@@ -1307,6 +1362,9 @@ def _capture_wsl_request(
     tmp_path: Path,
     stage1: Path,
     adapter: Path | None,
+    *,
+    fault: str | None = None,
+    fused: Path | None = None,
 ) -> dict[str, Any]:
     """Run the producer with the worker faked, and return the request it wrote.
 
@@ -1333,11 +1391,19 @@ def _capture_wsl_request(
             return subprocess.CompletedProcess(args, 0, b"/mnt/c/shared\n", b"")
         if "hawedit.asr_worker" in args:
             seen.append(json.loads((stage1 / "omni-asr-request.json").read_text(encoding="utf-8")))
+            if fault == "drift":
+                assert adapter is not None
+                (adapter / "tokenizer.model").write_bytes(b"changed-during-worker")
+            returned_identity = (
+                "lora:" + "0" * 64 if fault == "foreign" else seen[-1].get("model_identity")
+            )
             published = RawTranscript(
                 media_id="zar38",
                 text_ckb="کوردی.",
                 words=(Word(w="کوردی.", start_ms=1_050, end_ms=1_500, conf=0.9),),
-                asr=AsrProvenance(canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi"),
+                asr=AsrProvenance(
+                    canonical="omniASR_LLM_7B_v2", aligner="ctc_viterbi", adapter=returned_identity
+                ),
             )
             (stage1 / "omni-asr-worker-output.json").write_text(
                 published.to_json() + "\n", encoding="utf-8"
@@ -1349,7 +1415,9 @@ def _capture_wsl_request(
     monkeypatch.setattr("hawedit.asr.subprocess.run", fake_run)
     monkeypatch.setattr("hawedit.asr.ModelStore", HostModelStore)
     monkeypatch.setattr("hawedit.asr.verified_checkpoint_access", verified)
-    WslOmniAsrProducer(interpreter="/opt/hawedit/python", lora_adapter=adapter).transcribe(
+    WslOmniAsrProducer(
+        interpreter="/opt/hawedit/python", lora_adapter=adapter, fused_checkpoint=fused
+    ).transcribe(
         "zar38",
         tmp_path / "audio.wav",
         (SimpleNamespace(start_ms=1_000, end_ms=2_000),),
@@ -1372,6 +1440,26 @@ def test_the_wsl_request_carries_the_adapter_across_the_boundary(
     assert request["lora_adapter"] == "/mnt/c/shared", (
         "the adapter did not reach the worker, so it would have run base weights"
     )
+
+
+def test_the_wsl_request_carries_the_fused_checkpoint_across_the_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-331: the fused champion crosses the same single channel under its own identity."""
+    (tmp_path / "v12").mkdir()
+    checkpoint = tmp_path / "v12" / "kurdish_omniasr_7b_v12_c750.pt"
+    checkpoint.write_bytes(b"synthetic-fused-weights")
+    digest = hashlib.sha256(b"synthetic-fused-weights").hexdigest()
+    allowed = FusedCheckpointAsset("synthetic", checkpoint.name, 23, digest)
+    monkeypatch.setattr("hawedit.omni_assets.FUSED_CHECKPOINT_ASSETS", (allowed,))
+
+    request = _capture_wsl_request(
+        monkeypatch, tmp_path, tmp_path / "stage1", None, fused=checkpoint
+    )
+
+    assert request["fused_checkpoint"] == "/mnt/c/shared"
+    assert request["model_identity"] == f"fused:{digest}"
+    assert "lora_adapter" not in request
 
 
 def test_a_stock_wsl_request_contains_only_the_required_schema_fields(
@@ -1522,3 +1610,141 @@ def test_the_environment_override_wins_over_the_defaults(tmp_path: Path) -> None
         env={CHAMPION_ADAPTER_ENV: str(bundle)},
     )
     assert found == bundle
+
+
+def test_the_fused_champion_environment_selects_or_halts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-331: unset keeps the LoRA default; set means that checkpoint or an honest halt."""
+    assert resolve_champion_checkpoint(env={}) is None
+    assert resolve_champion_checkpoint(env={CHAMPION_CHECKPOINT_ENV: "  "}) is None
+    (tmp_path / "v12").mkdir()
+    checkpoint = tmp_path / "v12" / "v12.pt"
+    checkpoint.write_bytes(b"fused")
+    digest = hashlib.sha256(b"fused").hexdigest()
+    selected = {CHAMPION_CHECKPOINT_ENV: str(checkpoint)}
+    with pytest.raises(ChampionUnavailable, match="allowlist"):
+        resolve_champion_checkpoint(env=selected)
+    allowed = FusedCheckpointAsset("synthetic", "v12.pt", 5, digest)
+    monkeypatch.setattr("hawedit.omni_assets.FUSED_CHECKPOINT_ASSETS", (allowed,))
+    assert resolve_champion_checkpoint(env=selected) == checkpoint
+    with pytest.raises(ChampionUnavailable, match="missing"):
+        resolve_champion_checkpoint(env={CHAMPION_CHECKPOINT_ENV: str(tmp_path / "absent.pt")})
+
+
+@pytest.mark.parametrize("adapted", [False, True])
+def test_host_refuses_foreign_worker_adapter_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, adapted: bool
+) -> None:
+    adapter = _adapter_bundle(tmp_path / "adapter") if adapted else None
+    with pytest.raises(RuntimeError, match="adapter identity"):
+        _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", adapter, fault="foreign")
+    assert (tmp_path / "stage1" / "omni-asr-worker-output.json").is_file()
+
+
+def test_host_refuses_tokenizer_drift_during_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    adapter = _adapter_bundle(tmp_path / "adapter")
+    with pytest.raises(RuntimeError, match="adapter identity"):
+        _capture_wsl_request(monkeypatch, tmp_path, tmp_path / "stage1", adapter, fault="drift")
+    assert (adapter / "tokenizer.model").read_bytes() == b"changed-during-worker"
+
+
+def test_changed_adapter_resume_preserves_prior_request_and_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    adapter = _adapter_bundle(tmp_path / "adapter")
+    stage1 = tmp_path / "stage1"
+    _capture_wsl_request(monkeypatch, tmp_path, stage1, adapter)
+    request = stage1 / "omni-asr-request.json"
+    output = stage1 / "omni-asr-worker-output.json"
+    before = (request.read_bytes(), output.read_bytes())
+    (adapter / "tokenizer.model").write_bytes(b"new-tokenizer-revision")
+    with pytest.raises(RuntimeError, match="different Stage 1 request") as refused:
+        _capture_wsl_request(monkeypatch, tmp_path, stage1, adapter)
+    message = str(refused.value)
+    assert "adapter" in message
+    assert "Preserve" in message
+    assert "new work directory" in message
+    assert "Delete" not in message
+    assert (request.read_bytes(), output.read_bytes()) == before
+
+
+@pytest.mark.parametrize("route", ["native", "worker"])
+def test_producer_refuses_identity_drift_during_inference(tmp_path: Path, route: str) -> None:
+    class ChangedBackend(FakeOmniBackend):
+        adapter_name: str | None = None
+
+        def transcribe_segment(self, audio_path: Path, duration_s: float) -> SegmentTranscript:
+            result = super().transcribe_segment(audio_path, duration_s)
+            self.adapter_name = "lora:" + "a" * 64
+            return result
+
+    audio = tmp_path / "speech.wav"
+    _write_pcm(audio)
+    output = tmp_path / "output.json"
+    backend = ChangedBackend()
+    if route == "native":
+        with pytest.raises(RuntimeError, match="identity changed"):
+            OmniAsrProducer(backend).transcribe(
+                "probe", audio, (SimpleNamespace(start_ms=0, end_ms=1000),), tmp_path / "native"
+            )
+    else:
+        request = tmp_path / "request.json"
+        request.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "media_id": "probe",
+                    "validator_model_dir": "unused-before-identity-refusal",
+                    "segments": [{"path": audio.name, "start_ms": 0, "end_ms": 1000}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="identity changed"):
+            run_request(request, output, backend=backend)
+    assert not output.exists()
+
+
+def test_gpu_headroom_halts_naming_the_busy_gpu() -> None:
+    """D-331: the :8000 server's ~14.6 GB on GPU 1 is an honest halt, never a divert."""
+    gib = 1024**3
+    seen: list[int] = []
+
+    def busy(index: int) -> tuple[int, int]:
+        seen.append(index)
+        return (9 * gib, 24 * gib)
+
+    with pytest.raises(RuntimeError, match=r"GPU 1 has 9\.0 of 24\.0 GiB free.*:8000"):
+        assert_gpu_headroom(("cuda:1", "cuda:1"), busy, environ={})
+    assert seen == [1], "each distinct device is checked once"
+    assert_gpu_headroom(("cuda:1",), lambda index: (23 * gib, 24 * gib), environ={})
+    assert_gpu_headroom(("cuda:1",), busy, environ={"HAWEDIT_ASR_MIN_FREE_GPU_GIB": "8"})
+    assert_gpu_headroom(("cpu",), lambda index: pytest.fail("cpu has no GPU budget"), environ={})
+
+
+def test_worker_checks_gpu_headroom_before_loading_the_real_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    segment = tmp_path / "speech-0000.wav"
+    _write_pcm(segment, 1.0)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "media_id": "episode",
+                "validator_model_dir": "unused-before-inference",
+                "segments": [{"path": segment.name, "start_ms": 1_000, "end_ms": 2_000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    busy = SimpleNamespace(cuda=SimpleNamespace(mem_get_info=lambda index: (0, 24 * 1024**3)))
+    monkeypatch.setitem(sys.modules, "torch", busy)
+    monkeypatch.setattr(OmniAsrBackend, "_load", lambda self: pytest.fail("loaded on a busy GPU"))
+    with pytest.raises(RuntimeError, match="GPU 1 has 0.0"):
+        run_request(request, tmp_path / "output.json")
+    assert not (tmp_path / "output.json").exists()

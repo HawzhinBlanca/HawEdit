@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from hawedit.gate import CoverageTracer
+from media_profiles import MediaProfileError, select_media_profile
 
 _tracer = CoverageTracer()
 
@@ -43,6 +44,16 @@ def pytest_ignore_collect(collection_path: Any, config: Any = None) -> bool | No
         media_root = os.environ.get("HAWEDIT_MEDIA_ROOT", "").strip()
         if not media_root:
             return True
+        try:
+            profile = select_media_profile(
+                Path(media_root), os.environ.get("HAWEDIT_MEDIA_PROFILE", "auto")
+            )
+        except MediaProfileError as exc:
+            raise pytest.UsageError(str(exc)) from exc
+        if path_obj.name == "test_real_media_tier.py":
+            return profile != "legacy-ep29"
+        if path_obj.name == "test_current_media_tier.py":
+            return profile != "current-zar"
     return None
 
 
@@ -91,3 +102,13 @@ def media_root() -> Path:
 def ep29_chunk50min(media_root: Path) -> Path:
     """Fixture returning validated canonical video path."""
     return resolve_and_validate_media_file(media_root)
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    raw = os.environ.get("HAWEDIT_MEDIA_ROOT", "").strip()
+    if not raw:
+        description = "not configured; real-media tests were not collected"
+    else:
+        profile = select_media_profile(Path(raw), os.environ.get("HAWEDIT_MEDIA_PROFILE", "auto"))
+        description = f"{profile}; root={Path(raw).resolve()} (source-specific assertions)"
+    terminalreporter.write_sep("=", f"Real-media tier: {description}")

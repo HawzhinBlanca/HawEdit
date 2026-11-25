@@ -19,7 +19,7 @@ import pytest
 
 import hawedit.vertex_acceptance as acceptance_module
 from hawedit.gemini import Governance, VertexGeminiJudge
-from hawedit.judge import JudgeFrame, JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, JudgeFrame, JudgeRequest, JudgeVerdict
 from hawedit.vertex_acceptance import (
     SIGNATURE_NAMESPACE,
     PreparedVertexAcceptance,
@@ -91,7 +91,7 @@ def _private_inputs(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
             "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
             "use_scope": "one confidential Vertex acceptance request only",
         },
-        "model_id": "gemini-2.5-pro",
+        "model_id": KURDISH_EDITORIAL_JUDGE,
         "project": "approved-news-project",
         "request": {
             "candidate_id": "vertex-client-001:s0",
@@ -237,7 +237,7 @@ class _Judge:
                 title_ckb="ناونیشانی نهێنی",
                 description_ckb="وەسفی نهێنی",
                 hashtags_ckb=("#نهێنی",),
-                judge="gemini-2.5-pro",
+                judge=KURDISH_EDITORIAL_JUDGE,
                 clip_in_ms=100,
                 clip_out_ms=1_700,
             ),

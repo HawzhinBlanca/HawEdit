@@ -18,6 +18,7 @@ from hawedit.reframe import (
     choose_face,
     layout_policy,
     median_face_box,
+    per_shot_face_boxes,
     probe_first_frame_face,
     stabilize,
     validate_speaker_focus_points,
@@ -115,6 +116,69 @@ def test_speaker_focus_points_are_strictly_ordered_and_inside_the_final_clip() -
         validate_speaker_focus_points(
             (SpeakerFocusPoint(1_000, 100, "SPEAKER_00"),), turns, 100, 1_000
         )
+
+
+@pytest.mark.parametrize(
+    ("state", "speaking", "confidence"),
+    [
+        ("listener", False, 1.0),
+        ("unknown", False, 1.0),
+        ("off_screen", False, 1.0),
+        ("speaker", False, 1.0),
+        ("speaker", True, 0.59),
+    ],
+)
+def test_layout_policy_refuses_unestablished_camera_evidence(
+    state: str, speaking: bool, confidence: float
+) -> None:
+    turns = (Segment(0, 2_000, "SPEAKER_00"),)
+    points = (
+        SpeakerFocusPoint(100, 800, "SPEAKER_00", state, speaking, confidence),
+        SpeakerFocusPoint(1_000, 800, "SPEAKER_00", state, speaking, confidence),
+    )
+    assert layout_policy(points, turns, 0, 2_000) == ()
+
+
+@pytest.mark.parametrize("cuts", [(1_000,), (1_000, 1_500)])
+def test_layout_policy_refuses_ambiguous_post_cut_seed(cuts: tuple[int, ...]) -> None:
+    turns = (Segment(0, 3_000, "SPEAKER_00"),)
+    points: tuple[SpeakerFocusPoint, ...] = (
+        SpeakerFocusPoint(500, 200, "SPEAKER_00"),
+        SpeakerFocusPoint(1_100, 800, "SPEAKER_00", "listener", False, 0.0),
+        SpeakerFocusPoint(1_700, 400, "SPEAKER_00"),
+    )
+    if len(cuts) == 1:
+        points = points[:2]
+    assert layout_policy(points, turns, 0, 3_000, shot_cuts_ms=cuts) == ()
+
+
+@pytest.mark.parametrize("after_cut", [False, True])
+def test_layout_policy_seeds_from_first_verified_observation(after_cut: bool) -> None:
+    turns = (Segment(0, 3_000, "SPEAKER_00"),)
+    points: tuple[SpeakerFocusPoint, ...] = (
+        SpeakerFocusPoint(1_100, 800, "SPEAKER_00", "unknown", False, 0.0),
+        SpeakerFocusPoint(1_700, 400, "SPEAKER_00"),
+        SpeakerFocusPoint(2_100, 850, "SPEAKER_00", "listener", False, 0.0),
+    )
+    if after_cut:
+        points = (SpeakerFocusPoint(500, 200, "SPEAKER_00"), *points)
+    path = layout_policy(points, turns, 0, 3_000, shot_cuts_ms=(1_000,) if after_cut else ())
+    assert path
+    assert all(point.center_x not in (800, 850) for point in path)
+    if after_cut:
+        assert any(point.center_x == 200 for point in path if point.at_ms < 1_000)
+        assert all(point.center_x == 400 for point in path if point.at_ms > 1_000)
+    else:
+        assert path[0] == FocusPoint(1_700, 400)
+        assert all(point.center_x == 400 for point in path)
+
+
+def test_structural_listener_validation_does_not_assert_camera_admission() -> None:
+    turns = (Segment(0, 2_000, "SPEAKER_00"),)
+    points = (SpeakerFocusPoint(100, 800, "SPEAKER_00", "listener", False, 0.0),)
+    assert validate_speaker_focus_points(points, turns, 0, 2_000) == (FocusPoint(100, 800),)
+    assert points[0].state == "listener" and not points[0].is_speaking
+    assert layout_policy(points, turns, 0, 2_000) == ()
 
 
 def test_face_tracker_runs_on_real_media_and_reports_no_invented_subject() -> None:
@@ -363,6 +427,37 @@ def test_a_focus_point_cannot_claim_a_face_of_no_height() -> None:
     that reported it would zoom straight to the cap instead of being refused at the door."""
     with pytest.raises(ValueError, match="face height cannot be zero"):
         FocusPoint(0, 500, 360, 0)
+
+
+def test_per_shot_face_boxes_without_cuts() -> None:
+    """When shot_cuts_ms is empty, returns single span matching median_face_box."""
+    track = (
+        FocusPoint(0, 500, 360, 300),
+        FocusPoint(500, 510, 370, 310),
+    )
+    boxes = per_shot_face_boxes(track, shot_cuts_ms=(), clip_in_ms=0, clip_out_ms=1000)
+    assert len(boxes) == 1
+    assert boxes[0] == (0, 1000, 370, 310)
+
+
+def test_per_shot_face_boxes_with_camera_cuts() -> None:
+    """Computes distinct median face boxes per camera cut for adaptive framing."""
+    track = (
+        FocusPoint(0, 500, 360, 300),  # Shot 0 (close-up)
+        FocusPoint(2000, 500, 365, 305),
+        FocusPoint(4000, 500, 360, 295),
+        FocusPoint(6000, 500, 480, 150),  # Shot 1 (wide shot)
+        FocusPoint(8000, 500, 485, 155),
+    )
+    boxes = per_shot_face_boxes(track, shot_cuts_ms=(5000,), clip_in_ms=0, clip_out_ms=10000)
+    assert len(boxes) == 2
+    assert boxes[0] == (0, 5000, 360, 300)  # close-up median
+    assert boxes[1] == (5000, 10000, 485, 155)  # wide shot median (smaller face)
+
+
+def test_per_shot_face_boxes_empty_track() -> None:
+    """Empty points track returns (None, None)."""
+    assert per_shot_face_boxes((), clip_in_ms=0, clip_out_ms=2000) == ((0, 2000, None, None),)
 
 
 def test_stabilize_steps_instantaneously_at_shot_cuts_without_panning() -> None:
@@ -1432,3 +1527,51 @@ def test_layout_policy_holds_on_ambiguity_and_switches_on_verified_turn() -> Non
             0,
             6000,
         )
+
+
+def test_opencv_face_tracker_prefers_active_speaker_in_two_person_wide_shot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a 2-person wide shot, prefer the moving speaker over a larger silent listener."""
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "two_person_wide.mp4"
+    fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(video_path), fourcc, 5.0, (640, 480))
+    for i in range(6):
+        frame = np.full((480, 640, 3), 60, dtype=np.uint8)
+        # Left person: static face + light shirt
+        cv2.rectangle(frame, (80, 100), (170, 190), (160, 160, 160), -1)
+        cv2.rectangle(frame, (60, 200), (190, 340), (220, 220, 220), -1)
+        # Right person: slightly smaller box, active mouth motion + warm brown shirt
+        cv2.rectangle(frame, (450, 100), (530, 180), (150, 150, 150), -1)
+        mouth_val = 240 if i % 2 == 0 else 20
+        cv2.rectangle(frame, (455, 145), (525, 178), (mouth_val, mouth_val, mouth_val), -1)
+        cv2.rectangle(frame, (430, 190), (550, 330), (40, 90, 160), -1)
+        writer.write(frame)
+    writer.release()
+
+    class _TwoFaceClassifier:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def empty(self) -> bool:
+            return False
+
+        def detectMultiScale(self, *args: Any, **kwargs: Any) -> list[tuple[int, int, int, int]]:
+            if self.kind != "frontal":
+                return []
+            # Left box is slightly larger (90x90) than Right box (80x80)
+            return [(80, 100, 90, 90), (450, 100, 80, 80)]
+
+    monkeypatch.setattr(
+        cv2,
+        "CascadeClassifier",
+        lambda p: _TwoFaceClassifier("frontal" if "frontal" in str(p) else "profile"),
+    )
+
+    tracker = OpenCvFaceTracker(sample_fps=5.0, enable_tracker=False)
+    points = tracker.track(video_path, 0, 1_200)
+    assert len(points) >= 4
+    assert all(p.center_x == 490 for p in points)

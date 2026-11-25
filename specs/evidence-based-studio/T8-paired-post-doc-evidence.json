@@ -1,0 +1,16 @@
+{
+  "status": "post-document-only-unaccepted-evidence",
+  "observed_at_utc": "2026-10-02T22:02:20.4743508Z",
+  "head_sha": "372a16645d7a8558bc6cedcff34a9fbfa13f712f",
+  "source_package_sha256": "a42bb02b387fd4c556235e971298d9a6d4e7517b408030d61c6d43e6b449a686",
+  "tests": 67,
+  "failed_error_skipped": 0,
+  "elapsed_seconds": "10.684",
+  "only_frozen_input_changed": "PROGRESS.md",
+  "progress_sha256": "37d892c710f97768f96b2b19458bb6a08b87725e98921686956d572426aa4ea5",
+  "report_sha256": "516cf91ae0748a1b055cb51be2457d6a1be8b7009106f9bda8e5da984c653d2c",
+  "log_sha256": "e15e1ea00cc99972a8dd72a70f32d5d0d5834ff793fa24b1c8ee31182eae87df",
+  "terminal_gate_evidence_sha256": "d4ce44900dbb32cd037b779b713bc3ec351c6a2f07587d208923b73a00d2e625",
+  "full_gate_passed": false,
+  "exact_sha_ci_accepted": false
+}

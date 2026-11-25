@@ -85,10 +85,11 @@ def test_instant_camera_cut_transitions_on_subframe_delta() -> None:
         clip_in_ms=1000,
         punch_ins=(),
     )
-    # Transition delta is 1ms (0.001s), evaluating to an instant cut
+    # Sub-2ms transition delta collapses into a zero-ramp hard cut placed 2ms before the cut
     assert "895" in filt
     assert "1575" in filt
-    assert "0.001" in filt
+    assert "if(lt(t\\,1.997)\\,895\\," in filt
+    assert "/0.001" not in filt
 
 
 def test_broadcast_line_subtitles_emit_clean_white_text_without_override_tags(
@@ -304,7 +305,7 @@ def test_broadcast_theme_wcag_contrast() -> None:
 def test_broadcast_subtitles_respect_vertical_margin_safe_zone() -> None:
     theme = CaptionTheme(margin_v=280)
     style_line = theme.style_row("Kurdish", "Noto Naskh Arabic", 60)
-    assert ",280,1" in style_line
+    assert ",280,-1" in style_line
 
 
 def test_locked_focus_points_multi_shot_sequence() -> None:
@@ -354,10 +355,10 @@ def test_build_ass_margin_v_override() -> None:
     """build_ass accepts margin_v parameter and overrides the theme vertical margin."""
     sentence = Sentence(words=words_helper(("سڵاو", 100, 500)), complete=True)
     ass_custom = build_ass((sentence,), margin_v=480)
-    assert ",480,1" in ass_custom
+    assert ",480,-1" in ass_custom
 
     ass_default = build_ass((sentence,))
-    assert ",140,1" in ass_default
+    assert ",140,-1" in ass_default
 
 
 def test_build_ass_broadcast_studio_formatting() -> None:
@@ -377,7 +378,7 @@ def test_build_ass_broadcast_studio_formatting() -> None:
     )
 
     # MarginV matches BROADCAST_THEME (440px safe zone)
-    assert ",440,1" in ass
+    assert ",440,-1" in ass
     # Clean dialogue event (no \\kf karaoke sweep tags)
     assert "\\kf" not in ass
     # Entities (برێمەر, عێراق) receive color styling inline

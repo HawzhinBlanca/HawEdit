@@ -1,0 +1,1443 @@
+FFFFFFFFFFFFFFFFFFFFFF........FFFFFF.F.F                                 [100%]
+================================== FAILURES ===================================
+__________ test_real_openssh_review_approves_bound_decoded_candidate __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_real_openssh_review_...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+
+    def test_real_openssh_review_approves_bound_decoded_candidate(case: ReviewCase) -> None:
+        original = (case.candidate / "c-1.json").read_bytes()
+>       envelope = case.prepare()
+                   ^^^^^^^^^^^^^^
+
+tests\test_candidate_review.py:225: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:420: in prepare_candidate_review
+    _snapshot(packet, name, limit=_MEDIA_LIMIT if suffix == "mp4" else _SIDECAR_LIMIT)[
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405243A40>
+name = 'c-1.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_changed_review_binding_refuses_publication[c-1.mp4] ___________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.mp4'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405276C30>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_changed_review_binding_refuses_publication[c-1.ass] ___________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.ass'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:222: in _authority
+    policy_bytes = _read(directory, "policy.json")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405274D70>
+name = 'policy.json', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_changed_review_binding_refuses_publication[c-1.srt] ___________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.srt'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:308: in _bindings
+    original = _read(candidate, f"{candidate_id}.json", limit=_SIDECAR_LIMIT)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405277D70>
+name = 'c-1.json', limit = 4194304, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_changed_review_binding_refuses_publication[c-1.edl] ___________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.edl'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405277AD0>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_changed_review_binding_refuses_publication[c-1.json] __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.json'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A404FC8170>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_____ test_changed_review_binding_refuses_publication[c-1.measured.json] ______
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.measured.json'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A404FE8A10>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_____ test_changed_review_binding_refuses_publication[c-1.edit_plan.json] _____
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'c-1.edit_plan.json'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405004E60>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+________ test_changed_review_binding_refuses_publication[review.json] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'review.json'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405243B60>
+name = 'c-1.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_________ test_changed_review_binding_refuses_publication[review.sig] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_changed_review_bindi...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+member = 'review.sig'
+
+    @pytest.mark.parametrize(
+        "member", [f"c-1.{suffix}" for suffix in REVIEW_SUFFIXES] + ["review.json", "review.sig"]
+    )
+    def test_changed_review_binding_refuses_publication(case: ReviewCase, member: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405276ED0>
+name = 'c-1.edl', limit = 4194304, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+________ test_review_reopens_source_and_authoritative_context[source] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_reopens_sourc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+binding = 'source'
+
+    @pytest.mark.parametrize(
+        "binding", ["source", "prior-plan", "configuration", "producer", "revision", "candidate"]
+    )
+    def test_review_reopens_source_and_authoritative_context(case: ReviewCase, binding: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559D070>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+______ test_review_reopens_source_and_authoritative_context[prior-plan] _______
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_reopens_sourc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+binding = 'prior-plan'
+
+    @pytest.mark.parametrize(
+        "binding", ["source", "prior-plan", "configuration", "producer", "revision", "candidate"]
+    )
+    def test_review_reopens_source_and_authoritative_context(case: ReviewCase, binding: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A4052402C0>
+name = 'c-1.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_____ test_review_reopens_source_and_authoritative_context[configuration] _____
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_reopens_sourc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+binding = 'configuration'
+
+    @pytest.mark.parametrize(
+        "binding", ["source", "prior-plan", "configuration", "producer", "revision", "candidate"]
+    )
+    def test_review_reopens_source_and_authoritative_context(case: ReviewCase, binding: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405243800>
+name = 'c-1.edl', limit = 4194304, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_______ test_review_reopens_source_and_authoritative_context[producer] ________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_reopens_sourc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+binding = 'producer'
+
+    @pytest.mark.parametrize(
+        "binding", ["source", "prior-plan", "configuration", "producer", "revision", "candidate"]
+    )
+    def test_review_reopens_source_and_authoritative_context(case: ReviewCase, binding: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405277EF0>
+name = 'c-1.edl', limit = 4194304, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_______ test_review_reopens_source_and_authoritative_context[revision] ________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_reopens_sourc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+binding = 'revision'
+
+    @pytest.mark.parametrize(
+        "binding", ["source", "prior-plan", "configuration", "producer", "revision", "candidate"]
+    )
+    def test_review_reopens_source_and_authoritative_context(case: ReviewCase, binding: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559D6D0>
+name = 'c-1.edl', limit = 4194304, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_______ test_review_reopens_source_and_authoritative_context[candidate] _______
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_reopens_sourc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+binding = 'candidate'
+
+    @pytest.mark.parametrize(
+        "binding", ["source", "prior-plan", "configuration", "producer", "revision", "candidate"]
+    )
+    def test_review_reopens_source_and_authoritative_context(case: ReviewCase, binding: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559FB00>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_________ test_invalid_review_authority_refuses_publication[missing] __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_invalid_review_autho...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'missing'
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "wrong-key", "wrong-namespace", "policy", "signers", "principal"]
+    )
+    def test_invalid_review_authority_refuses_publication(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:286: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:308: in _bindings
+    original = _read(candidate, f"{candidate_id}.json", limit=_SIDECAR_LIMIT)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40555C890>
+name = 'c-1.json', limit = 4194304, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+________ test_invalid_review_authority_refuses_publication[wrong-key] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_invalid_review_autho...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'wrong-key'
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "wrong-key", "wrong-namespace", "policy", "signers", "principal"]
+    )
+    def test_invalid_review_authority_refuses_publication(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:286: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559CF50>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_____ test_invalid_review_authority_refuses_publication[wrong-namespace] ______
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_invalid_review_autho...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'wrong-namespace'
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "wrong-key", "wrong-namespace", "policy", "signers", "principal"]
+    )
+    def test_invalid_review_authority_refuses_publication(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:286: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559E540>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_invalid_review_authority_refuses_publication[policy] __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_invalid_review_autho...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'policy'
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "wrong-key", "wrong-namespace", "policy", "signers", "principal"]
+    )
+    def test_invalid_review_authority_refuses_publication(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:286: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:222: in _authority
+    policy_bytes = _read(directory, "policy.json")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405276F90>
+name = 'policy.json', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_________ test_invalid_review_authority_refuses_publication[signers] __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_invalid_review_autho...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'signers'
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "wrong-key", "wrong-namespace", "policy", "signers", "principal"]
+    )
+    def test_invalid_review_authority_refuses_publication(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:286: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A404FCA450>
+name = 'c-1.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+________ test_invalid_review_authority_refuses_publication[principal] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_invalid_review_autho...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'principal'
+
+    @pytest.mark.parametrize(
+        "damage", ["missing", "wrong-key", "wrong-namespace", "policy", "signers", "principal"]
+    )
+    def test_invalid_review_authority_refuses_publication(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:286: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40555E570>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_even_signed_malformed_envelopes_are_refused[unknown] __________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_even_signed_malforme...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'unknown'
+
+    @pytest.mark.parametrize(
+        "damage", ["unknown", "duplicate", "schema-bool", "size-bool", "noncanonical", "nested"]
+    )
+    def test_even_signed_malformed_envelopes_are_refused(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A405274F50>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_________ test_even_signed_malformed_envelopes_are_refused[duplicate] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_even_signed_malforme...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'duplicate'
+
+    @pytest.mark.parametrize(
+        "damage", ["unknown", "duplicate", "schema-bool", "size-bool", "noncanonical", "nested"]
+    )
+    def test_even_signed_malformed_envelopes_are_refused(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559E960>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+________ test_even_signed_malformed_envelopes_are_refused[schema-bool] ________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_even_signed_malforme...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'schema-bool'
+
+    @pytest.mark.parametrize(
+        "damage", ["unknown", "duplicate", "schema-bool", "size-bool", "noncanonical", "nested"]
+    )
+    def test_even_signed_malformed_envelopes_are_refused(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:308: in _bindings
+    original = _read(candidate, f"{candidate_id}.json", limit=_SIDECAR_LIMIT)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40555E240>
+name = 'c-1.json', limit = 4194304, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_________ test_even_signed_malformed_envelopes_are_refused[size-bool] _________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_even_signed_malforme...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'size-bool'
+
+    @pytest.mark.parametrize(
+        "damage", ["unknown", "duplicate", "schema-bool", "size-bool", "noncanonical", "nested"]
+    )
+    def test_even_signed_malformed_envelopes_are_refused(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40555DBB0>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+_______ test_even_signed_malformed_envelopes_are_refused[noncanonical] ________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_even_signed_malforme...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'noncanonical'
+
+    @pytest.mark.parametrize(
+        "damage", ["unknown", "duplicate", "schema-bool", "size-bool", "noncanonical", "nested"]
+    )
+    def test_even_signed_malformed_envelopes_are_refused(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:246: in _authority
+    signers_bytes = _read(directory, "allowed_signers")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40555D910>
+name = 'allowed_signers', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________ test_even_signed_malformed_envelopes_are_refused[nested] ___________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_even_signed_malforme...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+damage = 'nested'
+
+    @pytest.mark.parametrize(
+        "damage", ["unknown", "duplicate", "schema-bool", "size-bool", "noncanonical", "nested"]
+    )
+    def test_even_signed_malformed_envelopes_are_refused(case: ReviewCase, damage: str) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:338: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:393: in prepare_candidate_review
+    authority = _authority(authority_dir)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:222: in _authority
+    policy_bytes = _read(directory, "policy.json")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\hawedit\candidate_review.py:209: in _read
+    return _snapshot(directory, name, limit=limit, capture=True)[1]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559B1D0>
+name = 'policy.json', limit = 1048576, capture = True, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+________ test_review_packet_is_exclusive_and_incomplete_packets_refuse ________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_review_packet_is_exc...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+
+    def test_review_packet_is_exclusive_and_incomplete_packets_refuse(case: ReviewCase) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:369: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:307: in _bindings
+    source_binding, _ = _snapshot(source_directory, source.name, limit=_MEDIA_LIMIT)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A404FE9B20>
+name = 'source.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+__________________ test_signed_review_expires_at_consumption __________________
+
+case = ReviewCase(root=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7056/test_signed_review_expire...0\x00\x00\x1ddata\x00\x00\x00\x01\x00\x00\x00\x00Lavf62.12.101', ssh='C:\\Windows\\System32\\OpenSSH\\ssh-keygen.EXE'))
+
+    def test_signed_review_expires_at_consumption(case: ReviewCase) -> None:
+>       case.prepare()
+
+tests\test_candidate_review.py:388: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_candidate_review.py:127: in prepare
+    return prepare_candidate_review(
+src\hawedit\candidate_review.py:395: in prepare_candidate_review
+    source_binding, bindings, prior, final_json = _bindings(
+src\hawedit\candidate_review.py:317: in _bindings
+    bindings[suffix] = _snapshot(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+directory = <hawedit.studio_private.PrivateDirectory object at 0x000002A40559F620>
+name = 'c-1.mp4', limit = 34359738368, capture = False, destination = None
+
+    def _snapshot(
+        directory: PrivateDirectory,
+        name: str,
+        *,
+        limit: int,
+        capture: bool = False,
+        destination: BinaryIO | None = None,
+    ) -> tuple[dict[str, object], bytes]:
+        before = directory.check_file(name)
+        if before.st_size <= 0 or before.st_size > limit:
+            raise CandidateReviewError("Review member is empty or exceeds its byte bound")
+        chunks: list[bytes] = []
+        size = 0
+        digest = hashlib.sha256()
+        descriptor = os.open(directory.path / name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+>               raise CandidateReviewError("Review member changed while opening")
+E               hawedit.candidate_review.CandidateReviewError: Review member changed while opening
+
+src\hawedit\candidate_review.py:188: CandidateReviewError
+=========================== short test summary info ===========================
+FAILED tests/test_candidate_review.py::test_real_openssh_review_approves_bound_decoded_candidate
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.mp4]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.ass]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.srt]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.edl]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.json]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.measured.json]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[c-1.edit_plan.json]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[review.json]
+FAILED tests/test_candidate_review.py::test_changed_review_binding_refuses_publication[review.sig]
+FAILED tests/test_candidate_review.py::test_review_reopens_source_and_authoritative_context[source]
+FAILED tests/test_candidate_review.py::test_review_reopens_source_and_authoritative_context[prior-plan]
+FAILED tests/test_candidate_review.py::test_review_reopens_source_and_authoritative_context[configuration]
+FAILED tests/test_candidate_review.py::test_review_reopens_source_and_authoritative_context[producer]
+FAILED tests/test_candidate_review.py::test_review_reopens_source_and_authoritative_context[revision]
+FAILED tests/test_candidate_review.py::test_review_reopens_source_and_authoritative_context[candidate]
+FAILED tests/test_candidate_review.py::test_invalid_review_authority_refuses_publication[missing]
+FAILED tests/test_candidate_review.py::test_invalid_review_authority_refuses_publication[wrong-key]
+FAILED tests/test_candidate_review.py::test_invalid_review_authority_refuses_publication[wrong-namespace]
+FAILED tests/test_candidate_review.py::test_invalid_review_authority_refuses_publication[policy]
+FAILED tests/test_candidate_review.py::test_invalid_review_authority_refuses_publication[signers]
+FAILED tests/test_candidate_review.py::test_invalid_review_authority_refuses_publication[principal]
+FAILED tests/test_candidate_review.py::test_even_signed_malformed_envelopes_are_refused[unknown]
+FAILED tests/test_candidate_review.py::test_even_signed_malformed_envelopes_are_refused[duplicate]
+FAILED tests/test_candidate_review.py::test_even_signed_malformed_envelopes_are_refused[schema-bool]
+FAILED tests/test_candidate_review.py::test_even_signed_malformed_envelopes_are_refused[size-bool]
+FAILED tests/test_candidate_review.py::test_even_signed_malformed_envelopes_are_refused[noncanonical]
+FAILED tests/test_candidate_review.py::test_even_signed_malformed_envelopes_are_refused[nested]
+FAILED tests/test_candidate_review.py::test_review_packet_is_exclusive_and_incomplete_packets_refuse
+FAILED tests/test_candidate_review.py::test_signed_review_expires_at_consumption
+30 failed, 10 passed in 15.09s

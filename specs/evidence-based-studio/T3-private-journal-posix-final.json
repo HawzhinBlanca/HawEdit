@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "scope": "Bounded POSIX probe only; not a canonical gate or production mount certificate",
+  "python": "3.12.0",
+  "sqlite": "3.43.1",
+  "platform": "Linux-6.18.40.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "executable": "/mnt/c/Users/Wareen/AppData/Local/HawEdit/wsl-asr/venvs/Ubuntu-33853eeafb05ecf1b998dc84/environment/bin/python",
+  "filesystem": "ext2/ext3",
+  "temporary_root": "/tmp/hawedit-private-probe-j4gs7g7h",
+  "source_package_sha256": "637e9acc148c7b9000605df4c2a4006abd7b5268b6e9617641f509e7a6b6c302",
+  "observations": [
+    {
+      "case": "new owner-private journal",
+      "result": "passed"
+    },
+    {
+      "case": "shared root",
+      "result": "refused",
+      "message": "Studio private journal requires current-owner private storage"
+    },
+    {
+      "case": "shared file",
+      "result": "refused",
+      "message": "Studio private journal requires current-owner private storage"
+    },
+    {
+      "case": "symbolic root alias",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "multiply-linked main",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "multiply-linked sidecar -wal",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "orphan -wal",
+      "result": "refused",
+      "message": "Studio private journal refuses orphan SQLite sidecars"
+    },
+    {
+      "case": "multiply-linked sidecar -shm",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "orphan -shm",
+      "result": "refused",
+      "message": "Studio private journal refuses orphan SQLite sidecars"
+    },
+    {
+      "case": "multiply-linked sidecar -journal",
+      "result": "refused",
+      "message": "Studio private journal refuses linked or nonregular storage"
+    },
+    {
+      "case": "orphan -journal",
+      "result": "refused",
+      "message": "Studio private journal refuses orphan SQLite sidecars"
+    },
+    {
+      "case": "real committed WAL crash/reopen",
+      "result": "passed"
+    }
+  ],
+  "provider_calls": 0,
+  "model_inference": false
+}

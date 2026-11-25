@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -202,26 +204,34 @@ def validate_preflight_resources(
     """Verifies preflight resource availability and disk write capacity.
 
     Raises:
-        ResourceCapacityError: If disk capacity is lower than requested minimum.
+        ResourceCapacityError: Invalid budget, insufficient capacity or storage failure.
     """
-    work_dir.mkdir(parents=True, exist_ok=True)
-    total, _used, free = shutil.disk_usage(work_dir)
-    free_mb = free // (1024 * 1024)
-    if free_mb < min_disk_free_mb:
-        raise ResourceCapacityError(
-            f"Insufficient disk space in {work_dir}: {free_mb} MB free, "
-            f"minimum {min_disk_free_mb} MB required"
-        )
-
-    # Test probe write to ensure directory is writable
-    probe = work_dir / ".probe_write.tmp"
+    if type(min_disk_free_mb) is not int or min_disk_free_mb < 0:
+        raise ResourceCapacityError("min_disk_free_mb must be a non-negative integer")
     try:
-        probe.write_text("probe", encoding="utf-8")
+        work_dir.mkdir(parents=True, exist_ok=True)
+        free_mb = shutil.disk_usage(work_dir).free // (1024 * 1024)
+        if free_mb < min_disk_free_mb:
+            raise ResourceCapacityError(
+                f"Insufficient disk space in {work_dir}: {free_mb} MB free, "
+                f"minimum {min_disk_free_mb} MB required"
+            )
+        # Exclusive temporary allocation owns cleanup; never unlink a shared probe name.
+        with tempfile.TemporaryFile(
+            mode="w+b", buffering=0, dir=work_dir, prefix=".hawedit-preflight-"
+        ) as probe:
+            data = b"probe"
+            if probe.write(data) != len(data):
+                raise ResourceCapacityError(f"Incomplete resource probe write in {work_dir}")
+            probe.flush()
+            os.fsync(probe.fileno())
+            probe.seek(0)
+            if probe.read(len(data) + 1) != data:
+                raise ResourceCapacityError(f"Resource probe roundtrip failed in {work_dir}")
     except OSError as exc:
-        raise ResourceCapacityError(f"Cannot write to work_dir {work_dir}: {exc}") from exc
-    finally:
-        if probe.exists():
-            probe.unlink(missing_ok=True)
+        raise ResourceCapacityError(
+            f"Cannot prepare or write to work_dir {work_dir}: {exc}"
+        ) from exc
 
 
 class ScopedResourceOwnership:

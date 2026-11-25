@@ -15,15 +15,14 @@ import json
 import os
 import re
 import stat
-import subprocess
 import sys
-import threading
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
+from hawedit.bounded_audit_io import AuditCaptureError, capture_bounded
 from hawedit.cli import program_name, use_utf8_streams
 from hawedit.omni_assets import OMNI_ASSETS
 from hawedit.vex import (
@@ -44,6 +43,8 @@ from hawedit.wsl_audit_locks import (
 from hawedit.wsl_audit_locks import (
     AUDIT_REQUIREMENTS as AUDIT_REQUIREMENTS,
 )
+from hawedit.wsl_scanner_storage import STORAGE_SCRIPT as STORAGE_SCRIPT
+from hawedit.wsl_scanner_storage import scanner_directory_identity
 from hawedit.wsl_setup import (
     WslRuntimeError,
     WslRuntimeReceipt,
@@ -64,7 +65,6 @@ _SMALL_OUTPUT_LIMIT: Final = 8_192
 _EVIDENCE_LIMIT: Final = 32_000_000
 _TOOL_VERSION = re.compile(r"pip-audit ([0-9]+\.[0-9]+\.[0-9]+)\r?\n?\Z")
 _UV_VERSION = re.compile(r"uv ([0-9]+\.[0-9]+\.[0-9]+)[^\r\n]*\r?\n?\Z")
-_WSL_TEMP = re.compile(r"/tmp/hawedit-wsl-audit\.[A-Za-z0-9]{10}\n\Z")
 
 _AUDIT_OPTIONS: Final = (
     "--strict",
@@ -116,64 +116,17 @@ def _run_bounded(
     stdout_limit: int,
     stderr_limit: int,
 ) -> ProcessOutput:
-    """Run without a shell while capping both captured streams during execution."""
-    if timeout_seconds <= 0:
-        raise LiveVexGateError("process timeout must be positive")
+    """Bound both streams and EOF/root completion without daemon reader threads."""
     try:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except OSError as exc:
-        raise LiveVexGateError(f"cannot start WSL audit process: {exc}") from exc
-    stdout_stream = process.stdout
-    stderr_stream = process.stderr
-    if stdout_stream is None or stderr_stream is None:  # defensive for alternate Popen objects
-        process.kill()
-        raise LiveVexGateError("audit process did not expose both output streams")
-
-    outputs: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
-    overflow: list[str] = []
-    reader_errors: list[BaseException] = []
-    lock = threading.Lock()
-
-    def consume(name: str, limit: int) -> None:
-        stream = stdout_stream if name == "stdout" else stderr_stream
-        try:
-            while True:
-                chunk = stream.read(65_536)
-                if not chunk:
-                    return
-                with lock:
-                    if len(outputs[name]) + len(chunk) > limit:
-                        overflow.append(name)
-                        process.kill()
-                        return
-                    outputs[name].extend(chunk)
-        except BaseException as exc:  # pragma: no cover - defensive OS stream failure
-            with lock:
-                reader_errors.append(exc)
-            process.kill()
-
-    readers = [
-        threading.Thread(target=consume, args=("stdout", stdout_limit), daemon=True),
-        threading.Thread(target=consume, args=("stderr", stderr_limit), daemon=True),
-    ]
-    for reader in readers:
-        reader.start()
-    try:
-        returncode = process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as exc:
-        process.kill()
-        process.wait()
-        for reader in readers:
-            reader.join()
-        raise LiveVexGateError(f"WSL audit process exceeded {timeout_seconds} seconds") from exc
-    for reader in readers:
-        reader.join()
-    if reader_errors:
-        raise LiveVexGateError(f"cannot read WSL audit process output: {reader_errors[0]}")
-    if overflow:
-        label = "/".join(sorted(set(overflow)))
-        raise LiveVexGateError(f"WSL audit process exceeded its {label} output limit")
-    return ProcessOutput(returncode, bytes(outputs["stdout"]), bytes(outputs["stderr"]))
+        result = capture_bounded(
+            command,
+            timeout_seconds=timeout_seconds,
+            stdout_limit=stdout_limit,
+            stderr_limit=stderr_limit,
+        )
+    except AuditCaptureError as exc:
+        raise LiveVexGateError(str(exc)) from exc
+    return ProcessOutput(result.exit_code, result.stdout, result.stderr)
 
 
 def _safe_posix_home(value: str) -> PurePosixPath:
@@ -280,46 +233,47 @@ def _run_hash_locked_audit(
     created = _run_bounded(
         [
             *prefix,
-            "/usr/bin/mktemp",
-            "--directory",
-            "--tmpdir=/tmp",
-            "hawedit-wsl-audit.XXXXXXXXXX",
+            runtime_python,
+            "-I",
+            "-c",
+            STORAGE_SCRIPT,
+            "create",
         ],
         timeout_seconds=min(timeout_seconds, 60),
         stdout_limit=_SMALL_OUTPUT_LIMIT,
         stderr_limit=_STDERR_LIMIT,
     )
     try:
-        temporary = created.stdout.decode("ascii")
-    except UnicodeError as exc:
-        raise LiveVexGateError("WSL mktemp emitted a non-ASCII path") from exc
-    if created.returncode != 0 or _WSL_TEMP.fullmatch(temporary) is None:
+        directory = scanner_directory_identity(created.stdout)
+    except ValueError as exc:
+        raise LiveVexGateError("cannot create a private WSL scanner directory identity") from exc
+    if created.returncode != 0:
         raise LiveVexGateError("cannot create a private WSL scanner directory")
-    temporary = temporary.rstrip("\n")
+    temporary = directory.path
     requirements = f"{temporary}/requirements.txt"
     scanner = f"{temporary}/scanner"
     scanner_python = f"{scanner}/bin/python"
     scanner_executable = f"{scanner}/bin/pip-audit"
-    write = _run_bounded(
-        [
-            *prefix,
-            runtime_python,
-            "-I",
-            "-c",
-            _WRITE_EXCLUSIVE_SCRIPT,
-            requirements,
-            (AUDIT_REQUIREMENTS + "\n").encode("utf-8").hex(),
-        ],
-        timeout_seconds=min(timeout_seconds, 60),
-        stdout_limit=_SMALL_OUTPUT_LIMIT,
-        stderr_limit=_STDERR_LIMIT,
-    )
-    if write.returncode != 0 or write.stdout:
-        raise LiveVexGateError(
-            "cannot materialize the reviewed scanner lock in private WSL storage"
-        )
     active_error: BaseException | None = None
     try:
+        write = _run_bounded(
+            [
+                *prefix,
+                runtime_python,
+                "-I",
+                "-c",
+                _WRITE_EXCLUSIVE_SCRIPT,
+                requirements,
+                (AUDIT_REQUIREMENTS + "\n").encode("utf-8").hex(),
+            ],
+            timeout_seconds=min(timeout_seconds, 60),
+            stdout_limit=_SMALL_OUTPUT_LIMIT,
+            stderr_limit=_STDERR_LIMIT,
+        )
+        if write.returncode != 0 or write.stdout:
+            raise LiveVexGateError(
+                "cannot materialize the reviewed scanner lock in private WSL storage"
+            )
         common_env = [
             "env",
             "UV_NO_CONFIG=1",
@@ -348,17 +302,26 @@ def _run_hash_locked_audit(
     finally:
         try:
             cleanup = _run_bounded(
-                [*prefix, "/usr/bin/rm", "-rf", "--", temporary],
+                [
+                    *prefix,
+                    runtime_python,
+                    "-I",
+                    "-c",
+                    STORAGE_SCRIPT,
+                    "cleanup",
+                    *directory.arguments(),
+                ],
                 timeout_seconds=min(timeout_seconds, 60),
                 stdout_limit=_SMALL_OUTPUT_LIMIT,
                 stderr_limit=_STDERR_LIMIT,
             )
-            if cleanup.returncode != 0 and active_error is None:
+            if cleanup.returncode != 0 or cleanup.stdout:
                 detail = cleanup.stderr.decode("utf-8", "replace")[-1_200:]
                 raise LiveVexGateError(f"cannot remove ephemeral scanner: {detail or 'no detail'}")
-        except LiveVexGateError:
+        except LiveVexGateError as cleanup_error:
             if active_error is None:
                 raise
+            active_error.add_note(f"scanner cleanup also failed: {cleanup_error}")
 
 
 def _execute_hash_locked_scanner(
@@ -607,8 +570,8 @@ def run_live_gate(
     timeout_seconds: int = 300,
 ) -> dict[str, object]:
     """Run the complete live boundary and publish one immutable success artifact."""
-    if not 1 <= timeout_seconds <= 1_800:
-        raise LiveVexGateError("timeout_seconds must be between 1 and 1800")
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 1_800:
+        raise LiveVexGateError("timeout_seconds must be an integer between 1 and 1800")
     _preflight_new_evidence(evidence_path)
     source = (package_source or Path(__file__).resolve().parent).resolve()
     policy_path = (vex_path or _default_vex_path()).resolve()
@@ -664,6 +627,7 @@ def run_live_gate(
             runtime_root=runtime,
             package_source=source,
             executable=executable,
+            timeout_seconds=timeout_seconds,
         )
     except WslRuntimeError as exc:
         raise LiveVexGateError(f"post-audit WSL runtime verification failed: {exc}") from exc

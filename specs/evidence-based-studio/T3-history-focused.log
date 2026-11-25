@@ -1,0 +1,27 @@
+...............................F..................                       [100%]
+================================== FAILURES ===================================
+_______ test_studio_history_does_not_silently_drop_unrecognized_entries _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7012/test_studio_history_does_not_s0')
+
+    def test_studio_history_does_not_silently_drop_unrecognized_entries(tmp_path: Path) -> None:
+        root = tmp_path / "jobs"
+        stored_job(root)
+        (root / "missing-record").mkdir()
+        (root / "a job with spaces").mkdir()
+        (root / "foreign.txt").write_bytes(b"not a job")
+        result = read_history(root)
+        assert len(result["jobs"]) == 1 and len(result["diagnostics"]) == 3
+        assert all("message" in item and "code" in item for item in result["diagnostics"])
+>       assert "a job with spaces" not in json.dumps(result)
+E       assert 'a job with spaces' not in '{"schema": ...674b532a"}]}'
+E         
+E         'a job with spaces' is contained here:
+E         ?           ^^^^^^^^^^^^
+E           job_id": "a job with spaces", "code": "history_record_refused", "message": "Historical entry is missing, malformed or linked; original bytes are preserved", "entry_sha256": "a577deca1a301e07cc40e4670465685779a5ae7b91348f217ba2efba04a30978"}, {"job_id": "foreign.txt", "code": "history_record_refused", "message": "Historical entry is missing, malformed or linked; original bytes are preserved", "entry_sha256": "dac41c54a48f749383c0fc5052f3e80225d95edb455d2fe7dfd77a0d0cd551b3"}, {"job_id": "missing-record", "code": "his...
+E         
+E         ...Full output truncated (2 lines hidden), use '-vv' to show
+
+tests\test_studio_history.py:203: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_history.py::test_studio_history_does_not_silently_drop_unrecognized_entries

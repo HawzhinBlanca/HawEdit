@@ -1,0 +1,73 @@
+........................................................................ [ 24%]
+........................................................................ [ 48%]
+........................................................................ [ 72%]
+...................................F...F................................ [ 97%]
+........                                                                 [100%]
+================================== FAILURES ===================================
+__________________ test_the_ledger_accounts_for_every_module __________________
+
+    def test_the_ledger_accounts_for_every_module() -> None:
+        """A module named only in prose, or not at all, is a module with no recorded status.
+    
+        Deliberately reads the *evidence* cell of a row whose *status* cell is a legend mark, not
+        the file as a whole: a mention in a floating amendment below the table is exactly the
+        failure this catches, because it leaves the module out of the published tally.
+        """
+        claimed: set[str] = set()
+        for cells in _ledger_rows():
+            claimed |= set(re.findall(r"(\w+\.py)", " ".join(cells[3:])))
+        on_disk = {p.name for p in (ROOT / "src" / "hawedit").glob("*.py")} - {"__init__.py"}
+>       assert on_disk <= claimed, (
+            f"modules with no status in any PROGRESS.md ledger row: {sorted(on_disk - claimed)}. "
+            "Add a row, or name the module in an existing row's evidence cell � a description in "
+            "prose after the table does not put it in the DONE/PARTIAL tally."
+        )
+E       AssertionError: modules with no status in any PROGRESS.md ledger row: ['studio_artifacts.py']. Add a row, or name the module in an existing row's evidence cell � a description in prose after the table does not put it in the DONE/PARTIAL tally.
+E       assert {'agent.py', ...mbly.py', ...} <= {'__init__.py...rker.py', ...}
+E         
+E         Extra items in the left set:
+E         'studio_artifacts.py'
+
+tests\test_claims.py:741: AssertionError
+___________ test_every_data_file_the_wheel_ships_is_tracked_by_git ____________
+
+    def test_every_data_file_the_wheel_ships_is_tracked_by_git() -> None:
+        """A file that exists only on the machine that wrote it is not a file this project has.
+    
+        `models/revisions.json` shipped exactly that way: `models/*` is git-ignored, `git add -A`
+        skipped it in silence, the local gate passed against a file the runner never received, and
+        CI failed on `no pinned revisions found`. The same trap already had a `!models/sources.json`
+        exception and a comment explaining it � which is why this is a test now rather than a
+        third comment.
+    
+        Reads `[tool.setuptools.data-files]`, so anything added to the wheel is covered without
+        anyone remembering to extend a list here.
+        """
+        import subprocess
+        import tomllib
+    
+        pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        shipped = [
+            Path(rel)
+            for paths in pyproject["tool"]["setuptools"]["data-files"].values()
+            for rel in paths
+        ]
+        assert shipped, "no data-files declared; this test would assert nothing"
+        tracked = {
+            Path(line)
+            for line in subprocess.run(
+                ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+            ).stdout.splitlines()
+        }
+        untracked = [str(p) for p in shipped if p not in tracked]
+>       assert not untracked, (
+            f"the wheel ships {untracked}, which git does not track � so it exists on this machine "
+            "and on no other. Add a `!` exception in .gitignore and commit the file."
+        )
+E       AssertionError: the wheel ships ['assets\\fonts\\Vazirmatn-COPYRIGHT.txt'], which git does not track � so it exists on this machine and on no other. Add a `!` exception in .gitignore and commit the file.
+E       assert not ['assets\\fonts\\Vazirmatn-COPYRIGHT.txt']
+
+tests\test_claims.py:847: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_claims.py::test_the_ledger_accounts_for_every_module - Asse...
+FAILED tests/test_claims.py::test_every_data_file_the_wheel_ships_is_tracked_by_git

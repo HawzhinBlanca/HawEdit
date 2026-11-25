@@ -16,7 +16,7 @@ from hawedit.assembly import (
 )
 from hawedit.captions import find_ffmpeg
 from hawedit.clip import EditorialBelowThreshold
-from hawedit.judge import InputMode, JudgeRequest, JudgeVerdict
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE, InputMode, JudgeRequest, JudgeVerdict
 from hawedit.sentences import Sentence
 from hawedit.transcripts import Word
 
@@ -28,7 +28,7 @@ FONTS = ROOT / "assets" / "fonts"
 class MockEditorialJudge:
     """Mock editorial judge for testing assembly scoring."""
 
-    model_id: str = "gemini-2.5-pro"
+    model_id: str = KURDISH_EDITORIAL_JUDGE
 
     def __init__(
         self,
@@ -205,16 +205,22 @@ def test_assemble_cold_open_orders_payoff_first_and_shifts_timings() -> None:
 
 
 def test_assembled_splice_filter_constructs_trim_and_concat() -> None:
-    """Task T4.9: assembled_splice_filter builds valid trim/atrim/concat filtergraph."""
+    """Task T4.9 + D8 AC1: assembled_splice_filter builds valid trim/atrim/afade/concat graph."""
     setup = _make_sentence([("دەستپێک", 0, 1_000)])
     payoff = _make_sentence([("کۆتایی", 10_000, 12_000)])
     reel = assemble_cold_open([setup], payoff)
 
     filter_str = assembled_splice_filter(reel.spans)
     assert "[0:v]trim=start=10.000:end=12.000,setpts=PTS-STARTPTS[v0]" in filter_str
-    assert "[0:a]atrim=start=10.000:end=12.000,asetpts=PTS-STARTPTS[a0]" in filter_str
+    assert (
+        "[0:a]atrim=start=10.000:end=12.000,asetpts=PTS-STARTPTS,"
+        "afade=t=out:st=1.970:d=0.030:curve=qsin[a0]"
+    ) in filter_str
     assert "[0:v]trim=start=0.000:end=1.000,setpts=PTS-STARTPTS[v1]" in filter_str
-    assert "[0:a]atrim=start=0.000:end=1.000,asetpts=PTS-STARTPTS[a1]" in filter_str
+    assert (
+        "[0:a]atrim=start=0.000:end=1.000,asetpts=PTS-STARTPTS,"
+        "afade=t=in:st=0:d=0.030:curve=qsin[a1]"
+    ) in filter_str
     assert "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_concat][a_concat]" in filter_str
 
 

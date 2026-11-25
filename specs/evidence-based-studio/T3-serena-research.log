@@ -1,0 +1,7 @@
+Could not find containing symbol for src\hawedit\durable_workflow.py:100:5. Returning file symbol instead
+Could not find containing symbol for tests\test_durable.py:52:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\workflow_recovery.py:36:5. Returning file symbol instead
+Could not find containing symbol for tests\test_workflow_recovery.py:21:4. Returning file symbol instead
+Could not find containing symbol for src\hawedit\workflow_recovery.py:43:5. Returning file symbol instead
+Could not find containing symbol for tests\test_workflow_recovery.py:27:4. Returning file symbol instead
+Mapped 64 symbols with Serena

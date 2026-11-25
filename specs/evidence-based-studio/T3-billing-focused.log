@@ -1,0 +1,41 @@
+........................F                                                [100%]
+================================== FAILURES ===================================
+_______ test_studio_builder_routes_discovery_through_injected_transport _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-6990/test_studio_builder_routes_dis0')
+api = <test_studio_billing.LocalProtocol object at 0x00000296A70899D0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000296A7088470>
+
+    def test_studio_builder_routes_discovery_through_injected_transport(
+        tmp_path: Path, api: LocalProtocol, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from hawedit.pipeline import build_and_run, build_parser
+        from tests.test_pipeline import FIXTURE, a_transcript
+    
+        transcript = tmp_path / "transcript.json"
+        transcript.write_text(a_transcript(FIXTURE.stem).to_json(), encoding="utf-8")
+        monkeypatch.setenv("GEMINI_API_KEY", KEY)
+        p = policy()
+        args = build_parser().parse_args(
+            [
+                str(FIXTURE),
+                "--transcript",
+                str(transcript),
+                "--gemini",
+                "--auto-select",
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
+        result = build_and_run(args, judge_transport=guard(tmp_path, api, p))
+        assert api.generated == 5
+        assert result.clip is None
+>       assert result.render is None
+E       AssertionError: assert StageSkipped(stage='render', reason='render did not run because a judged boundary and QC pass was not available.', blocked_by=('a judged boundary and QC pass',)) is None
+E        +  where StageSkipped(stage='render', reason='render did not run because a judged boundary and QC pass was not available.', blocked_by=('a judged boundary and QC pass',)) = PipelineRun(media_id='kurdish-speech-3cuts', source='C:\\Users\\Wareen\\Desktop\\HawEdit\\tests\\fixtures\\kurdish-spe...ault'), ('target_face_height_share', 'content_type:podcast'), ('two_person_split', 'default'))), episode_manifest=None).render
+
+tests\test_studio_billing.py:349: AssertionError
+------------------------------ Captured log call ------------------------------
+INFO     pyscenedetect:scene_manager.py:1335 Detecting scenes...
+=========================== short test summary info ===========================
+FAILED tests/test_studio_billing.py::test_studio_builder_routes_discovery_through_injected_transport

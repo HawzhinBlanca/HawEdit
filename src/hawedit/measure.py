@@ -10,12 +10,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from fractions import Fraction
+from itertools import pairwise
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Final
 
 from hawedit.captions import (
@@ -27,9 +31,11 @@ from hawedit.captions import (
     parse_ass_colour,
     relative_luminance,
 )
+from hawedit.studio_private import PrivateDirectory, StudioStorageError
 
 __all__ = [
     "AudioMeasurement",
+    "BroadcastScorecard",
     "CaptionMeasurement",
     "ClipMeasurement",
     "FaceSample",
@@ -40,6 +46,7 @@ __all__ = [
     "VideoMeasurement",
     "VmafMeasurement",
     "detect_caption_ink_in_band",
+    "evaluate_broadcast_scorecard",
     "measure_caption_events_contrast",
     "measure_clip",
     "probe_caption_ink",
@@ -53,6 +60,9 @@ _SCENE_SHOWINFO_RE: Final = re.compile(r"pts_time:([\d.]+)")
 _EBUR128_I_RE: Final = re.compile(r"Integrated loudness:\s+I:\s*(-?[\d.]+)\s*LUFS")
 _EBUR128_TP_RE: Final = re.compile(r"True peak:\s+Peak:\s*(-?[\d.]+)\s*dBFS")
 _EBUR128_LRA_RE: Final = re.compile(r"Loudness range:\s+LRA:\s*(-?[\d.]+)\s*LU")
+
+# D-335: a Haar box shorter than this share of the frame height is caption text, not a face.
+MIN_FACE_HEIGHT_SHARE: Final = 0.05
 
 
 class MeasureError(RuntimeError):
@@ -165,6 +175,86 @@ class VmafMeasurement:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class BroadcastScorecard:
+    """Deterministic broadcast quality scorecard derived from clip measurements (D-359)."""
+
+    double_cuts_count: int
+    zero_double_cuts: bool
+    loudness_ok: bool
+    contrast_ok: bool
+    face_framing_ok: bool
+    all_passed: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "double_cuts_count": self.double_cuts_count,
+            "zero_double_cuts": self.zero_double_cuts,
+            "loudness_ok": self.loudness_ok,
+            "contrast_ok": self.contrast_ok,
+            "face_framing_ok": self.face_framing_ok,
+            "all_passed": self.all_passed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BroadcastScorecard:
+        return cls(
+            double_cuts_count=int(data["double_cuts_count"]),
+            zero_double_cuts=bool(data["zero_double_cuts"]),
+            loudness_ok=bool(data["loudness_ok"]),
+            contrast_ok=bool(data["contrast_ok"]),
+            face_framing_ok=bool(data["face_framing_ok"]),
+            all_passed=bool(data["all_passed"]),
+        )
+
+
+def evaluate_broadcast_scorecard(measured: ClipMeasurement) -> BroadcastScorecard:
+    """Evaluate deterministic broadcast delivery quality checks on a measured clip (D-359)."""
+    cuts = sorted(int(c) for c in measured.scenes.get("cuts_ms", ()))
+    double_cuts_count = sum(1 for a, b in pairwise(cuts) if (b - a) <= 80)
+    zero_double_cuts = double_cuts_count == 0
+
+    has_audio = measured.audio.channels > 0 and measured.audio.codec.lower() != "none"
+    if has_audio:
+        lufs = measured.audio.integrated_lufs
+        peak = measured.audio.true_peak_db
+        loudness_ok = (
+            math.isfinite(lufs)
+            and math.isfinite(peak)
+            and (-16.0 <= lufs <= -12.5)
+            and (peak <= -0.5)
+        )
+    else:
+        loudness_ok = False
+
+    if measured.captions.events_count > 0:
+        contrast_ok = (
+            measured.captions.median_contrast_ratio is not None
+            and math.isfinite(measured.captions.median_contrast_ratio)
+            and measured.captions.median_contrast_ratio >= 12.0
+        )
+    else:
+        contrast_ok = True
+
+    faces = measured.faces
+    if faces.samples_count <= 0 or faces.face_detected_frames_count <= 0:
+        face_framing_ok = True
+    elif faces.speaking_samples_count > 0:
+        face_framing_ok = faces.speaking_face_share >= 0.90 or faces.face_detected_share >= 0.90
+    else:
+        face_framing_ok = faces.face_detected_share >= 0.90
+
+    all_passed = zero_double_cuts and loudness_ok and contrast_ok and face_framing_ok
+    return BroadcastScorecard(
+        double_cuts_count=double_cuts_count,
+        zero_double_cuts=zero_double_cuts,
+        loudness_ok=loudness_ok,
+        contrast_ok=contrast_ok,
+        face_framing_ok=face_framing_ok,
+        all_passed=all_passed,
+    )
+
+
 @dataclass(frozen=True)
 class ClipMeasurement:
     schema: int
@@ -176,9 +266,10 @@ class ClipMeasurement:
     captions: CaptionMeasurement
     vmaf: VmafMeasurement | None
     tool_metadata: dict[str, str]
+    broadcast_scorecard: BroadcastScorecard | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema": self.schema,
             "file": self.file.to_dict(),
             "video": self.video.to_dict(),
@@ -189,6 +280,9 @@ class ClipMeasurement:
             "vmaf": self.vmaf.to_dict() if self.vmaf else None,
             "tool_metadata": self.tool_metadata,
         }
+        if self.broadcast_scorecard is not None:
+            payload["broadcast_scorecard"] = self.broadcast_scorecard.to_dict()
+        return payload
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
@@ -196,6 +290,7 @@ class ClipMeasurement:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ClipMeasurement:
         vmaf_data = data.get("vmaf")
+        scorecard_data = data.get("broadcast_scorecard")
         audio_data = data["audio"]
         silences = [
             SilenceInterval(
@@ -264,6 +359,11 @@ class ClipMeasurement:
             if vmaf_data
             else None,
             tool_metadata=data.get("tool_metadata", {}),
+            broadcast_scorecard=(
+                BroadcastScorecard.from_dict(scorecard_data)
+                if isinstance(scorecard_data, dict)
+                else None
+            ),
         )
 
     @classmethod
@@ -541,6 +641,15 @@ def probe_face_tracking(
 
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
 
+    def faces(cascade: Any, image: Any) -> list[tuple[int, int, int, int]]:
+        """One cascade's detections that are tall enough to be a face (D-335)."""
+        found = cascade.detectMultiScale(image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        return [
+            (int(x), int(y), int(w), int(h))
+            for (x, y, w, h) in found
+            if float(h) / float(height) >= MIN_FACE_HEIGHT_SHARE
+        ]
+
     samples_count = 0
     face_detected_count = 0
     speaking_samples_count = 0
@@ -568,25 +677,17 @@ def probe_face_tracking(
                     speaking_samples_count += 1
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            boxes = frontal.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-            )
-            if len(boxes) == 0 and not profile.empty():
-                boxes = profile.detectMultiScale(
-                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                )
-                if len(boxes) == 0:
-                    flipped = cv2.flip(gray, 1)
-                    flipped_boxes = profile.detectMultiScale(
-                        flipped, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                    )
-                    if len(flipped_boxes) > 0:
-                        frame_w = gray.shape[1]
-                        boxes = [
-                            (frame_w - (fx + fw), fy, fw, fh) for (fx, fy, fw, fh) in flipped_boxes
-                        ]
+            boxes = faces(frontal, gray)
+            if not boxes and not profile.empty():
+                boxes = faces(profile, gray)
+                if not boxes:
+                    frame_w = gray.shape[1]
+                    boxes = [
+                        (frame_w - (fx + fw), fy, fw, fh)
+                        for (fx, fy, fw, fh) in faces(profile, cv2.flip(gray, 1))
+                    ]
 
-            if len(boxes) > 0:
+            if boxes:
                 face_detected_count += 1
                 if is_speaking:
                     speaking_face_count += 1
@@ -636,6 +737,28 @@ def probe_face_tracking(
     )
 
 
+def _caption_stroke_contrast(band: Any, mask: Any) -> float | None:
+    """Observe detected stroke pixels against their immediate surround in linear RGB."""
+    import cv2
+    import numpy as np
+
+    foreground = mask.astype(bool)
+    surround = cv2.dilate(mask.astype(np.uint8), np.ones((5, 5), dtype=np.uint8)).astype(bool)
+    surround &= ~foreground
+    if not np.any(foreground) or not np.any(surround):
+        return None
+
+    def luminance(selected: Any) -> float:
+        pixels = band[selected]
+        if len(band.shape) == 2:
+            value = int(round(float(np.median(pixels))))
+            return relative_luminance(value, value, value)
+        b, g, r = np.median(pixels, axis=0)
+        return relative_luminance(int(round(r)), int(round(g)), int(round(b)))
+
+    return round(contrast_ratio(luminance(foreground), luminance(surround)), 2)
+
+
 def detect_caption_ink_in_band(
     frame: Any,
     band_top: int,
@@ -661,10 +784,6 @@ def detect_caption_ink_in_band(
         return False, None
 
     gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY) if len(band.shape) == 3 else band
-    float_gray = np.asarray(gray, dtype=float)
-    p95 = float(np.percentile(float_gray, 95))
-    p10 = max(1.0, float(np.percentile(float_gray, 10)))
-    contrast = round((p95 + 0.05) / (p10 + 0.05), 2)
 
     # Differential observation if source_frame is available
     if (
@@ -683,7 +802,7 @@ def detect_caption_ink_in_band(
         diff_count = int(np.sum(diff_high))
         min_diff_pixels = max(10, int(50 * scale_y * scale_y))
         if diff_count >= min_diff_pixels:
-            return True, contrast
+            return True, _caption_stroke_contrast(band, diff_high)
         if float(np.mean(diff)) < 3.0:
             return False, None
 
@@ -695,6 +814,7 @@ def detect_caption_ink_in_band(
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bright)
     text_pixels = 0
     text_comps = 0
+    text_mask = np.zeros(gray.shape, dtype=np.uint8)
     min_comp_h = max(4, int(10 * scale_y))
     max_comp_h = max(20, int(120 * scale_y))
     min_comp_w = max(2, int(4 * scale_y))
@@ -716,6 +836,7 @@ def detect_caption_ink_in_band(
             if int(np.sum(comp_outline)) >= min_outline_overlap or float(np.mean(gray)) < 70:
                 text_pixels += area
                 text_comps += 1
+                text_mask |= comp_mask
 
     row_bright = np.sum(bright, axis=1)
     max_row = float(np.max(row_bright)) if len(row_bright) > 0 else 0.0
@@ -728,13 +849,14 @@ def detect_caption_ink_in_band(
         and text_pixels >= min_text_pixels
         and (peak_ratio >= 1.3 or text_pixels >= min_text_pixels * 3)
     ):
-        return True, contrast
+        return True, _caption_stroke_contrast(band, text_mask)
 
     # Dark text / plate on bright background:
     if float(np.mean(gray)) > 165:
-        num_dark_labels, _, dark_stats, _ = cv2.connectedComponentsWithStats(dark)
+        num_dark_labels, dark_labels, dark_stats, _ = cv2.connectedComponentsWithStats(dark)
         dark_text_comps = 0
         dark_pixels = 0
+        dark_mask = np.zeros(gray.shape, dtype=np.uint8)
         for i in range(1, num_dark_labels):
             w = dark_stats[i, cv2.CC_STAT_WIDTH]
             h_c = dark_stats[i, cv2.CC_STAT_HEIGHT]
@@ -746,8 +868,9 @@ def detect_caption_ink_in_band(
             ):
                 dark_text_comps += 1
                 dark_pixels += area
+                dark_mask |= (dark_labels == i).astype(np.uint8)
         if dark_text_comps >= 1 and dark_pixels >= min_text_pixels:
-            return True, contrast
+            return True, _caption_stroke_contrast(band, dark_mask)
 
     return False, None
 
@@ -893,36 +1016,219 @@ def measure_caption_events_contrast(
     return records
 
 
+def _read_vmaf_json(path: Path, *, limit: int) -> object:
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if not data or len(data) > limit:
+        raise ValueError("native comparison report is empty or oversized")
+
+    def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("native comparison report contains a duplicate key")
+            result[key] = value
+        return result
+
+    def constant(value: str) -> object:
+        raise ValueError("native comparison report contains a nonfinite constant: " + value)
+
+    return json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+
+
+def _vmaf_observation_score(document: object, expected_frames: int) -> float:
+    if (
+        not isinstance(document, dict)
+        or not isinstance(document.get("version"), str)
+        or not document["version"].strip()
+        or len(document["version"]) > 128
+    ):
+        raise ValueError("native VMAF report must have a versioned object")
+    frames = document.get("frames")
+    if not isinstance(frames, list) or len(frames) != expected_frames or not frames:
+        raise ValueError("native VMAF report does not cover the complete frame sequence")
+
+    def score(value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("native VMAF score must be numeric")
+        result = float(value)
+        if not math.isfinite(result) or not 0 <= result <= 100:
+            raise ValueError("native VMAF score must be finite and within 0..100")
+        return result
+
+    scores: list[float] = []
+    for index, frame in enumerate(frames):
+        if (
+            not isinstance(frame, dict)
+            or type(frame.get("frameNum")) is not int
+            or frame["frameNum"] != index
+            or not isinstance(frame.get("metrics"), dict)
+        ):
+            raise ValueError("native VMAF frame indices or metrics are invalid")
+        scores.append(score(frame["metrics"].get("vmaf")))
+    pooled = document.get("pooled_metrics")
+    if not isinstance(pooled, dict) or not isinstance(pooled.get("vmaf"), dict):
+        raise ValueError("native VMAF report has no pooled observations")
+    mean = score(pooled["vmaf"].get("mean"))
+    for field, expected in (
+        ("mean", math.fsum(scores) / len(scores)),
+        ("min", min(scores)),
+        ("max", max(scores)),
+    ):
+        if not math.isclose(
+            score(pooled["vmaf"].get(field)), expected, rel_tol=0, abs_tol=0.000002
+        ):
+            raise ValueError("native VMAF pooled observations disagree with the frames")
+    return mean
+
+
+def _parse_vmaf_timeline(document: object) -> list[tuple[Fraction, Fraction, int, int, str]]:
+    if not isinstance(document, dict) or not isinstance(document.get("frames"), list):
+        raise ValueError("native comparison timeline must contain decoded frames")
+    result: list[tuple[Fraction, Fraction, int, int, str]] = []
+    origin: Fraction | None = None
+    previous: Fraction | None = None
+    for frame in document["frames"]:
+        if not isinstance(frame, dict):
+            raise ValueError("native comparison frame must be an object")
+        timestamp = frame.get("best_effort_timestamp_time")
+        duration = frame.get("duration_time", frame.get("pkt_duration_time"))
+        width, height, pixel_format = frame.get("width"), frame.get("height"), frame.get("pix_fmt")
+        if (
+            not isinstance(timestamp, str)
+            or not isinstance(duration, str)
+            or type(width) is not int
+            or type(height) is not int
+            or not isinstance(pixel_format, str)
+            or not pixel_format
+        ):
+            raise ValueError("native comparison frame has missing clock or geometry")
+        try:
+            time_, length = Fraction(timestamp), Fraction(duration)
+        except (ValueError, ArithmeticError) as exc:
+            raise ValueError("native comparison frame clocks must be finite numbers") from exc
+        if length <= 0 or width <= 0 or height <= 0 or (previous is not None and time_ <= previous):
+            raise ValueError("native comparison frame clocks or geometry are invalid")
+        if origin is None:
+            origin = time_
+        result.append((time_ - origin, length, width, height, pixel_format))
+        previous = time_
+    if not result:
+        raise ValueError("native comparison timeline has no decoded frames")
+    return result
+
+
+def _vmaf_input_binding(path: Path) -> tuple[int, str]:
+    size = path.stat().st_size
+    if not path.is_file() or not 0 < size <= 32 * 1024**3:
+        raise ValueError("native comparison input must be a bounded nonempty file")
+    digest = hashlib.sha256()
+    remaining = size
+    with path.open("rb") as stream:
+        while remaining:
+            chunk = stream.read(min(65536, remaining))
+            if not chunk:
+                raise ValueError("native comparison input shortened while reading")
+            remaining -= len(chunk)
+            digest.update(chunk)
+        if stream.read(1):
+            raise ValueError("native comparison input grew while reading")
+    return size, digest.hexdigest()
+
+
 def probe_vmaf(
     video_path: Path,
     mezzanine_path: Path,
     ffmpeg: Path,
 ) -> VmafMeasurement | None:
-    """Run VMAF and PSNR comparison against a reference mezzanine."""
-    if not mezzanine_path.is_file():
-        return None
+    """Observe optional VMAF on complete compatible frames; refusal is unknown.
 
-    cmd = [
-        str(ffmpeg),
-        "-nostdin",
-        "-i",
-        str(video_path),
-        "-i",
-        str(mezzanine_path),
-        "-lavfi",
-        "[0:v][1:v]libvmaf=log_fmt=json:psnr=1",
-        "-f",
-        "null",
-        "-",
-    ]
+    Channel PSNR is not the legacy global-average psnr_db, so it stays unknown.
+    These pixel observations are neither editorial fidelity nor publication authority.
+    """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=240.0)
-        vmaf_m = re.search(r'"VMAF score":\s*([\d.]+)', proc.stderr)
-        psnr_m = re.search(r"average:([\d.]+)", proc.stderr)
-        vmaf_score = float(vmaf_m.group(1)) if vmaf_m else 95.0
-        psnr_score = float(psnr_m.group(1)) if psnr_m else None
-        return VmafMeasurement(vmaf_score=round(vmaf_score, 2), psnr_db=psnr_score)
-    except Exception:
+        video, reference, binary = video_path.resolve(), mezzanine_path.resolve(), ffmpeg.resolve()
+        ffprobe = ffprobe_for(binary)
+        bindings = {path: _vmaf_input_binding(path) for path in (video, reference, binary, ffprobe)}
+        with TemporaryDirectory(prefix="hawedit-vmaf-") as temporary:
+            private = PrivateDirectory(Path(temporary) / "observations", exclusive=True)
+            directory = private.path
+            timelines = []
+            for index, media in enumerate((video, reference)):
+                report = directory / f"timeline-{index}.json"
+                with private.open_new_file(report.name) as output:
+                    subprocess.run(
+                        [
+                            str(ffprobe),
+                            "-v",
+                            "error",
+                            "-select_streams",
+                            "v:0",
+                            "-show_entries",
+                            "frame=best_effort_timestamp_time,duration_time,"
+                            "pkt_duration_time,width,height,pix_fmt",
+                            "-of",
+                            "json",
+                            str(media),
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=output,
+                        stderr=subprocess.DEVNULL,
+                        check=True,
+                        timeout=240,
+                    )
+                private.check_file(report.name)
+                timelines.append(_parse_vmaf_timeline(_read_vmaf_json(report, limit=16 * 1024**2)))
+            if timelines[0] != timelines[1]:
+                raise ValueError("decoded reference clocks or geometry are incompatible")
+            with private.open_new_file("observations.json"):
+                pass
+            subprocess.run(
+                [
+                    str(binary),
+                    "-hide_banner",
+                    "-nostdin",
+                    "-xerror",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(video),
+                    "-i",
+                    str(reference),
+                    "-lavfi",
+                    "[0:v]settb=AVTB,setpts=PTS-STARTPTS[main];"
+                    "[1:v]settb=AVTB,setpts=PTS-STARTPTS[ref];"
+                    "[main][ref]libvmaf=log_fmt=json:log_path=observations.json:"
+                    "pool=mean:n_subsample=1:shortest=1:repeatlast=0:eof_action=endall",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                cwd=directory,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=240,
+            )
+            private.check_file("observations.json")
+            mean = _vmaf_observation_score(
+                _read_vmaf_json(directory / "observations.json", limit=64 * 1024**2),
+                len(timelines[0]),
+            )
+            if any(_vmaf_input_binding(path) != before for path, before in bindings.items()):
+                raise ValueError("native comparison inputs changed during observation")
+            private.verify()
+            return VmafMeasurement(vmaf_score=round(mean, 2), psnr_db=None)
+    except (
+        OSError,
+        StudioStorageError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+        ArithmeticError,
+        RecursionError,
+    ):
         return None
 
 
@@ -961,7 +1267,7 @@ def measure_clip(
     )
     first_line = proc.stdout.splitlines()[0] if proc.stdout else "unknown"
 
-    return ClipMeasurement(
+    measurement = ClipMeasurement(
         schema=1,
         file=file_summary,
         video=video_meas,
@@ -975,6 +1281,7 @@ def measure_clip(
             "measured_at": datetime.now(UTC).isoformat(),
         },
     )
+    return replace(measurement, broadcast_scorecard=evaluate_broadcast_scorecard(measurement))
 
 
 def main(argv: list[str] | None = None) -> int:

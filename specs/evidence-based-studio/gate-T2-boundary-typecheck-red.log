@@ -1,0 +1,5 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\studio_generation.py:93: error: "ArgumentParser" has no attribute "exit_on_error"  [attr-defined]
+Found 1 error in 1 file (checked 256 source files)

@@ -1,0 +1,5 @@
+t01__viral_popup__108.mp4
+  t=0.8s 1080x1920: frontal h=48px h_share=0.0250 y_centre=0.7875 x_centre=0.5824
+  samples=15 with_box=1
+
+totals: clips=144 samples=2160 samples_with_box=1 (full per-sample listing omitted: every other line reads 'none')

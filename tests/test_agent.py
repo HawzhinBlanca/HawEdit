@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from hawedit.judge import KURDISH_EDITORIAL_JUDGE
+
 pytest.importorskip("pydantic_ai")
 dbos = pytest.importorskip("dbos")
 
@@ -542,7 +544,7 @@ def test_run_quality_checks_agrees_with_assert_renderable(tmp_path: Path) -> Non
             misleading_edit_risk=0.05,
             cultural_landing=0.8,
             narrative_role="payoff",
-            judge="gemini-2.5-pro",
+            judge=KURDISH_EDITORIAL_JUDGE,
         ),
         output=Output(
             title_ckb="t",

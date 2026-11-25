@@ -1,0 +1,5 @@
+AUDIT_STORAGE=C:\Users\Wareen\AppData\Local\Temp\hawedit-ui-check-lvti_trx
+HawEdit Web Dashboard running at http://127.0.0.1:8082/
+127.0.0.1 - - [02/Oct/2026 21:40:15] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:40:15] "GET /api/jobs HTTP/1.1" 200 -
+127.0.0.1 - - [02/Oct/2026 21:40:15] "GET /assets/fonts/Vazirmatn.ttf HTTP/1.1" 200 -

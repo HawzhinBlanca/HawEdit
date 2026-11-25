@@ -1,0 +1,5 @@
+==> lint
+All checks passed!
+==> typecheck
+src\hawedit\comparison_kit.py:651: error: Incompatible types in assignment (expression has type "dict[str, str] | None", variable has type "dict[str, str]")  [assignment]
+Found 1 error in 1 file (checked 273 source files)

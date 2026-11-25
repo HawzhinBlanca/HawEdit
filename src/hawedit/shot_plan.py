@@ -51,6 +51,7 @@ class ProtectedRegionKind(str, Enum):
     GRAPHIC_OR_CHART = "graphic_or_chart"
     LOWER_THIRD_CAPTIONS = "lower_third_captions"
     SOURCE_ON_SCREEN_TEXT = "source_on_screen_text"
+    TABLE_OBJECT = "table_object"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,8 @@ class ProtectedContentRegion:
     box: tuple[float, float, float, float]
     importance: float = 1.0
     description: str = ""
+    start_ms: int | None = None
+    end_ms: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.region_id, str) or not self.region_id.strip():
@@ -82,6 +85,12 @@ class ProtectedContentRegion:
             raise TypeError("importance must be a finite float")
         if not 0.0 <= float(self.importance) <= 1.0:
             raise ValueError(f"importance must be in [0.0, 1.0], got {self.importance}")
+        if self.start_ms is not None and (type(self.start_ms) is not int or self.start_ms < 0):
+            raise ValueError(f"start_ms must be a non-negative integer, got {self.start_ms!r}")
+        if self.end_ms is not None and (type(self.end_ms) is not int or self.end_ms <= 0):
+            raise ValueError(f"end_ms must be a positive integer, got {self.end_ms!r}")
+        if self.start_ms is not None and self.end_ms is not None and self.end_ms <= self.start_ms:
+            raise ValueError(f"end_ms ({self.end_ms}) must be > start_ms ({self.start_ms})")
 
     @property
     def width(self) -> float:
@@ -92,13 +101,18 @@ class ProtectedContentRegion:
         return self.box[3] - self.box[1]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "region_id": self.region_id,
             "kind": self.kind.value,
             "box": [round(float(c), 4) for c in self.box],
             "importance": round(float(self.importance), 4),
             "description": self.description,
         }
+        if self.start_ms is not None:
+            payload["start_ms"] = self.start_ms
+        if self.end_ms is not None:
+            payload["end_ms"] = self.end_ms
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProtectedContentRegion:
@@ -109,6 +123,8 @@ class ProtectedContentRegion:
             box=(float(raw_box[0]), float(raw_box[1]), float(raw_box[2]), float(raw_box[3])),
             importance=float(data.get("importance", 1.0)),
             description=str(data.get("description", "")),
+            start_ms=data.get("start_ms"),
+            end_ms=data.get("end_ms"),
         )
 
 

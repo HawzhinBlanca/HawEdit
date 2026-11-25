@@ -1,0 +1,377 @@
+==> lint
+All checks passed!
+==> typecheck
+Success: no issues found in 274 source files
+==> format
+274 files already formatted
+==> tests
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  8%]
+....EEEF................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 23%]
+........................................................................ [ 25%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 40%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+...................................F.................................... [ 65%]
+........................................................................ [ 67%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 79%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 89%]
+.............F.......................................................... [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+...............                                                          [100%]
+=================================== ERRORS ====================================
+_____ ERROR at setup of test_two_builds_of_one_commit_are_byte_identical ______
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000027688E482F0>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def committed_builds(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+        if BASH is None or shutil.which("git") is None:
+            pytest.skip("needs bash and git")
+        root = tmp_path_factory.mktemp("locked-wheel-builds")
+>       return build(root / "a"), build(root / "b")
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/locked-wheel-builds0/a')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (ECISIONS.md, PROGRESS.md, README.md, assets/fonts/Vazirmatn-COPYRIGHT.txt, pyproject.toml, src/hawedit/comparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...omparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+_ ERROR at setup of test_every_entry_carries_the_commits_timestamp_not_the_clock _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000027688E482F0>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def committed_builds(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+        if BASH is None or shutil.which("git") is None:
+            pytest.skip("needs bash and git")
+        root = tmp_path_factory.mktemp("locked-wheel-builds")
+>       return build(root / "a"), build(root / "b")
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/locked-wheel-builds0/a')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (ECISIONS.md, PROGRESS.md, README.md, assets/fonts/Vazirmatn-COPYRIGHT.txt, pyproject.toml, src/hawedit/comparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...omparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+_ ERROR at setup of test_build_script_reports_the_hash_locked_private_builder _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000027688E482F0>, _basetemp=WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def committed_builds(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> tuple[tuple[Path, dict[str, object]], tuple[Path, dict[str, object]]]:
+        if BASH is None or shutil.which("git") is None:
+            pytest.skip("needs bash and git")
+        root = tmp_path_factory.mktemp("locked-wheel-builds")
+>       return build(root / "a"), build(root / "b")
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/locked-wheel-builds0/a')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (ECISIONS.md, PROGRESS.md, README.md, assets/fonts/Vazirmatn-COPYRIGHT.txt, pyproject.toml, src/hawedit/comparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...omparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+================================== FAILURES ===================================
+______ test_the_wheel_contains_every_file_the_audit_report_says_it_does _______
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/test_the_wheel_contains_every_0')
+
+    def test_the_wheel_contains_every_file_the_audit_report_says_it_does(tmp_path: Path) -> None:
+        """ "Wheel contains the Kurdish font/OFL, model-source manifest, WSL worker and setup
+        module � verified by listing the archive."
+    
+        `test_claims.py` checks those paths exist **in the tree**, which its own docstring says: a
+        claim about a wheel nobody can build from here. The tree is not the wheel. `assets/` and
+        `models/` are not packages - they reach the wheel only through
+        `[tool.setuptools.data-files]`, so deleting four lines of pyproject leaves every existing
+        test green and ships a wheel with no font, no OFL licence and no pinned revisions.
+    
+        Measured on the real artifact: 55 entries, and the four data files land under
+        `hawedit-0.1.0.data/data/share/hawedit/�`, so the match is on the path's tail - the claim is
+        that the file ships, not where a wheel chooses to put it.
+    
+        Kept across the readiness merge, which has no counterpart for it. `build` there returns the
+        wheel and its measured metadata rather than a bare path, so only the unpacking changed.
+        """
+        claimed = _paths_the_report_claims()
+        # Non-vacuity from a different file than the one being parsed: OFL-1.1 requires the licence
+        # to accompany the font, `registry.SHIPPED_ASSETS` records that obligation with the path,
+        # and the thing that actually ships is this archive. A reworded bullet that stopped naming
+        # it would fail here rather than quietly checking nothing.
+        from hawedit.registry import SHIPPED_ASSETS
+    
+        obliged = {asset.licence_file for asset in SHIPPED_ASSETS if asset.licence_file}
+        assert obliged and obliged <= claimed, (
+            f"the wheel-contents claim no longer names the licence files this project is obliged "
+            f"to ship: {sorted(obliged - claimed)}"
+        )
+    
+>       wheel, _metadata = build(tmp_path / "contents")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_build.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/test_the_wheel_contains_every_0/contents')
+
+    def build(out: Path) -> tuple[Path, dict[str, object]]:
+        assert BASH is not None
+        done = subprocess.run(
+            # Use the resolved Git Bash path and POSIX-form arguments: Windows command lookup can
+            # otherwise select WSL's launcher, and bash consumes backslashes in C:\ paths.
+            [BASH, SCRIPT.as_posix(), out.as_posix()],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=ROOT,
+        )
+>       assert done.returncode == 0, done.stdout + done.stderr
+E       AssertionError: REFUSED: refusing to release a dirty checkout (ECISIONS.md, PROGRESS.md, README.md, assets/fonts/Vazirmatn-COPYRIGHT.txt, pyproject.toml, src/hawedit/comparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/Wareen/Desktop/HawEdit/scripts/build-wheel.s...omparison_kit.py, src/hawedit/editorial_acceptance.py, src/hawedit/pipeline.py); commit explicit source paths first\n').returncode
+
+tests\test_build.py:55: AssertionError
+_________ test_git_archive_preserves_authenticated_text_member_bytes __________
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/test_git_archive_preserves_aut0')
+
+    def test_git_archive_preserves_authenticated_text_member_bytes(tmp_path: Path) -> None:
+        """Windows archive export must not rewrite committed lock or license bytes."""
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert "*.txt text eol=lf" in attributes
+    
+        tracked = tuple(
+            path for path in _git_bytes(ROOT, "ls-files", "-z", "*.txt").split(b"\0") if path
+        )
+        assert tracked
+        archive_path = tmp_path / "source.tar"
+>       subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.autocrlf=true",
+                "archive",
+                "--worktree-attributes",
+                "--format=tar",
+                f"--output={archive_path}",
+                "HEAD",
+                "--",
+                *(path.decode("utf-8") for path in tracked),
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+
+tests\test_release.py:74: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+input = None, capture_output = False, timeout = None, check = True
+popenargs = (['git', '-c', 'core.autocrlf=true', 'archive', '--worktree-attributes', '--format=tar', ...],)
+kwargs = {'cwd': WindowsPath('C:/Users/Wareen/Desktop/HawEdit')}
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout (seconds) is given and the process takes too long,
+         a TimeoutExpired exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['git', '-c', 'core.autocrlf=true', 'archive', '--worktree-attributes', '--format=tar', '--output=C:\\Users\\Wareen\\AppData\\Local\\Temp\\pytest-of-Wareen\\pytest-7051\\test_git_archive_preserves_aut0\\source.tar', 'HEAD', '--', 'assets/fonts/OFL.txt', 'assets/fonts/Vazirmatn-COPYRIGHT.txt', 'requirements/host-base-linux-py311.txt', 'requirements/host-base-linux-py312.txt', 'requirements/host-base-windows-py311.txt', 'requirements/host-base-windows-py312.txt', 'requirements/host-gate-linux-py311.txt', 'requirements/host-gate-linux-py312.txt', 'requirements/host-gate-windows-py311.txt', 'requirements/host-gate-windows-py312.txt', 'requirements/host-gpu-windows-py311.txt', 'requirements/host-models-linux-py311.txt', 'requirements/host-models-linux-py312.txt', 'requirements/host-models-windows-py311.txt', 'requirements/host-models-windows-py312.txt', 'requirements/release-build.txt', 'specs/robustness-audit-532e6ef-2026-09-09/browser-final-dom.txt', 'specs/robustness-audit-532e6ef-2026-09-09/not-video.txt']' returned non-zero exit status 128.
+
+..\..\AppData\Local\Programs\Python\Python312\Lib\subprocess.py:571: CalledProcessError
+---------------------------- Captured stderr call -----------------------------
+fatal: pathspec 'assets/fonts/Vazirmatn-COPYRIGHT.txt' did not match any files
+___ test_checked_in_policy_binds_current_lock_and_assets_and_closes_report ____
+
+tmp_path = WindowsPath('C:/Users/Wareen/AppData/Local/Temp/pytest-of-Wareen/pytest-7051/test_checked_in_policy_binds_c0')
+
+    def test_checked_in_policy_binds_current_lock_and_assets_and_closes_report(tmp_path: Path) -> None:
+        policy = load_vex(POLICY)
+>       assert policy.source_sha256 == package_digest(ROOT / "src" / "hawedit")
+E       AssertionError: assert '81f6f606f891...8a4f609bc5eba' == '68e131df5008...cfb3390751bea'
+E         
+E         - 68e131df5008b8d5938e4f7915e2c4475ccd2b855eaa01e49e0cfb3390751bea
+E         + 81f6f606f89115ddedcba38941aad0b3f86cc59187a52b21b2a8a4f609bc5eba
+
+tests\test_vex.py:131: AssertionError
+============================== warnings summary ===============================
+tests/test_agent.py::test_the_manifest_actually_reaches_the_model
+  C:\Users\Wareen\Desktop\HawEdit\.venv\Lib\site-packages\pydantic_graph\_utils.py:67: DeprecationWarning: There is no current event loop
+    event_loop = asyncio.get_event_loop()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_build.py::test_the_wheel_contains_every_file_the_audit_report_says_it_does
+FAILED tests/test_release.py::test_git_archive_preserves_authenticated_text_member_bytes
+FAILED tests/test_vex.py::test_checked_in_policy_binds_current_lock_and_assets_and_closes_report
+ERROR tests/test_build.py::test_two_builds_of_one_commit_are_byte_identical
+ERROR tests/test_build.py::test_every_entry_carries_the_commits_timestamp_not_the_clock
+ERROR tests/test_build.py::test_build_script_reports_the_hash_locked_private_builder
+3 failed, 4257 passed, 1 warning, 3 errors in 1100.43s (0:18:20)

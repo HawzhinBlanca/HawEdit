@@ -14,6 +14,7 @@ Implements:
 from __future__ import annotations
 
 import json
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -27,13 +28,53 @@ from hawedit.transcripts import Word
 
 __all__ = [
     "CURRENT_PLAN_VERSION",
+    "DEFAULT_MAX_REEL_DURATION_MS",
+    "DEFAULT_MIN_REEL_DURATION_MS",
+    "MAX_CUT_PADDING_MS",
+    "MAX_STAGE5_SIGNAL_EXTENSION_MS",
+    "MIN_CUT_PADDING_MS",
+    "SOCIAL_MAX_REEL_DURATION_MS",
+    "SOCIAL_MIN_REEL_DURATION_MS",
+    "EditRuleViolationError",
     "EditorialBrief",
+    "EdlValidationResult",
     "EffectiveConfiguration",
     "SourceTimeMapping",
     "VisualEditPlan",
+    "pipeline_edl_duration_bounds",
+    "pipeline_edl_padding_bounds",
+    "validate_edl",
 ]
 
 CURRENT_PLAN_VERSION: Final[int] = 1
+MIN_CUT_PADDING_MS: Final[int] = 30
+MAX_CUT_PADDING_MS: Final[int] = 200
+MAX_STAGE5_SIGNAL_EXTENSION_MS: Final[int] = 600
+DEFAULT_MIN_REEL_DURATION_MS: Final[int] = 30_000
+DEFAULT_MAX_REEL_DURATION_MS: Final[int] = 90_000
+SOCIAL_MIN_REEL_DURATION_MS: Final[int] = 30_000
+SOCIAL_MAX_REEL_DURATION_MS: Final[int] = 55_000
+
+
+class EditRuleViolationError(ValueError):
+    """Raised when an EDL violates hard word-boundary, padding, or duration rules (E3, D-354)."""
+
+    def __init__(self, violations: Sequence[str]) -> None:
+        self.violations = tuple(violations)
+        summary = "; ".join(self.violations) if self.violations else "EDL hard edit rule violation"
+        super().__init__(summary)
+
+
+@dataclass(frozen=True, slots=True)
+class EdlValidationResult:
+    """Result returned by ``validate_edl()`` when checking hard edit rules."""
+
+    is_valid: bool
+    violations: tuple[str, ...]
+    output_duration_ms: int
+    checked_cut_count: int
+    min_duration_ms: int
+    max_duration_ms: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +377,7 @@ class VisualEditPlan:
     speaker_turns: tuple[tuple[int, int, str], ...] = ()
     sentences: tuple[Sentence, ...] = ()
     relation_ids: tuple[str, ...] = ()
+    filler_cut_edges_ms: tuple[int, ...] = ()
 
     def derive_sentences_for_output(self) -> tuple[Sentence, ...]:
         """Derive sentences with words mapped strictly to output timeline (0-based)."""
@@ -528,6 +570,11 @@ class VisualEditPlan:
                 for s in self.sentences
             ],
             "relation_ids": list(self.relation_ids or self.brief.relation_ids),
+            **(
+                {"filler_cut_edges_ms": list(self.filler_cut_edges_ms)}
+                if self.filler_cut_edges_ms
+                else {}
+            ),
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -565,9 +612,224 @@ class VisualEditPlan:
             speaker_turns=speaker_turns,
             sentences=tuple(sentences),
             relation_ids=tuple(str(r) for r in data.get("relation_ids", ())),
+            filler_cut_edges_ms=tuple(int(x) for x in data.get("filler_cut_edges_ms", ())),
         )
 
     @classmethod
     def from_json(cls, json_text: str) -> VisualEditPlan:
         data = json.loads(json_text)
         return cls.from_dict(data)
+
+
+def pipeline_edl_duration_bounds(
+    *,
+    content_type: ContentType,
+    preset: str | None = None,
+    min_clip_ms: int,
+    media_duration_ms: int,
+    auto_select: bool = False,
+) -> tuple[int, int]:
+    """Resolve effective ``validate_edl`` duration bounds for a pipeline run.
+
+    Real runs enforce configured ``min_clip_ms`` (default 30_000 ms) and ``55_000`` ms on
+    social/viral presets (or ``90_000`` ms default). Synthetic short fixtures (< ``min_clip_ms``
+    with explicit sentence selection and no enforceable floor) pass with ``min_duration_ms=0``.
+    """
+    is_social = content_type is ContentType.SOCIAL or (preset or "").lower() == "viral"
+    max_dur = SOCIAL_MAX_REEL_DURATION_MS if is_social else DEFAULT_MAX_REEL_DURATION_MS
+    min_dur = 0 if (media_duration_ms < min_clip_ms and not auto_select) else max(0, min_clip_ms)
+    return min_dur, max(min_dur, max_dur)
+
+
+def pipeline_edl_padding_bounds(
+    *,
+    in_extended_by: str | None,
+    out_extended_by: str | None,
+    shot_cut_window_ms: int,
+    silence_threshold_ms: int,
+    silence_target_gap_ms: int,
+    min_duration_ms: int,
+) -> tuple[int, int, int]:
+    """Resolve ``(min_padding_ms, max_outer_in_padding_ms, max_outer_out_padding_ms)`` for pipeline.
+
+    Keeps [30, 200] ms strict on internal cuts, unaligned outer boundaries (``None``, ``tail``),
+    and bounded runs, while allowing ``shot_cut`` snaps up to ``shot_cut_window_ms`` and measured
+    Stage 5 audio/diarization/visual outer extensions (``vad_onset``, ``natural_silence``,
+    ``speaker_turn_*``, ``timelens_interval_end``) up to ``MAX_STAGE5_SIGNAL_EXTENSION_MS``, and
+    small explicit synthetic silence target gaps (< 60 ms) when no duration floor is active.
+    """
+    min_pad = (
+        min(MIN_CUT_PADDING_MS, silence_target_gap_ms // 2)
+        if (
+            min_duration_ms == 0
+            and silence_threshold_ms > 0
+            and 0 < silence_target_gap_ms < 2 * MIN_CUT_PADDING_MS
+        )
+        else MIN_CUT_PADDING_MS
+    )
+    signal_in = {"vad_onset", "speaker_turn_start"}
+    signal_out = {"natural_silence", "speaker_turn_end", "timelens_interval_end"}
+    if in_extended_by == "shot_cut":
+        max_in = max(MAX_CUT_PADDING_MS, shot_cut_window_ms)
+    elif in_extended_by in signal_in:
+        max_in = MAX_STAGE5_SIGNAL_EXTENSION_MS
+    else:
+        max_in = MAX_CUT_PADDING_MS
+
+    if out_extended_by == "shot_cut":
+        max_out = max(MAX_CUT_PADDING_MS, shot_cut_window_ms)
+    elif out_extended_by in signal_out:
+        max_out = MAX_STAGE5_SIGNAL_EXTENSION_MS
+    else:
+        max_out = MAX_CUT_PADDING_MS
+    return min_pad, max_in, max_out
+
+
+def validate_edl(
+    plan: VisualEditPlan,
+    *,
+    words: Sequence[Word] = (),
+    all_words: Sequence[Word] = (),
+    media_duration_ms: int | None = None,
+    min_padding_ms: int = MIN_CUT_PADDING_MS,
+    max_padding_ms: int = MAX_CUT_PADDING_MS,
+    max_outer_in_padding_ms: int | None = None,
+    max_outer_out_padding_ms: int | None = None,
+    min_duration_ms: int | None = None,
+    max_duration_ms: int | None = None,
+    duration_preset: str | None = None,
+    filler_cut_edges_ms: Collection[int] = (),
+    raise_on_error: bool = True,
+) -> EdlValidationResult:
+    """Validate E3 hard edit rules on a ``VisualEditPlan`` (splits, padding, duration)."""
+    if min_padding_ms < 0 or max_padding_ms < min_padding_ms:
+        raise ValueError(
+            f"invalid padding bounds: min_padding={min_padding_ms}, max_padding={max_padding_ms}"
+        )
+    eff_max_outer_in = (
+        max_padding_ms if max_outer_in_padding_ms is None else max_outer_in_padding_ms
+    )
+    eff_max_outer_out = (
+        max_padding_ms if max_outer_out_padding_ms is None else max_outer_out_padding_ms
+    )
+    if eff_max_outer_in < min_padding_ms or eff_max_outer_out < min_padding_ms:
+        raise ValueError("outer padding bounds must be >= min_padding_ms")
+
+    use_social = duration_preset == "social"
+    default_min = SOCIAL_MIN_REEL_DURATION_MS if use_social else DEFAULT_MIN_REEL_DURATION_MS
+    default_max = SOCIAL_MAX_REEL_DURATION_MS if use_social else DEFAULT_MAX_REEL_DURATION_MS
+    eff_min_dur = default_min if min_duration_ms is None else min_duration_ms
+    eff_max_dur = default_max if max_duration_ms is None else max_duration_ms
+    if eff_min_dur < 0 or eff_max_dur < eff_min_dur:
+        raise ValueError(
+            f"invalid duration bounds: min_duration_ms={eff_min_dur}, max_duration_ms={eff_max_dur}"
+        )
+
+    retained = plan.time_mapping.retained_intervals_ms
+    retained_words = tuple(words) if words else tuple(w for s in plan.sentences for w in s.words)
+    split_words = sorted(
+        {w for w in (*retained_words, *all_words) if w.end_ms > w.start_ms},
+        key=lambda w: (w.start_ms, w.end_ms),
+    )
+    exterior_words = sorted(
+        (w for w in all_words if w.end_ms > w.start_ms),
+        key=lambda w: (w.start_ms, w.end_ms),
+    )
+
+    violations: list[str] = []
+
+    # 1. Never cut inside any aligned spoken word across outer or internal splice boundaries.
+    for seg_idx, (seg_start, seg_end) in enumerate(retained):
+        for edge_label, cut_ms in (("start", seg_start), ("end", seg_end)):
+            for w in split_words:
+                if w.start_ms < cut_ms < w.end_ms:
+                    violations.append(
+                        f"segment {seg_idx} {edge_label} cut at {cut_ms} ms splits word "
+                        f"{w.w!r} ({w.start_ms}..{w.end_ms} ms)"
+                    )
+
+    # 2. Enforce [min_padding_ms, max_padding_ms] (30..200 ms) padding on cut edges.
+    # Interior filler-excision splices (D-369) may touch surviving word edges (0..200 ms) because
+    # `silence_trim_filter` applies 30 ms `qsin` audio crossfades at every interior cut.
+    filler_edges = frozenset(plan.filler_cut_edges_ms) | frozenset(filler_cut_edges_ms)
+    for seg_idx, (seg_start, seg_end) in enumerate(retained):
+        seg_words = [
+            w
+            for w in retained_words
+            if w.end_ms > w.start_ms and seg_start <= w.start_ms and w.end_ms <= seg_end
+        ]
+        if not seg_words:
+            continue
+        first_w = min(seg_words, key=lambda w: w.start_ms)
+        last_w = max(seg_words, key=lambda w: w.end_ms)
+
+        lead_pad = first_w.start_ms - seg_start
+        is_outer_left = seg_idx == 0
+        allowed_min_in = 0 if (not is_outer_left and seg_start in filler_edges) else min_padding_ms
+        allowed_max_in = eff_max_outer_in if is_outer_left else max_padding_ms
+        if is_outer_left and seg_start == 0:
+            if lead_pad > allowed_max_in:
+                violations.append(
+                    f"segment {seg_idx} start padding {lead_pad} ms > {allowed_max_in} ms"
+                )
+        elif lead_pad < allowed_min_in or lead_pad > allowed_max_in:
+            violations.append(
+                f"segment {seg_idx} start padding {lead_pad} ms outside allowed "
+                f"[{allowed_min_in}, {allowed_max_in}] ms"
+            )
+
+        if is_outer_left and exterior_words:
+            preceding = [w for w in exterior_words if w.end_ms <= seg_start]
+            if preceding:
+                prev_end = max(w.end_ms for w in preceding)
+                ext_gap = seg_start - prev_end
+                if ext_gap < min_padding_ms:
+                    violations.append(
+                        f"outer start cut at {seg_start} ms leaves only {ext_gap} ms after "
+                        f"unselected preceding word (min {min_padding_ms} ms)"
+                    )
+
+        tail_pad = seg_end - last_w.end_ms
+        is_outer_right = seg_idx == len(retained) - 1
+        allowed_min_out = 0 if (not is_outer_right and seg_end in filler_edges) else min_padding_ms
+        allowed_max_out = eff_max_outer_out if is_outer_right else max_padding_ms
+        if is_outer_right and media_duration_ms is not None and seg_end == media_duration_ms:
+            if tail_pad > allowed_max_out:
+                violations.append(
+                    f"segment {seg_idx} end padding {tail_pad} ms > {allowed_max_out} ms"
+                )
+        elif tail_pad < allowed_min_out or tail_pad > allowed_max_out:
+            violations.append(
+                f"segment {seg_idx} end padding {tail_pad} ms outside allowed "
+                f"[{allowed_min_out}, {allowed_max_out}] ms"
+            )
+
+        if is_outer_right and exterior_words:
+            following = [w for w in exterior_words if w.start_ms >= seg_end]
+            if following:
+                next_start = min(w.start_ms for w in following)
+                ext_gap = next_start - seg_end
+                if ext_gap < min_padding_ms:
+                    violations.append(
+                        f"outer end cut at {seg_end} ms leaves only {ext_gap} ms before "
+                        f"unselected following word (min {min_padding_ms} ms)"
+                    )
+
+    # 3. Output duration bounds.
+    output_dur = plan.time_mapping.output_duration_ms
+    if output_dur < eff_min_dur or output_dur > eff_max_dur:
+        violations.append(
+            f"output duration {output_dur} ms outside allowed [{eff_min_dur}, {eff_max_dur}] ms"
+        )
+
+    result = EdlValidationResult(
+        is_valid=not violations,
+        violations=tuple(violations),
+        output_duration_ms=output_dur,
+        checked_cut_count=2 * len(retained),
+        min_duration_ms=eff_min_dur,
+        max_duration_ms=eff_max_dur,
+    )
+    if raise_on_error and violations:
+        raise EditRuleViolationError(violations)
+    return result

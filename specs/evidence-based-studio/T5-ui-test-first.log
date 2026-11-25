@@ -1,0 +1,60 @@
+FFFF.                                                                    [100%]
+================================== FAILURES ===================================
+___________ test_studio_semantic_controls_and_no_fabricated_quality ___________
+
+    def test_studio_semantic_controls_and_no_fabricated_quality() -> None:
+        document = markup()
+        assert document.elements[0] == ("html", {"lang": "ckb", "dir": "rtl"})
+        ids = [attrs["id"] for _, attrs in document.elements if "id" in attrs]
+        assert len(ids) == len(set(ids))
+        tag, picker = document.element("videoFile")
+        assert tag == "input" and picker["type"] == "file"
+>       assert "hidden" not in picker and "display:none" not in str(picker)
+E       assert ('hidden' not in {'type': 'file', 'id': 'videoFile', 'accept': 'video/*', 'style': 'display:none', ...} and 'display:none' not in "{'type': 'f...cted(this)'}"
+E         
+E         'display:none' is contained here:
+E           'style': 'display:none', 'onchange': 'fileSelected(this)'}
+E         ?           ++++++++++++)
+
+tests\test_studio_ui.py:37: AssertionError
+________________ test_studio_ui_upload_and_submission_contract ________________
+
+    def test_studio_ui_upload_and_submission_contract() -> None:
+>       assert "api('/api/uploads'" in DASHBOARD_HTML
+E       assert "api('/api/uploads'" in '<!DOCTYPE html>\n<html lang="ckb" dir="rtl">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="widt...(currentClips);\n            }\n          }\n        }\n      } catch (e) {}\n    });\n  </script>\n</body>\n</html>\n'
+
+tests\test_studio_ui.py:58: AssertionError
+___________ test_studio_ui_persists_bound_submission_before_egress ____________
+
+    def test_studio_ui_persists_bound_submission_before_egress() -> None:
+>       persistence = DASHBOARD_HTML.index("save('request', state.request)")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: substring not found
+
+tests\test_studio_ui.py:74: ValueError
+_______________ test_studio_ui_history_and_preview_are_explicit _______________
+
+    def test_studio_ui_history_and_preview_are_explicit() -> None:
+        document = markup()
+>       assert document.element("jobSelect")[0] == "select"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_studio_ui.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <test_studio_ui.StudioMarkup object at 0x0000020BC560C500>
+identifier = 'jobSelect'
+
+    def element(self, identifier: str) -> tuple[str, dict[str, str | None]]:
+        matches = [item for item in self.elements if item[1].get("id") == identifier]
+>       assert len(matches) == 1, identifier
+E       AssertionError: jobSelect
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests\test_studio_ui.py:20: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_studio_ui.py::test_studio_semantic_controls_and_no_fabricated_quality
+FAILED tests/test_studio_ui.py::test_studio_ui_upload_and_submission_contract
+FAILED tests/test_studio_ui.py::test_studio_ui_persists_bound_submission_before_egress
+FAILED tests/test_studio_ui.py::test_studio_ui_history_and_preview_are_explicit
