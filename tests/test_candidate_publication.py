@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -139,6 +140,8 @@ def publication(case: review_fixtures.ReviewCase) -> review_fixtures.ReviewCase:
         check=False,
     )
     assert encoded.returncode == 0, encoded.stderr.decode(errors="replace")
+    if os.name != "nt":
+        os.chmod(candidate / "c-1.mp4", 0o600)
     video = (candidate / "c-1.mp4").read_bytes()
     # The source is a synthetic mechanics input, not reference speech or licensed corpus.
     case.source.write_bytes(video)

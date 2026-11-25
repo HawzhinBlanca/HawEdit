@@ -61,3 +61,37 @@ def test_translate_sidecar_passes_full_passage_and_ordered_cues(
     assert captured[0]["passage"] == "سڵاو هاوڕێ چۆنی؟"
     assert captured[0]["cues"] == [{"id": 1, "source": "سڵاو هاوڕێ"}, {"id": 2, "source": "چۆنی؟"}]
     assert "Hello friend" in out.read_text(encoding="utf-8")
+
+
+def test_translate_sidecar_retries_and_rejects_sorani_leakage_in_arabic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "clip.srt"
+    path.write_text(
+        "1\n00:00:00,100 --> 00:00:01,500\nئێستا کە ئەم نموونەیە دەهێنمەوە\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HAWEDIT_OMNI_URL", "http://127.0.0.1:1234/v1")
+
+    # First attempt leaks Sorani Kurdish, retry succeeds in Arabic.
+    calls = 0
+
+    def recover_on_retry(**_kwargs: object) -> tuple[dict[str, object], object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ({"cues": [{"id": 1, "text": "ئێستا کە ئەم نموونەیە دەهێنمەوە"}]}, {})
+        return ({"cues": [{"id": 1, "text": "الآن عندما أذكر هذا المثال"}]}, {})
+
+    monkeypatch.setattr("hawedit.v8.localization._call_structured_llm", recover_on_retry)
+    out = translate_sidecar(path, "ar", "local-model")
+    assert calls == 2
+    assert "الآن عندما أذكر هذا المثال" in out.read_text(encoding="utf-8")
+
+    # Persistent Sorani leakage must fail closed rather than shipping Kurdish as Arabic.
+    monkeypatch.setattr(
+        "hawedit.v8.localization._call_structured_llm",
+        lambda **_kw: ({"cues": [{"id": 1, "text": "ئێستا کە ئەم نموونەیە دەهێنمەوە"}]}, {}),
+    )
+    with pytest.raises(ValueError, match="untranslated Sorani"):
+        translate_sidecar(path, "ar", "local-model")

@@ -126,7 +126,7 @@ def _install_success_mocks(
         ),
     )
     monkeypatch.setattr(gate, "_find_uv", lambda *_args, **_kwargs: "/home/ai/.local/bin/uv")
-    monkeypatch.setattr(gate, "_utc_now", lambda: datetime(2026, 11, 24, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr(gate, "_utc_now", lambda: datetime(2026, 11, 25, 12, 0, tzinfo=UTC))
 
     def run(command: list[str], **_kwargs: object) -> gate.ProcessOutput:
         commands.append(command)

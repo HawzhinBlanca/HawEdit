@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import array
+import ctypes
 import math
 import os
 import select
@@ -30,6 +31,38 @@ from hawedit.linux_thread_name import LinuxThreadNameBroker
 from hawedit.linux_thread_registry import LinuxThreadRegistry, _Description
 
 __all__ = ["RootedLaunch", "RootedResult"]
+
+
+def _pidfd_open(pid: int) -> int:
+    open_fn = getattr(os, "pidfd_open", None)
+    if open_fn is not None:
+        return int(open_fn(pid))
+    native = ctypes.CDLL(None, use_errno=True)
+    native.pidfd_open.argtypes = [ctypes.c_int, ctypes.c_uint]
+    native.pidfd_open.restype = ctypes.c_int
+    fd = int(native.pidfd_open(pid, 0))
+    if fd < 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+    return fd
+
+
+def _pidfd_send_signal(fd: int, sig: int) -> None:
+    send_fn = getattr(signal, "pidfd_send_signal", None)
+    if send_fn is not None:
+        send_fn(fd, sig)
+        return
+    native = ctypes.CDLL(None, use_errno=True)
+    native.pidfd_send_signal.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint,
+    ]
+    native.pidfd_send_signal.restype = ctypes.c_int
+    if native.pidfd_send_signal(fd, sig, None, 0) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
 
 
 @dataclass(frozen=True)
@@ -119,7 +152,7 @@ class RootedLaunch:
         try:
             if worker != 2:
                 raise LinuxSnapshotError("Rooted controller fork was not original PID2")
-            self._pidfd = os.pidfd_open(worker)
+            self._pidfd = _pidfd_open(worker)
             self._task = os.open(
                 "/proc/2/task", _flags("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
             )
@@ -149,7 +182,7 @@ class RootedLaunch:
                 time.sleep(0.001)
         except BaseException:
             if self._pidfd >= 0:
-                signal.pidfd_send_signal(self._pidfd, signal.SIGKILL)
+                _pidfd_send_signal(self._pidfd, int(_api(signal, "SIGKILL")))
                 if not select.select([self._pidfd], [], [], 2)[0]:
                     raise LinuxSnapshotError("Rooted controller initial drain uncertain") from None
                 os.waitpid(worker, 0)
@@ -367,7 +400,7 @@ class RootedLaunch:
                     broker.close()
                 registry.close()
             else:
-                _api(signal, "pidfd_send_signal")(self._pidfd, int(_api(signal, "SIGKILL")))
+                _pidfd_send_signal(self._pidfd, int(_api(signal, "SIGKILL")))
                 if not select.select([self._pidfd], [], [], 2)[0]:
                     raise LinuxSnapshotError("Rooted controller pre-exec drain uncertain") from None
                 os.waitpid(2, 0)

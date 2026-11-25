@@ -79,7 +79,11 @@ if coordinator == 0:
         mount(b'/proc', (base + '/proc').encode('ascii'), None, 4096 | 16384)
         if CASE == 'exec':
             # Genuine sealed executable with an exit(42) entry point, not a ptrace rewrite.
-            image = os.memfd_create('registry-real-exec',3)
+            native.memfd_create.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+            native.memfd_create.restype = ctypes.c_int
+            image = native.memfd_create(b'registry-real-exec', 3)
+            if image < 0:
+                raise_errno('memfd_create')
             ident = b'\x7fELF\x02\x01\x01' + bytes(9)
             instructions = b'\xb8\x3c\x00\x00\x00\xbf\x2a\x00\x00\x00\x0f\x05'
             header = struct.pack('<16sHHIQQQIHHHHHH',ident,2,62,1,0x400078,64,0,0,64,56,1,0,0,0)
@@ -183,7 +187,11 @@ if coordinator == 0:
                 finally:
                     os._exit(71)
         right.close()
-        original_pidfd = os.pidfd_open(worker, 0)
+        native.pidfd_open.argtypes = [ctypes.c_int, ctypes.c_uint]
+        native.pidfd_open.restype = ctypes.c_int
+        original_pidfd = native.pidfd_open(worker, 0)
+        if original_pidfd < 0:
+            raise_errno('pidfd_open')
         taskfd = os.open('/proc/%d/task' % worker,
             os.O_RDONLY | os.O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
         if left.recv(16) != b'LANDLOCK':

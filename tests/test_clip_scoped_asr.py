@@ -489,6 +489,7 @@ def test_single_clip_two_pass_runs_draft_for_selection_and_final_asr_for_render(
             "--transcript",
             str(draft_path),
             "--omni-asr",
+            "--stock-decoder",
             "--clip-scoped-asr",
             "--clip-asr-pad-ms",
             "3000",

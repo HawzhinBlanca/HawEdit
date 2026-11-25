@@ -192,7 +192,11 @@ except Exception as exc:
    import fcntl
    assert os.fstat(launch._task).st_ino==os.fstat(launch._held[-1].anchor).st_ino
    assert fcntl.fcntl(launch._task,1027,launch._held[-1].anchor)==0
-  signal.pidfd_send_signal(original,signal.SIGKILL);os.waitpid(2,0)
+  import ctypes as _ct
+  _lib=_ct.CDLL(None,use_errno=True)
+  _lib.pidfd_send_signal.argtypes=[_ct.c_int,_ct.c_int,_ct.c_void_p,_ct.c_uint]
+  _lib.pidfd_send_signal.restype=_ct.c_int
+  assert _lib.pidfd_send_signal(original,signal.SIGKILL,None,0)==0;os.waitpid(2,0)
  assert select.select([original],[],[],0)[0]
 else:
  assert TEST_CASE not in refusals,'Refusal reported success'

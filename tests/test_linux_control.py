@@ -14,10 +14,15 @@ from typing import Any
 import pytest
 
 DRIVER = r"""
-import json,os,select,signal,struct,subprocess,sys,time
+import ctypes,json,os,select,signal,struct,subprocess,sys,time
+_libc=ctypes.CDLL(None,use_errno=True)
+_libc.pidfd_open.argtypes=[ctypes.c_int,ctypes.c_uint]; _libc.pidfd_open.restype=ctypes.c_int
+_libc.pidfd_send_signal.argtypes=[ctypes.c_int,ctypes.c_int,ctypes.c_void_p,ctypes.c_uint]
+_libc.pidfd_send_signal.restype=ctypes.c_int
 p=subprocess.Popen([sys.executable,'-I','-B','-c',SUBJECT],
  stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
-original=os.pidfd_open(p.pid,0)
+original=_libc.pidfd_open(p.pid,0)
+assert original>=0, ctypes.get_errno()
 assert p.stdin is not None and p.stdout is not None and p.stderr is not None
 for stream in (p.stdin,p.stdout,p.stderr): os.set_blocking(stream.fileno(),False)
 seen=bytearray()
@@ -58,7 +63,7 @@ try:
   'seen':bytes(seen).hex(),'tail':bytes(out).hex()}))
 finally:
  if not select.select([original],[],[],0)[0]:
-  signal.pidfd_send_signal(original,signal.SIGKILL,None,0)
+  assert _libc.pidfd_send_signal(original,signal.SIGKILL,None,0)==0
   assert select.select([original],[],[],3)[0]
  p.wait(timeout=1)
  for stream in (p.stdin,p.stdout,p.stderr): stream.close()

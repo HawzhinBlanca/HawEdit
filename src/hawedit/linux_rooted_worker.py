@@ -240,7 +240,12 @@ def _execute(command: RootedCommand, channel: socket.socket) -> NoReturn:
         info = os.fstat(fd)
         if not stat.S_ISCHR(info.st_mode) or info.st_rdev != os.makedev(1, 3):
             raise LinuxSnapshotError("Rooted worker initial standard stream is not null")
-    parent = os.pidfd_open(1)
+    native.pidfd_open.argtypes = [ctypes.c_int, ctypes.c_uint]
+    native.pidfd_open.restype = ctypes.c_int
+    parent = int(native.pidfd_open(1, 0))
+    if parent < 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
     original_user = os.open("/proc/self/ns/user", _flags("O_RDONLY", "O_CLOEXEC"))
     original_pid = os.open("/proc/self/ns/pid", _flags("O_RDONLY", "O_CLOEXEC"))
     original_root = _directory("/")
